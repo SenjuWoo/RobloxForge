@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 420" role="img" aria-label="RobloxForge sits on top of the official Roblox Studio MCP">
+  <defs>
+    <linearGradient id="rbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#102030"/>
+      <stop offset="1" stop-color="#0b1520"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="420" rx="28" fill="url(#rbg)"/>
+  <g fill="none" stroke="#3ec8e8" stroke-opacity=".12" stroke-width="1.4">
+    <rect x="80" y="40" width="160" height="160" transform="rotate(12 160 120)"/>
+    <rect x="980" y="180" width="180" height="180" transform="rotate(-8 1070 270)"/>
+  </g>
+  <text x="72" y="78" fill="#9ad7e6" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" letter-spacing="3">INTELLIGENCE LAYER · NOT A SECOND STUDIO MCP</text>
+  <text x="72" y="128" fill="#e8f7fb" font-family="ui-sans-serif, system-ui, sans-serif" font-size="34" font-weight="700">Studio owns the live engine.</text>
+  <text x="72" y="172" fill="#e8f7fb" font-family="ui-sans-serif, system-ui, sans-serif" font-size="34" font-weight="700">RobloxForge owns the discipline.</text>
+  <g font-family="ui-sans-serif, system-ui, sans-serif">
+    <rect x="72" y="220" width="560" height="128" rx="18" fill="#132433" stroke="#3ec8e8" stroke-opacity=".35"/>
+    <text x="96" y="258" fill="#3ec8e8" font-size="13" font-weight="700" letter-spacing="1.4">OFFICIAL ROBLOX STUDIO MCP</text>
+    <text x="96" y="292" fill="#d7eef4" font-size="20" font-weight="600">Live place, instances, scripts</text>
+    <text x="96" y="320" fill="#7fa9b6" font-size="14">Built into Studio. RobloxForge never duplicates it.</text>
+    <rect x="656" y="220" width="552" height="128" rx="18" fill="#3ec8e8"/>
+    <text x="680" y="258" fill="#0b1520" font-size="13" font-weight="700" letter-spacing="1.4">ROBLOXFORGE</text>
+    <text x="680" y="292" fill="#0b1520" font-size="20" font-weight="600">Docs · slices · security · receipts</text>
+    <text x="680" y="320" fill="#0b1520" font-size="14">Current creator-docs, playtest contract, honest status.</text>
+  </g>
+</svg>

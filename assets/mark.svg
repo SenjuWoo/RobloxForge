@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="RobloxForge">
+  <rect width="64" height="64" rx="14" fill="#3ec8e8"/>
+  <path fill="#0b1520" d="M32 11 50 21.5v21L32 53 14 42.5v-21z"/>
+  <path fill="#3ec8e8" d="M32 18.5 44.2 25.6v14.2L32 46.9 19.8 39.8V25.6z"/>
+  <path fill="#0b1520" fill-opacity=".38" d="M32 32.7 44.2 25.6v14.2L32 46.9z"/>
+  <path fill="#0b1520" d="M28.5 29.2 36.8 33.8 28.5 38.2z"/>
+</svg>

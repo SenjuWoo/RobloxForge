@@ -1,4 +1,39 @@
+<p align="center">
+  <img src="assets/mark.svg" width="72" height="72" alt="RobloxForge mark">
+</p>
+
+<div align="center">
+
 # RobloxForge
+
+**Studio owns the live engine. This is the intelligence layer.**
+
+A free, local-first workbench that teaches general AI agents how to build,
+test, debug and verify Roblox games using Roblox Studio's official MCP and
+current Roblox documentation.
+
+<p>
+  <a href="https://github.com/ShugokiFable/RobloxForge/actions/workflows/ci.yml"><img src="https://github.com/ShugokiFable/RobloxForge/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3ec8e8?labelColor=0b1520" alt="MIT License"></a>
+  <a href="https://github.com/ShugokiFable/RobloxForge/releases/tag/v0.1.1"><img src="https://img.shields.io/badge/release-v0.1.1-3ec8e8?labelColor=0b1520" alt="v0.1.1"></a>
+  <img src="https://img.shields.io/badge/python-3.11%20%7C%203.13-7fa9b6?labelColor=0b1520" alt="Python 3.11 and 3.13">
+</p>
+
+<p>
+  <a href="#quickstart">Quickstart</a>
+  ·
+  <a href="#the-two-skills-the-actual-product">Skills</a>
+  ·
+  <a href="#status-v011--honest">Status</a>
+  ·
+  <a href="tests/agent-benchmarks/01-weak-model-obby.md">Benchmark</a>
+</p>
+
+</div>
+
+<p align="center">
+  <img src="assets/hero.svg" alt="RobloxForge sits on top of the official Roblox Studio MCP" width="100%">
+</p>
 
 RobloxForge is a free, local-first AI development workbench that teaches
 general AI agents how to build, test, debug and verify Roblox games using
@@ -109,7 +144,7 @@ python src\rbforge_cli.py agent connect all
 | Real E2E weak-model benchmark (baseline vs RobloxForge obby) | **not yet run** |
 
 v1.0.0 waits for the E2E benchmark proving behavioral improvement. See
-`docs/BENCHMARK.md`.
+`tests/agent-benchmarks/01-weak-model-obby.md`.
 
 ## Trademark notice
 
@@ -117,3 +152,7 @@ Not affiliated with, endorsed by, or sponsored by Roblox Corporation.
 "Roblox" and "Roblox Studio" are trademarks of Roblox Corporation, used
 here descriptively. Roblox documentation is fetched at runtime from
 Roblox's public repository (CC-BY-4.0) and never redistributed by this repo.
+
+## License
+
+[MIT](LICENSE)
