@@ -13,9 +13,9 @@ test, debug and verify Roblox games using Roblox Studio's official MCP and
 current Roblox documentation.
 
 <p>
-  <a href="https://github.com/ShugokiFable/RobloxForge/actions/workflows/ci.yml"><img src="https://github.com/ShugokiFable/RobloxForge/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/SenjuWoo/RobloxForge/actions/workflows/ci.yml"><img src="https://github.com/SenjuWoo/RobloxForge/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3ec8e8?labelColor=0b1520" alt="MIT License"></a>
-  <a href="https://github.com/ShugokiFable/RobloxForge/releases/tag/v0.1.1"><img src="https://img.shields.io/badge/release-v0.1.1-3ec8e8?labelColor=0b1520" alt="v0.1.1"></a>
+  <a href="https://github.com/SenjuWoo/RobloxForge/releases/tag/v0.1.1"><img src="https://img.shields.io/badge/release-v0.1.1-3ec8e8?labelColor=0b1520" alt="v0.1.1"></a>
   <img src="https://img.shields.io/badge/python-3.11%20%7C%203.13-7fa9b6?labelColor=0b1520" alt="Python 3.11 and 3.13">
 </p>
 
