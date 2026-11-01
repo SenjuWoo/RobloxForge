@@ -84,7 +84,7 @@ jobs:
           # Exit 4 means checks were skipped (no Luau toolchain on the runner)
           # and is a correct, honest result. 0 = clean, 2 = a proven defect.
           set +e
-          python src/rbforge_cli.py check --root "$work/game" > gate.json
+          python src/rbforge_cli.py check --root "$work/game" --json > gate.json
           code=$?
           set -e
           echo "gate exit: $code"
