@@ -67,6 +67,7 @@ if ($failed) {
 }
 
 Write-Host 'Done. Next:'
+Write-Host '    rbforge new mygame --genre obby    scaffold a project + a plan, then build slice 1'
 Write-Host '    rbforge agent connect all     wire the official Roblox Studio MCP (installed disabled)'
 Write-Host '    rbforge docs update           fetch current creator-docs (~27 MB)'
 Write-Host '    rbforge doctor                full report, including the live MCP handshake'

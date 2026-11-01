@@ -1,0 +1,78 @@
+name: Release
+
+# Tag-driven, and deliberately boring: the asset is built with `git archive` from
+# the tagged commit, so the zip contains exactly the committed bytes and nothing
+# from a working tree. A SHA256 file rides alongside it.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Gate the tag (never publish a tree that fails its own tests)
+        run: python tests/run_tests.py
+
+      - name: Version in the tree must match the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(python -c "import sys; sys.path.insert(0,'src'); import rbforge; print(rbforge.__version__)")
+          echo "tag=$tag version=$ver"
+          test "$tag" = "$ver" || { echo "::error::tag $tag != package version $ver"; exit 1; }
+
+      - name: Build the asset from the tag
+        run: |
+          set -euo pipefail
+          name="RobloxForge-${GITHUB_REF_NAME}"
+          # Runtime/product files only. Tests, CI config and STATE.md stay in the
+          # repository; a downloader wants a working tool, not our paperwork.
+          git archive --format=zip --prefix="$name/" -o "$name.zip" \
+            "$GITHUB_REF_NAME" \
+            src mcp_server skills scripts templates knowledge assets \
+            Install.ps1 Update.ps1 Uninstall.ps1 START-HERE.bat \
+            README.md CHANGELOG.md LICENSE SECURITY.md THIRD-PARTY-NOTICES.md \
+            CONTRIBUTING.md CODE_OF_CONDUCT.md
+          sha256sum "$name.zip" > "$name.zip.sha256"
+          unzip -l "$name.zip" | tail -3
+          ls -l "$name.zip"
+
+      - name: Verify the asset unpacked and runs
+        run: |
+          set -euo pipefail
+          name="RobloxForge-${GITHUB_REF_NAME}"
+          unzip -q "$name.zip" -d verify
+          cd "verify/$name"
+          python -m compileall -q src mcp_server
+          python tests/run_tests.py 2>/dev/null || echo "tests not shipped (expected)"
+          cd ../..
+          echo "asset OK"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          name="RobloxForge-${GITHUB_REF_NAME}"
+          notes() {
+            printf 'Automated release from tag `%s`.\n\n' "${GITHUB_REF_NAME}"
+            printf '### Asset\n'
+            printf -- '- `%s.zip` - the checkout plus the two skills, exactly as tagged\n' "$name"
+            printf -- '- `%s.zip.sha256` - verify with `sha256sum -c`\n\n' "$name"
+            printf '### Install\n'
+            printf '```\nunzip %s.zip && cd %s\n./Install.ps1          # Windows\n```\n' "$name" "$name"
+            printf 'Python 3.11+ is the only prerequisite. Nothing here costs money.\n'
+          }
+          gh release create "$GITHUB_REF_NAME" "$name.zip" "$name.zip.sha256" \
+            --title "$GITHUB_REF_NAME" --notes "$(notes)"

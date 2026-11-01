@@ -1,5 +1,8 @@
 name: CI
 
+# Runs on every push and pull request. No Roblox and no network needed: the
+# suite is fixture-based by design, so a red build always means this repo broke,
+# never that a third-party service was down.
 on:
   push:
     branches: [main]
@@ -23,6 +26,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Byte-compile every module (catches syntax errors before tests)
+        run: python -m compileall -q src mcp_server tests
+
       - name: Run tests (no Roblox required)
         run: python tests/run_tests.py
 
@@ -30,24 +36,63 @@ jobs:
         shell: bash
         run: |
           printf '%s\n' \
-            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
             '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
             | python mcp_server/server.py > mcp-out.json
           python - <<'EOF'
           import json
           lines = [l for l in open("mcp-out.json") if l.strip()]
-          assert len(lines) == 2, "notification must not be answered: %r" % lines
-          tools = json.loads(lines[1])
-          names = [t["name"] for t in tools["result"]["tools"]]
-          assert len(names) == 11, names
+          assert len(lines) == 2, "a notification must not be answered: %r" % lines
+          tools = json.loads(lines[1])["result"]["tools"]
+          names = {t["name"] for t in tools}
+          # Assert the contract, not a count: adding a tool must not fail CI,
+          # removing one that agents depend on must.
+          required = {"rb_doctor", "rb_capabilities", "rb_docs_search", "rb_docs_read",
+                      "rb_check", "rb_plugins", "rb_verify_receipt"}
+          missing = required - names
+          assert not missing, "missing tools: %s" % missing
+          for t in tools:
+              assert t["description"].strip(), "%s has no description" % t["name"]
+              assert t["inputSchema"]["type"] == "object"
           print("MCP OK:", len(names), "tools")
           EOF
 
-      - name: CLI smoke (JSON output)
+      - name: CLI smoke (JSON output, no Studio needed)
         shell: bash
         run: |
           python src/rbforge_cli.py doctor --no-probe > /dev/null
           python src/rbforge_cli.py capabilities > /dev/null
+          python src/rbforge_cli.py plugins > /dev/null
           python src/rbforge_cli.py agent status > /dev/null
           python src/rbforge_cli.py skills status > /dev/null
+          python src/rbforge_cli.py tools > /dev/null
+
+      - name: "End-to-end: new project, then gate it"
+        shell: bash
+        run: |
+          set -e
+          work="$(mktemp -d)"
+          python src/rbforge_cli.py new "$work/game" --genre obby --premise "reach the end" > new.json
+          python - <<'EOF'
+          import json, os
+          d = json.load(open("new.json"))
+          assert os.path.isfile(d["plan"]), "PLAN.md missing"
+          assert any("Baseplate" in s for s in d["next_steps"])
+          print("new OK:", len(d["files"]), "files")
+          EOF
+          # Exit 4 means checks were skipped (no Luau toolchain on the runner)
+          # and is a correct, honest result. 0 = clean, 2 = a proven defect.
+          set +e
+          python src/rbforge_cli.py check --root "$work/game" > gate.json
+          code=$?
+          set -e
+          echo "gate exit: $code"
+          test "$code" = "0" -o "$code" = "4"
+          python - <<'EOF'
+          import json
+          r = json.load(open("gate.json"))
+          assert r["status"] in ("pass", "incomplete"), r["status"]
+          assert r["rungs"], "gate produced no rungs"
+          print("gate OK:", r["status"], r["counts"])
+          EOF

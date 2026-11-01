@@ -17,18 +17,30 @@ improve AI reliability.
 - **Lune** — standalone Luau runtime and Roblox data tooling.
 - **run-in-roblox** — run scripts/places in Studio from CLI for automation.
 
-## Current researched versions (2026-08 snapshot)
+## Current researched versions (verified 2026-11-01 against GitHub releases)
 
-Treat these as a snapshot; verify before pinning a new project:
-- Rojo 7.7.0 stable
+Treat these as a snapshot; verify before pinning a new project.
+- Rojo 7.7.1
 - Rokit 1.2.0
-- StyLua 2.5.2
-- Selene 0.31.0
-- luau-lsp 1.69.0
+- StyLua 2.6.0
+- Selene 0.32.0
+- luau-lsp 1.70.1
 - Wally 0.3.2
-- Lune 0.10.5
+- Lune 0.11.1
+- wally-package-types 1.7.0
 - run-in-roblox 0.3.0
-- wally-package-types 1.6.2
+
+Pinned form for a project lives in `templates/source-controlled/rokit.toml`
+(`rokit install` reads it). Copy it, do not hand-edit versions from memory.
+
+## The gate works without any of this
+
+`rbforge check` degrades honestly: each missing tool is reported as `skip`, and
+the overall status becomes `incomplete` rather than a false pass. So a
+Studio-native prototype can run the structure rung (rung 3) with zero installs,
+and still catch missing Rojo paths, unanchored geometry and client-side
+authority. Add the toolchain when you want rungs 1-2, not because a checklist
+demands it.
 
 ## Do not auto-install everything
 

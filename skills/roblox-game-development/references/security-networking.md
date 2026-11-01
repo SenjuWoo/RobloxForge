@@ -85,3 +85,69 @@ Before calling a multiplayer feature complete:
 - can it replay the request?
 - can it spam the request?
 - can it skip required sequence/state?
+
+## High-frequency data: serialize, do not send tables
+
+A Luau table with string keys is expensive on the wire. For anything sent many
+times per second (positions, movement intents, hit notifications) pack it into a
+`buffer` of fixed-width fields.
+
+```lua
+--!strict
+-- Shared/Shared/HitPacket.luau
+-- 18 bytes: u32 targetUserId | u16 damage*10 | 3 x f32 position
+local HitPacket = {}
+
+local SIZE = 18
+
+function HitPacket.encode(userId: number, damage: number, position: Vector3): buffer
+    local b = buffer.create(SIZE)
+    buffer.writeu32(b, 0, userId)
+    buffer.writeu16(b, 4, math.clamp(math.floor(damage * 10), 0, 65535))
+    buffer.writef32(b, 6, position.X)
+    buffer.writef32(b, 10, position.Y)
+    buffer.writef32(b, 14, position.Z)
+    return b
+end
+
+function HitPacket.decode(b: buffer): (number, number, Vector3)
+    return buffer.readu32(b, 0),
+        buffer.readu16(b, 4) / 10,
+        Vector3.new(buffer.readf32(b, 6), buffer.readf32(b, 10), buffer.readf32(b, 14))
+end
+
+return HitPacket
+```
+
+Rules that keep this honest:
+- **Fixed layout, documented in one comment.** A byte offset written in two
+  places drifts; keep encode/decode adjacent and derive both from `SIZE`.
+- **Validate on decode.** An exploiter sends arbitrary bytes: clamp damage,
+  reject unknown user ids, and never trust the position for authority.
+- **Unreliable remotes are for the drop-tolerant subset only** — cosmetics,
+  interpolation hints, camera shake. Purchases, inventory and progression go on
+  reliable remotes and get a server reply.
+- **The hard numbers (from the UnreliableRemoteEvent engine reference):** a
+  payload over **1,000 bytes is dropped**, and the event is rate-limited to
+  roughly **500 requests/second per client, shared across every
+  UnreliableRemoteEvent in the game**. Buffers are compressed before sending, so
+  a payload that fits in theory can still exceed the cap after encoding — test
+  with the real data shape, and treat 1,000 bytes as the ceiling, not a target.
+- Sample the rate yourself. Sending 200 messages/second per player is a design
+  decision, not an accident; measure with `skill "rbx-network-simulator"`.
+
+## Do not hand-roll the schema layer
+
+For a project with more than a couple of remotes, a schema library is less code
+and fewer bugs than a hand-written `if type(...)` wall. All three below compile
+or validate typed schemas into buffer packets; pick one, do not mix:
+
+| Library | Shape | When |
+|---|---|---|
+| ByteNet Max | pure Luau, `defineNamespace` packets + queries | Studio-native, no build step |
+| Blink | `.blink` IDL compiled to Luau | Rojo/managed repo, lowest per-byte cost |
+| Zap | `.zap` IDL compiled by a Rust CLI | largest schemas, CI-compiled |
+
+Whatever you pick, the rule stays: **one shared schema module required by both
+sides**, and the server re-validates every field it reads. A schema protects the
+wire format, not your game rules.

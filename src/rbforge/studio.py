@@ -383,7 +383,12 @@ def snapshot(probe=True, timeout=25.0):
     if probe:
         out["mcp_probe"] = probe_mcp(timeout=timeout)
         studios = out["mcp_probe"].get("studios")
-        out["active_places"] = [s.get("name") for s in studios] if studios else []
+        # A connected Studio can report a place with no name (unsaved, or a
+        # version that omits it). Fall back to the id instead of joining None,
+        # which used to take the whole doctor down.
+        out["active_places"] = [
+            str(s.get("name") or s.get("id") or "unnamed")
+            for s in studios or [] if isinstance(s, dict)]
         out["multiple_studio_sessions"] = bool(studios and len(studios) > 1)
     else:
         out["mcp_probe"] = {"responding": None, "note": "probe skipped"}

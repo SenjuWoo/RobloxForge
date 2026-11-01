@@ -24,7 +24,7 @@ current Roblox documentation.
   ·
   <a href="#the-two-skills-the-actual-product">Skills</a>
   ·
-  <a href="#status-v011--honest">Status</a>
+  <a href="#status-v030--honest">Status</a>
   ·
   <a href="tests/agent-benchmarks/01-weak-model-obby.md">Benchmark</a>
 </p>
@@ -73,7 +73,10 @@ an MCP entry pointing at a path that no longer resolves. The checkout itself is
 left for you to remove.
 
 ```
+rbforge new mygame --genre obby --premise "dodge lasers and reach the end"
 rbforge doctor                      # full health report, each fact independent
+rbforge check .                     # offline gate: format, lint, types, structure
+rbforge plugins                     # optional plugins found + their free alternatives
 rbforge docs update                 # fetch official creator-docs (27 MB, git-sparse)
 rbforge docs search "ProcessReceipt"
 rbforge agent connect hermes        # wire the official Roblox MCP into an agent
@@ -81,9 +84,13 @@ rbforge skills install all          # install the two RobloxForge skills
 rbforge capabilities                # honest capability matrix (probed, not assumed)
 ```
 
+Nothing here costs money. Roblox Studio, the official MCP server, every
+recommended library and every asset path in the skill are free; `rbforge
+plugins` reports what each paid tool would change and what replaces it for $0.
+
 ## Connecting agents (installed OFF by default — token discipline)
 
-The 11 `rb_*` MCP tools are useful during Roblox work but waste context in
+The 13 `rb_*` MCP tools are useful during Roblox work but waste context in
 every other session. `rbforge agent connect` therefore wires the forge's
 MCP server **disabled** into each agent, and installs the two skills
 (always-on; they cost nothing until a Roblox prompt triggers them):
@@ -122,9 +129,11 @@ docs > verified community practice > model memory.
 | Piece | What |
 |---|---|
 | `src/rbforge_cli.py` | CLI — every command prints JSON |
-| `mcp_server/server.py` | 11-tool MCP server (doctor, capabilities, docs, planning, reviews, receipts) |
+| `src/rbforge/check.py` | offline verification gate (rungs 1-3 of the ladder) |
+| `src/rbforge/plugins.py` | optional-plugin detection, each with a free alternative |
+| `mcp_server/server.py` | 13-tool MCP server (doctor, capabilities, docs, check, plugins, planning, reviews, receipts) |
 | `skills/` | the two agent skills, installed into Hermes/Claude/Codex/Grok/Kimi |
-| `tests/run_tests.py` | 20 checks, no Roblox required |
+| `tests/run_tests.py` | 33 checks, no Roblox required |
 
 Register the MCP server manually (all agents, disabled) instead:
 
@@ -132,15 +141,18 @@ Register the MCP server manually (all agents, disabled) instead:
 python src\rbforge_cli.py agent connect all
 ```
 
-## Status (v0.1.1 — honest)
+## Status (v0.3.0 — honest)
 
 | Area | Status |
 |---|---|
-| Studio + official MCP detection & live handshake probe | verified on Windows 11 |
-| creator-docs sparse cache (2,199 docs) + ranked search | verified |
+| Studio + official MCP detection & live handshake probe | verified on Windows 11 (34 tools) |
+| creator-docs sparse cache + ranked search | verified (2,214 docs indexed) |
+| `rbforge check` offline gate (static / unit / structure) | verified; skips reported as `incomplete`, never `pass` |
+| `rbforge new` one-command project + plan | verified |
+| Plugin detection with a free alternative for every entry | verified (filename-based; none installed here) |
 | Doctor, capabilities matrix | verified |
-| Skill install into Hermes (live), Claude/Codex/Grok/Kimi roots | verified |
-| Vertical-slice planning, reviews, verification receipts | implemented, static-only |
+| Skill install into Hermes (live), Claude/Codex/Grok/Kimi roots | verified, multi-profile |
+| Vertical-slice planning, reviews, hash-chained verification receipts | implemented, static-only |
 | Real E2E weak-model benchmark (baseline vs RobloxForge obby) | **not yet run** |
 
 v1.0.0 waits for the E2E benchmark proving behavioral improvement. See

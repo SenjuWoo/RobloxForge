@@ -4,11 +4,38 @@ A receipt says what was and was not proven. Claims without playtest
 evidence are recorded as UNVERIFIED - the receipt is honest even when the
 agent writing it is optimistic.
 """
+import hashlib
 import json
 import os
 import time
 
 from . import paths
+
+
+def _previous_digest(out_dir):
+    """Hash of the most recent receipt already on disk, or None.
+
+    Chaining is what turns a folder of receipts into an audit trail: a receipt
+    that claims a state can be checked against the one it follows, so a later
+    edit cannot quietly rewrite history.
+    """
+    try:
+        names = sorted(n for n in os.listdir(out_dir) if n.endswith(".json"))
+    except OSError:
+        return None
+    for name in reversed(names):
+        try:
+            with open(os.path.join(out_dir, name), "r", encoding="utf-8") as fh:
+                return json.load(fh).get("digest")
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def _digest(rec):
+    body = {k: v for k, v in rec.items() if k not in ("digest", "saved_to")}
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
 def _required_checks():
@@ -75,6 +102,8 @@ def receipt(task, checks=None, console_errors=0, playtest_performed=False,
     }
     if save:
         out_dir = paths.receipts_dir()
+        rec["prev_digest"] = _previous_digest(out_dir)
+        rec["digest"] = _digest(rec)
         stamp = time.strftime("%Y%m%d-%H%M%S")
         safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in task)[:60]
         file_path = os.path.join(out_dir, "%s-%s.json" % (stamp, safe or "receipt"))

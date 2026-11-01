@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from rbforge.errors import ForgeError
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "robloxforge", "version": "0.1.1"}
+SERVER_INFO = {"name": "robloxforge", "version": "0.3.0"}
 
 TOOLS = {}
 
@@ -152,6 +152,29 @@ def _verify_receipt(a):
 def _toolchain(a):
     from rbforge import tooling
     return tooling.status()
+
+
+@tool("rb_check", {"type": "object", "properties": {
+    "path": {"type": "string", "description": "project root; omit for cwd"},
+    "scope": {"type": "array", "items": {"type": "string",
+              "enum": ["static", "unit", "structure"]}}}},
+      "Offline verification gate: format, lint, typecheck, pure-Luau unit tests "
+      "and structural audit. RUN THIS AFTER EVERY EDIT BATCH and BEFORE any "
+      "Studio playtest. Clean is 'pass'; a proven defect is 'fail'; missing "
+      "tooling is 'incomplete' and must never be reported as verified.")
+def _check(a):
+    from rbforge import check
+    return check.run(a.get("path") or os.getcwd(), scope=a.get("scope"))
+
+
+@tool("rb_plugins", {"type": "object", "properties": {}},
+      "Which optional Studio plugins (ForgeGUI, GuiForge, UI Labs, Moon "
+      "Animator, ...) are actually installed, what each changes about the "
+      "workflow, and the free alternative if it is missing. Nothing here is "
+      "ever required: every workflow has a $0 path.")
+def _plugins(a):
+    from rbforge import plugins
+    return plugins.status()
 
 
 # ------------------------------------------------------------------ wire

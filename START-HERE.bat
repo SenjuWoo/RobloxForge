@@ -28,8 +28,10 @@ python src\rbforge_cli.py skills install all
 echo.
 
 echo [3/3] Optional next steps:
-echo   - rbforge agent connect hermes    (wire official Roblox MCP into Hermes)
-echo   - rbforge docs update             (fetch current creator-docs; ~27 MB via git)
-echo   - rbforge doctor                  (full report incl. live MCP handshake)
+echo   - rbforge new mygame --genre obby  (scaffold a project + plan; start here)
+echo   - rbforge agent connect hermes     (wire official Roblox MCP into Hermes)
+echo   - rbforge docs update              (fetch current creator-docs; ~27 MB via git)
+echo   - rbforge doctor                   (full report incl. live MCP handshake)
+echo   - rbforge check .                  (offline gate, run before any playtest)
 echo.
 pause

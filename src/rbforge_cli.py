@@ -44,9 +44,40 @@ def main(argv=None):
     p_tools = sub.add_parser("tools", help="optional Luau toolchain status")
     p_tools.add_argument("action", nargs="?", default="status", choices=["status"])
 
+    p_check = sub.add_parser("check", help="offline verification gate (run before Studio)")
+    p_check.add_argument("--root", default=".", help="project directory to check")
+    p_check.add_argument("--scope", nargs="+", choices=["static", "unit", "structure"],
+                         help="limit which rungs run")
+    p_check.add_argument("--json", action="store_true", help="machine-readable report")
+
     p_agents = sub.add_parser("agent", help="agent MCP wiring + skills")
     p_agents.add_argument("action", choices=["status", "connect", "disconnect"])
     p_agents.add_argument("name", nargs="?", help="hermes|claude|codex (or 'all')")
+
+    p_scaf = sub.add_parser("scaffold", help="create a project from a genre template")
+    p_scaf.add_argument("path")
+    p_scaf.add_argument("--genre", default="generic",
+                        choices=["generic", "obby", "simulator", "tycoon"])
+
+    p_new = sub.add_parser("new", help="scaffold + slice plan + next steps in one go")
+    p_new.add_argument("path")
+    p_new.add_argument("--genre", default="generic",
+                       choices=["generic", "obby", "simulator", "tycoon"])
+    p_new.add_argument("--premise", default="", help="one sentence: what the game is")
+
+    p_plan = sub.add_parser("plan", help="vertical-slice plan for a premise")
+    p_plan.add_argument("genre", choices=["generic", "obby", "simulator", "tycoon"])
+    p_plan.add_argument("premise")
+
+    p_rev = sub.add_parser("review", help="static architecture/security review")
+    p_rev.add_argument("--path", default=".")
+    p_rev.add_argument("--live", action="store_true", help="review the live Studio place")
+    p_rev.add_argument("--kind", default="both", choices=["both", "architecture", "security"])
+
+    p_proj = sub.add_parser("project", help="analyze an existing project layout")
+    p_proj.add_argument("path", nargs="?", default=".")
+
+    sub.add_parser("plugins", help="detected Studio plugins and their free alternatives")
 
     p_skills = sub.add_parser("skills", help="install/update RobloxForge skills into agents")
     p_skills.add_argument("action", choices=["status", "install", "update", "remove"])
@@ -99,6 +130,17 @@ def _dispatch(args):
         _emit(tooling.status())
         return ExitCode.OK
 
+    if args.cmd == "check":
+        from rbforge import check as check_mod
+        report = check_mod.run(args.root, scope=args.scope)
+        if args.json:
+            _emit(report)
+        else:
+            print(check_mod.render(report))
+        # 0 = clean, 2 = a defect was proven, 4 = tooling missing so not verified.
+        return {"pass": ExitCode.OK, "fail": ExitCode.VALIDATION,
+                "incomplete": ExitCode.DEPENDENCY}[report["status"]]
+
     if args.cmd == "agent":
         names = None if (not args.name or args.name == "all") else [args.name]
         if args.action == "status":
@@ -121,6 +163,41 @@ def _dispatch(args):
             fn = {"install": skills.install, "update": skills.install,
                   "remove": skills.remove}[args.action]
             _emit(fn(names))
+        return ExitCode.OK
+
+    if args.cmd == "scaffold":
+        from rbforge import scaffold
+        _emit(scaffold.scaffold(args.path, args.genre))
+        return ExitCode.OK
+
+    if args.cmd == "new":
+        from rbforge import scaffold
+        _emit(scaffold.new_project(args.path, args.genre, args.premise))
+        return ExitCode.OK
+
+    if args.cmd == "plan":
+        from rbforge import planning
+        _emit(planning.vertical_slice(args.genre, args.premise))
+        return ExitCode.OK
+
+    if args.cmd == "review":
+        from rbforge import review
+        out = {}
+        if args.kind in ("both", "architecture"):
+            out["architecture"] = review.architecture(path=args.path, live=args.live)
+        if args.kind in ("both", "security"):
+            out["security"] = review.security(path=args.path, live=args.live)
+        _emit(out)
+        return ExitCode.OK
+
+    if args.cmd == "project":
+        from rbforge import project
+        _emit(project.analyze(args.path))
+        return ExitCode.OK
+
+    if args.cmd == "plugins":
+        from rbforge import plugins
+        _emit(plugins.status())
         return ExitCode.OK
 
     return ExitCode.GENERIC

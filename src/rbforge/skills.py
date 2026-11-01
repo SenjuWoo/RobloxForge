@@ -30,16 +30,46 @@ def _expand(p):
 
 
 def root_for(agent):
-    """Where this agent keeps skills, if discoverable."""
+    """First skill root for this agent, if discoverable."""
+    roots = roots_for(agent)
+    return roots[0] if roots else None
+
+
+def roots_for(agent):
+    """Every skill root this agent keeps.
+
+    Hermes runs one skill tree PER PROFILE (`profiles/<name>/skills`), so a
+    single hardcoded root updates the wrong agent the moment more than one
+    profile exists - it reports a skill as blocked while the session in front of
+    you still loads the old copy.
+    """
     env_name, candidates = _ROOTS[agent]
     env = os.environ.get(env_name)
     if env and os.path.isdir(env):
-        return env
+        return [env]
+    out = []
     for cand in candidates:
         real = _expand(cand)
-        if real and os.path.isdir(real):
-            return real
-    return None
+        if real and os.path.isdir(real) and real not in out:
+            out.append(real)
+    if agent == "hermes":
+        profiles = os.path.join(_expand("%LOCALAPPDATA%"), "hermes", "profiles")
+        if os.path.isdir(profiles):
+            for name in sorted(os.listdir(profiles)):
+                p = os.path.join(profiles, name, "skills")
+                if os.path.isdir(p) and p not in out:
+                    out.append(p)
+    return out
+
+
+def _looks_like_ours(skill_dir):
+    """Adopt an unstamped directory only if it is unmistakably a prior copy.
+
+    An older RobloxForge installed before the stamp file existed carries our
+    reference layout; anything else is someone else's skill and must never be
+    overwritten.
+    """
+    return os.path.isfile(os.path.join(skill_dir, "references", "development-loop.md"))
 
 
 def _installed_version(skill_dir):
@@ -52,34 +82,46 @@ def _installed_version(skill_dir):
 
 def status():
     from . import __version__
+
+    def state_of(skill_dir):
+        if not os.path.isdir(skill_dir):
+            return "absent"
+        v = _installed_version(skill_dir)
+        if v is None:
+            # ours-but-unstamped is stale, not foreign: it needs an update
+            return "stale (unstamped)" if _looks_like_ours(skill_dir) else "foreign"
+        if v != __version__:
+            return "stale (%s -> %s)" % (v, __version__)
+        return "current"
+
     out = {}
     for agent in _ROOTS:
-        root = root_for(agent)
-        entry = {"root": root}
-        if not root:
+        roots = roots_for(agent)
+        entry = {"root": roots[0] if roots else None, "roots": roots}
+        if not roots:
             entry["note"] = "skill directory not found"
             out[agent] = entry
             continue
         states = {}
         for name in OUR_SKILLS:
-            d = os.path.join(root, name)
-            if not os.path.isdir(d):
+            per_root = {r: state_of(os.path.join(r, name)) for r in roots}
+            values = list(per_root.values())
+            if all(v == "absent" for v in values):
                 states[name] = "absent"
-                continue
-            v = _installed_version(d)
-            if v is None:
-                states[name] = "foreign"  # exists but not ours - never clobber
-            elif v != __version__:
-                states[name] = "stale (%s -> %s)" % (v, __version__)
+            elif "foreign" in values:
+                states[name] = "foreign"
             else:
-                states[name] = "current"
+                stale = [v for v in values if v.startswith("stale")]
+                states[name] = stale[0] if stale else "current"
+            if len(roots) > 1:
+                entry.setdefault("by_root", {})[name] = per_root
         entry["skills"] = states
         out[agent] = entry
     return out
 
 
 def install(agents=None):
-    """Copy our skills into each agent's root. Repeatable, reversible."""
+    """Copy our skills into every skill root each agent has. Repeatable."""
     from . import __version__
     src_root = paths.skills_source_dir()
     targets = agents or list(_ROOTS)
@@ -88,42 +130,48 @@ def install(agents=None):
         if agent not in _ROOTS:
             raise ForgeError("RBF-ARG-001", "unknown agent %r" % agent,
                              hint="one of: %s" % ", ".join(_ROOTS))
-        root = root_for(agent)
-        if not root:
+        roots = roots_for(agent)
+        if not roots:
             results[agent] = "skipped: no skill directory found"
             continue
-        copied = []
-        for name in OUR_SKILLS:
-            src = os.path.join(src_root, name)
-            dst = os.path.join(root, name)
-            if os.path.isdir(dst) and _installed_version(dst) is None:
-                results[agent] = "blocked: %s exists and is not RobloxForge's" % name
-                break
-            if os.path.isdir(dst):
-                shutil.rmtree(dst)
-            shutil.copytree(src, dst)
-            with open(os.path.join(dst, STAMP), "w", encoding="utf-8") as fh:
-                fh.write(__version__)
-            copied.append(name)
-        else:
-            results[agent] = "installed %s" % ", ".join(copied) if copied else "nothing to do"
+        notes = []
+        for root in roots:
+            copied = []
+            blocked = None
+            for name in OUR_SKILLS:
+                src = os.path.join(src_root, name)
+                dst = os.path.join(root, name)
+                if os.path.isdir(dst) and _installed_version(dst) is None \
+                        and not _looks_like_ours(dst):
+                    blocked = "blocked: %s exists and is not RobloxForge's (%s)" % (name, root)
+                    break
+                if os.path.isdir(dst):
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+                with open(os.path.join(dst, STAMP), "w", encoding="utf-8") as fh:
+                    fh.write(__version__)
+                copied.append(name)
+            notes.append(blocked or ("installed %s" % ", ".join(copied) if copied
+                                     else "nothing to do"))
+        results[agent] = "; ".join(notes)
     return results
 
 
 def remove(agents=None):
-    """Uninstall ONLY our skill dirs. Foreign content untouched."""
+    """Uninstall ONLY our skill dirs, from every root. Foreign content untouched."""
     targets = agents or list(_ROOTS)
     results = {}
     for agent in targets:
-        root = root_for(agent)
-        if not root:
+        roots = roots_for(agent)
+        if not roots:
             results[agent] = "no skill directory"
             continue
         removed = []
-        for name in OUR_SKILLS:
-            d = os.path.join(root, name)
-            if os.path.isdir(d) and _installed_version(d) is not None:
-                shutil.rmtree(d)
-                removed.append(name)
+        for root in roots:
+            for name in OUR_SKILLS:
+                d = os.path.join(root, name)
+                if os.path.isdir(d) and _installed_version(d) is not None:
+                    shutil.rmtree(d)
+                    removed.append(os.path.join(root, name))
         results[agent] = "removed %s" % ", ".join(removed) if removed else "nothing of ours present"
     return results

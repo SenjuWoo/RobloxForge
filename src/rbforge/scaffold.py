@@ -47,7 +47,11 @@ return {
 
 _CHECKLIST = """# Verification checklist ({genre})
 
+Run `rbforge check .` first - it catches syntax, types, missing Rojo paths and
+unanchored geometry without opening Studio. Then:
+
 Slice 1 is DONE only when every box below has real evidence:
+- [ ] `rbforge check .` reports pass (or states exactly what it skipped)
 - [ ] player spawns
 - [ ] core action works end-to-end (playtested)
 - [ ] progression step works
@@ -58,6 +62,32 @@ Slice 1 is DONE only when every box below has real evidence:
 
 Expand only after proof.
 """
+
+# Pinned toolchain so the gate means the same thing on every machine.
+# `rokit install` reads this; absent tools are reported as skips, not failures.
+_ROKIT = '''# Pinned Luau toolchain (rbforge scaffold). Optional: the gate degrades to
+# the structural rung when these are absent.
+[tools]
+rojo = "rojo-rbx/rojo@7.7.1"
+selene = "Kampfkarren/selene@0.32.0"
+stylua = "JohnnyMorganz/StyLua@2.6.0"
+luau-lsp = "JohnnyMorganz/luau-lsp@1.70.1"
+lune = "lune-org/lune@0.11.1"
+'''
+
+_LUAURC = '''{
+  "languageMode": "strict",
+  "lint": { "*": true },
+  "aliases": { "Shared": "src/shared" }
+}
+'''
+
+_SELENE = 'std = "roblox"\n'
+
+_STYLUA = '''indent_type = "Tabs"
+column_width = 120
+quote_style = "AutoPreferDouble"
+'''
 
 
 def scaffold(path, genre="generic"):
@@ -78,6 +108,10 @@ def scaffold(path, genre="generic"):
         os.path.join(path, "src", "shared", "Config.lua"): _CONFIG,
         os.path.join(path, "src", "client", "Hud.client.lua"): _CLIENT,
         os.path.join(path, "VERIFY.md"): _CHECKLIST,
+        os.path.join(path, "rokit.toml"): _ROKIT,
+        os.path.join(path, ".luaurc"): _LUAURC,
+        os.path.join(path, "selene.toml"): _SELENE,
+        os.path.join(path, "stylua.toml"): _STYLUA,
     }
     for d in dirs:
         os.makedirs(d, exist_ok=True)
@@ -87,3 +121,66 @@ def scaffold(path, genre="generic"):
     return {"path": os.path.abspath(path), "genre": genre,
             "files": sorted(os.path.relpath(f, path).replace(os.sep, "/") for f in files),
             "next": "open Studio with a Baseplate, then follow VERIFY.md slice order"}
+
+
+def new_project(path, genre="generic", premise=""):
+    """One entry point for "make me a game": scaffold + slice plan + next steps.
+
+    A user with no Roblox experience cannot sequence scaffold -> plan -> gate ->
+    playtest. This does the first three and returns an ordered list of what the
+    agent should do next, so the first session starts with intent instead of
+    setup.
+    """
+    from . import planning
+
+    result = scaffold(path, genre)
+    plan = planning.vertical_slice(genre, premise or "a first playable slice")
+
+    lines = [
+        "# Plan: %s" % (premise or "first slice"),
+        "",
+        "Genre: %s. Built by RobloxForge; read this before touching the place." % genre,
+        "",
+        "## Core loop",
+        plan.get("core_loop", ""),
+        "",
+        "## Who owns the truth",
+    ]
+    for what, who in (plan.get("authority") or {}).items():
+        lines.append("- **%s**: %s" % (what, who))
+    lines += ["", "## Build order (do NOT skip ahead)"]
+    for i, item in enumerate(plan.get("build_order") or [], 1):
+        lines.append("%d. %s" % (i, item))
+    lines += ["", "## Prove it before expanding"]
+    for item in plan.get("verification") or []:
+        lines.append("- [ ] %s" % item)
+    if plan.get("anti_pattern"):
+        lines += ["", "## Do not do this", plan["anti_pattern"]]
+    lines += [
+        "",
+        "## Commands",
+        "```",
+        "rbforge check .        # offline gate; run before every playtest",
+        "```",
+        "Rungs 1-3 must be clean (or their skips named) before any Studio playtest.",
+        "",
+    ]
+
+    plan_path = os.path.join(path, "PLAN.md")
+    with open(plan_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+
+    return {
+        "path": result["path"],
+        "genre": genre,
+        "files": result["files"] + [os.path.relpath(plan_path, path).replace(os.sep, "/")],
+        "plan": plan_path,
+        "next_steps": [
+            "Open Roblox Studio -> New -> Baseplate (leave it open).",
+            "In Studio: Assistant -> '...' -> Manage MCP Servers -> Enable Studio as MCP server.",
+            "rbforge doctor            # confirm the handshake before building",
+            "rbforge check <path>      # gate before any Studio work",
+            "Build step 1 of PLAN.md only, then playtest it.",
+        ],
+        "free": "No purchase is needed for any step. See references/free-stack.md.",
+    }

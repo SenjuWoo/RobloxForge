@@ -384,6 +384,190 @@ def _():
         assert len(desc) > 40, "%s: description is too short to route on" % name
 
 
+# ---------------------------------------------------------------- check gate
+
+@check("check: no toolchain is 'incomplete', never 'pass'")
+
+
+def _():
+    """A machine without StyLua is not a machine with clean formatting. If a
+    skip could ever read as a pass, an agent would report verified work it never
+    verified -- the exact failure this gate exists to prevent."""
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        report = check_mod.run(root)
+        assert report["status"] == "incomplete", report["status"]
+        assert report["counts"]["skip"] > 0
+        assert "do NOT report this as verified" in report["gate"]
+
+
+@check("check: proven defects fail and name the file")
+
+
+def _():
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        os.makedirs(os.path.join(root, "src", "client"))
+        with open(os.path.join(root, "src", "client", "Main.client.luau"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("local f = loadstring('return 1')\n"
+                     "local DataStoreService = game:GetService('DataStoreService')\n")
+        report = check_mod.run(root, scope=["structure"])
+        assert report["status"] == "fail", report["status"]
+        details = " ".join(c["detail"] for r in report["rungs"] for c in r["checks"])
+        assert "loadstring" in details
+        assert "DataStoreService" in details
+        assert "Main.client.luau" in details, "a defect without a file is not actionable"
+
+
+@check("check: missing Rojo $path target is a failure")
+
+
+def _():
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        with open(os.path.join(root, "default.project.json"), "w", encoding="utf-8") as fh:
+            json.dump({"name": "x", "tree": {"$className": "DataModel",
+                                             "ReplicatedStorage": {"$path": "src/shared"}}}, fh)
+        report = check_mod.run(root, scope=["structure"])
+        assert report["status"] == "fail", report["status"]
+        details = " ".join(c["detail"] for r in report["rungs"] for c in r["checks"])
+        assert "src/shared" in details
+
+
+@check("skills: every reference on disk is routed by SKILL.md")
+
+
+def _():
+    """A reference nobody can reach is dead weight, and the router listing a
+    file that does not exist sends an agent to a 404. Both directions checked."""
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "skills", "roblox-game-development")
+    skill = open(os.path.join(root, "SKILL.md"), encoding="utf-8").read()
+    refs = sorted(n for n in os.listdir(os.path.join(root, "references")) if n.endswith(".md"))
+    for name in refs:
+        assert "references/%s" % name in skill, (
+            "%s exists but SKILL.md never routes to it" % name)
+    for token in set(__import__("re").findall(r"references/([\w-]+\.md)", skill)):
+        assert token in refs, "SKILL.md routes to missing reference %s" % token
+
+
+@check("verification: receipts chain by digest")
+
+
+def _():
+    from rbforge import verification
+    with _isolated_home() as home:
+        first = verification.receipt("slice one", checks=["core_loop_exists"], save=True)
+        second = verification.receipt("slice two", checks=["core_loop_exists"], save=True)
+        assert first["digest"] and second["digest"]
+        assert first["prev_digest"] is None or isinstance(first["prev_digest"], str)
+        assert second["prev_digest"] == first["digest"], (
+            "second receipt must chain to the first, otherwise the trail is flat")
+        assert first["digest"] != second["digest"]
+
+
+@check("doctor: renders when a studio reports no place name")
+
+
+def _():
+    from rbforge import doctor
+    report = {
+        "version": "test",
+        "studio": {"studio_installed": True, "studio_version": "version-x",
+                   "studio_process": {"running": True},
+                   "mcp_enabled_setting": {"enabled": True},
+                   "mcp_launcher_found": True,
+                   "active_places": [None, "Real Place"]},
+        "mcp_probe": {"responding": True, "tool_count": 34, "error": None},
+        "docs": {"present": False},
+        "toolchain": {},
+        "agents": {},
+        "capabilities_by_status": {},
+    }
+    text = doctor.render(report)
+    assert "Real Place" in text
+
+
+# ---------------------------------------------------------------- plugins
+
+@check("plugins: detects known tools and always names a free alternative")
+
+
+def _():
+    from rbforge import plugins
+    with tempdir() as root:
+        open(os.path.join(root, "ForgeGUI.rbxm"), "wb").close()
+        open(os.path.join(root, "MoonAnimator.rbxm"), "wb").close()
+        open(os.path.join(root, "SomeUnknownThing.rbxmx"), "wb").close()
+        os.environ["RBFORGE_PLUGIN_DIR"] = root
+        try:
+            info = plugins.status()
+        finally:
+            os.environ.pop("RBFORGE_PLUGIN_DIR", None)
+        ids = {k["id"] for k in info["known"]}
+        assert "forgegui" in ids and "moonanimator" in ids, ids
+        assert info["unknown_count"] == 1, info["unknown_count"]
+        assert all(k["free_alternative"] for k in info["known"]), (
+            "a detected paid tool without a free alternative is a paywall")
+        assert "never make them a requirement" in info["note"], info["note"]
+
+
+@check("plugins: no plugin folder is a calm free-path answer")
+
+
+def _():
+    from rbforge import plugins
+    os.environ["RBFORGE_PLUGIN_DIR"] = os.path.join(os.getcwd(), "does-not-exist")
+    try:
+        # force the default location to look empty for this assertion
+        info = plugins.status()
+    finally:
+        os.environ.pop("RBFORGE_PLUGIN_DIR", None)
+    assert info["free_path_is_default"] is True
+    assert "free" in info["note"].lower()
+
+
+@check("free-stack: search_asset filters match the live schema spelling")
+
+
+def _():
+    """`priceFilter` is lowercase and only valid with scope=creator_store.
+    A doc with `priceFilter="Free"` is not a style nit - the call is rejected."""
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "skills", "roblox-game-development", "references")
+    text = open(os.path.join(root, "free-stack.md"), encoding="utf-8").read()
+    assert 'priceFilter="Free"' not in text
+    assert 'scope="CreatorStore"' not in text
+    assert 'priceFilter="free"' in text
+    assert 'scope="creator_store"' in text
+
+
+# ---------------------------------------------------------------- new project
+
+@check("new: one command yields a gated project with a filled-in plan")
+
+
+def _():
+    """The beginner entry point. If PLAN.md ships with empty sections the user
+    gets a scaffold and no idea what to build first."""
+    from rbforge import scaffold
+    with tempdir() as root:
+        target = os.path.join(root, "g")
+        res = scaffold.new_project(target, "obby", "dodge lasers")
+        plan_path = os.path.join(target, "PLAN.md")
+        assert os.path.isfile(plan_path)
+        text = open(plan_path, encoding="utf-8").read()
+        assert "1. " in text, "build order has no numbered steps"
+        assert "- [ ] " in text, "verification list is empty"
+        assert "## Build order" in text and "## Prove it" in text
+        assert "build[]" not in text, "internal key names leaked into user copy"
+        assert "rbforge check" in text
+        assert os.path.isfile(os.path.join(target, "rokit.toml"))
+        assert any("Baseplate" in s for s in res["next_steps"])
+        assert "No purchase" in res["free"]
+
+
 # ---------------------------------------------------------------- helpers (moved above)
 
 if __name__ == "__main__":

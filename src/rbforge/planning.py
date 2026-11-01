@@ -85,7 +85,8 @@ def vertical_slice(genre, premise):
     return {
         "genre": genre.lower(),
         "premise": premise,
-        "rule": "Build ONLY step 1 of build[]. Prove verify[]. Then expand one item at a time.",
+        "rule": "Build ONLY step 1 of the build order. Prove every item in the "
+                "verification list. Then expand one item at a time.",
         "design_gate": {
             "CORE_ACTION": premise,
             "FEEDBACK": "what does the player see/hear within 0.1s of acting?",

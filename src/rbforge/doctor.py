@@ -56,7 +56,9 @@ def render(report):
     elif p.get("responding"):
         lines.append(_line("Studio MCP handshake", "responding (%d tools)" % p["tool_count"]))
         places = s.get("active_places") or []
-        lines.append(_line("Active place(s)", ", ".join(places) if places else
+        # str() because a Studio with an unsaved place can report no name at all;
+        # that used to raise inside join() and take the whole report down.
+        lines.append(_line("Active place(s)", ", ".join(str(p) for p in places if p) if places else
                            "(none - open a place to build)",
                            "open a place in Studio" if not places else None))
         if s.get("multiple_studio_sessions"):
