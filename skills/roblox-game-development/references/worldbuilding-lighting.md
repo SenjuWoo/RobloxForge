@@ -121,6 +121,39 @@ Rules:
 - **Verify with a framed screenshot**, not the default viewport ("Framing a
   screenshot as evidence" in `studio-mcp.md`).
 
+## Lighting style
+
+`Lighting.LightingStyle = Enum.LightingStyle.Realistic` (with
+`PrioritizeLightingQuality = true`) is writable from `execute_luau` and from the
+Rojo project file; `Lighting.Technology` is not writable from script context.
+Record lighting in `default.project.json` so a fresh sync keeps it.
+
+## Mechanisms that read as real
+
+A door, gate or shutter sells a place when it has travel time, easing, a state
+light and a consequence. Pattern used for an anchored blast gate:
+
+- one collidable leaf part carries the state attributes (`IsOpen`, HP) - the
+  existing server contract stays one part;
+- every detail part (ribs, stripes, bolts, lettering) is captured once as an
+  offset from the leaf and moved with `workspace:BulkMoveTo` each Heartbeat;
+- smoothstep easing over ~2.5 s, a tiny lateral shake mid-travel, a dust
+  emitter while moving, sparks on the closing slam, status lights amber while
+  moving then cyan/red; a token cancels an animation that is interrupted;
+- sounds are optional instances created only when an asset id exists.
+
+## Procedural kit habits
+
+- Build in a local frame (`scope(parent, frame)` returning `p`, `beam`, `rod`,
+  `post` helpers) so the same code places six plots or a rotated ship.
+- One palette per area; jitter colours +-8 % per panel instead of introducing
+  new hues. Panelise large surfaces (brick-bond offsets) instead of one slab.
+- Every prop must touch something: run the connectivity proof
+  (`testing-debugging.md`).
+- Isolate private areas from the shared world with sightline blockers (berms,
+  terrain, a dome or fog) - a player who can see six other bases from home
+  stops believing in either.
+
 ## Streaming and large maps
 
 If the map grows past roughly 2 km or 20k parts, enable streaming rather than

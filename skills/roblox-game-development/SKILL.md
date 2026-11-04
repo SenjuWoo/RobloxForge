@@ -79,6 +79,7 @@ without calling it.
 ## References (load only what the task needs)
 
 - `references/studio-mcp.md` - all 34 live tools, exact argument quirks, subagents
+- `references/live-iteration.md` - disk-to-Studio sync, require-cache rebuilds, capture limits, camera restore
 - `references/development-loop.md` - the vertical-slice method per genre
 - `references/architecture.md` - ownership, three-stage loader, dependency injection
 - `references/security-networking.md` - remotes, buffer serialization, validation

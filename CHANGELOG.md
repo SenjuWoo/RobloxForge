@@ -3,6 +3,34 @@
 All notable changes to RobloxForge. Versions are pre-1.0; the skill reference
 set and the `rb_*` tool surface are the public contract.
 
+## 0.5.0 — 2026-11-04
+
+Field notes from a long procedural build (a 9,000-part ship, six outposts with
+tunnels and an animated blast gate, a rebuilt HUD) driven entirely through the
+official Studio MCP. Every item cost at least one wasted round trip first.
+
+### Added
+- `references/live-iteration.md`: disk-to-Studio sync without `rojo serve`
+  (loopback server + `HttpEnabled` restored in the same call), rebuilding from
+  module clones because Edit `require` caches per instance, why a Play-mode
+  `require` sees an empty copy of a manager (use a temporary Script or the
+  Client datamodel to fire the real remote), what captures cannot show
+  (SurfaceGuis in Edit captures; Play captures show the client viewport and
+  HUD), restoring the editor camera after `execute_luau`, and saving around the
+  automation guard.
+- `templates/studio/`: `dev-rebuild.luau`, `connectivity.luau` (union-find
+  floating-part proof) and `route-matrix.luau` (pathfinding proof from every
+  entry), formatted and selene-clean with their own `selene.toml`/`stylua.toml`.
+- `sharp-edges.md` "Engine traps found in real builds": `BulkMoveMode` members,
+  SurfaceGui Front is -Z, anchored assemblies ignore welds (move with
+  `BulkMoveTo`), lights inside a part's voxel, `LightingStyle` vs `Technology`,
+  no audio generator in the Audio API, `FillBlock` overwrites hollow interiors,
+  `CorrodedMetal` colour multiplication, pathfinding vs thin collidables, and
+  the spawn-before-world race.
+- `testing-debugging.md` "Geometry proofs"; `worldbuilding-lighting.md`
+  lighting style, believable mechanisms and procedural kit habits (including
+  isolating private areas from the shared world).
+
 ## 0.4.0 — 2026-11-04
 
 The Forge ships its own pinned Luau toolchain instead of only recommending it.

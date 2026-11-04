@@ -10,9 +10,13 @@ claim checkable.
 
 ## Version
 
-0.4.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.5.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## Done (verified)
+
+- 0.5.0: live-iteration reference, engine traps, geometry proofs and
+  `templates/studio/` snippets from a real procedural build; snippets pass
+  stylua + selene through `rbforge check` (luau-lsp skipped: no definitions).
 
 - `rbforge check` gate: rungs 1-3 offline (format/lint/types, Lune unit specs,
   structural audit). Verified against a negative fixture that triggers

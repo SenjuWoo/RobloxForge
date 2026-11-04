@@ -109,6 +109,23 @@ the quota rather than retrying in a loop. Verify current limits in the docs
 before designing a pipeline around them - they are not the same as the
 documented per-minute figure, and they change.
 
+## Geometry proofs (procedural worlds)
+
+Screenshots miss floating props and blocked doorways. Two cheap Luau checks
+catch them; templates live in `templates/studio/`.
+
+- **Connectivity (`connectivity.luau`)** - union-find over every queryable
+  part in a model, joining parts whose boxes touch within a small margin
+  (`GetPartBoundsInBox` with an include filter). Everything not in the largest
+  component is "floating". Run it after every geometry change; target 0.
+  Mark invisible text carriers `CanQuery = false` so they are ignored.
+- **Route matrix (`route-matrix.luau`)** - `PathfindingService` from every
+  entry point to every room/objective with the real agent size, from both
+  approach directions. Report failures by label; target 0.
+- **Census** - count the things the game depends on (prompts per
+  `PromptKind`, gates, spawn pads) after a full server build. A builder that
+  silently skips one plot shows up here, not in a screenshot.
+
 ## Console triage: read the first error, not the loudest
 
 1. `get_console_output` immediately after `start_stop_play`.
