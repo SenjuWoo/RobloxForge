@@ -41,9 +41,9 @@ Write-Host ''
 
 $failed = 0
 function Invoke-Rbforge {
-  param([string]$Label, [string[]]$Args)
+  param([string]$Label, [string[]]$CliArgs)
   Write-Host "-> $Label"
-  & $py.Source $cli @Args
+  & $py.Source $cli @CliArgs
   # $LASTEXITCODE, not $? : a non-zero exit from a native/py process does not
   # trip $? reliably on PS 5.1, and this script must report a real failure.
   if ($LASTEXITCODE -ne 0) {
@@ -53,13 +53,13 @@ function Invoke-Rbforge {
   Write-Host ''
 }
 
-Invoke-Rbforge -Label "skills install $Agent" -Args @('skills', 'install', $Agent)
-if ($ConnectMcp) { Invoke-Rbforge -Label "agent connect $Agent" -Args @('agent', 'connect', $Agent) }
-if ($Docs)       { Invoke-Rbforge -Label 'docs update'          -Args @('docs', 'update') }
+Invoke-Rbforge -Label "skills install $Agent" -CliArgs @('skills', 'install', $Agent)
+if ($ConnectMcp) { Invoke-Rbforge -Label "agent connect $Agent" -CliArgs @('agent', 'connect', $Agent) }
+if ($Docs)       { Invoke-Rbforge -Label 'docs update'          -CliArgs @('docs', 'update') }
 
 # --no-probe: the live MCP handshake needs Roblox Studio open, and an install
 # must not fail merely because the user has not started Studio yet.
-Invoke-Rbforge -Label 'doctor --no-probe' -Args @('doctor', '--no-probe')
+Invoke-Rbforge -Label 'doctor --no-probe' -CliArgs @('doctor', '--no-probe')
 
 if ($failed) {
   Write-Warning "$failed step(s) reported problems (see above)."

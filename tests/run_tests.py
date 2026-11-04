@@ -6,6 +6,7 @@ Fixture-based; exercises every core module against synthetic state.
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import contextlib
@@ -566,6 +567,18 @@ def _():
         assert os.path.isfile(os.path.join(target, "rokit.toml"))
         assert any("Baseplate" in s for s in res["next_steps"])
         assert "No purchase" in res["free"]
+
+
+@check("scripts: no PowerShell helper declares the automatic $Args")
+def _():
+    """`param(... $Args)` is shadowed by PowerShell's automatic $args, so
+    `@Args` splats nothing: Install.ps1 printed usage and installed no skills."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name in sorted(os.listdir(root)):
+        if name.endswith(".ps1"):
+            text = open(os.path.join(root, name), encoding="utf-8-sig").read()
+            assert not re.search(r"\[string\[\]\]\$Args\b", text, re.I), name
+            assert "@Args" not in text, name
 
 
 # ---------------------------------------------------------------- helpers (moved above)

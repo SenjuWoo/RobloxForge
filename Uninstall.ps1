@@ -51,9 +51,9 @@ if ($WhatIfOnly) {
 
 $failed = 0
 function Invoke-Rbforge {
-  param([string]$Label, [string[]]$Args)
+  param([string]$Label, [string[]]$CliArgs)
   Write-Host "-> $Label"
-  & $py.Source $cli @Args
+  & $py.Source $cli @CliArgs
   if ($LASTEXITCODE -ne 0) {
     Write-Warning "$Label exited $LASTEXITCODE"
     $script:failed++
@@ -64,8 +64,8 @@ function Invoke-Rbforge {
 # agent BEFORE skills is deliberate: disconnect removes the MCP server entry,
 # which is the one that breaks an agent's startup if it is left pointing at a
 # deleted path. Skills that linger are noise; a dead MCP entry is a failure.
-Invoke-Rbforge -Label "agent disconnect $Agent" -Args @('agent', 'disconnect', $Agent)
-Invoke-Rbforge -Label "skills remove $Agent"    -Args @('skills', 'remove', $Agent)
+Invoke-Rbforge -Label "agent disconnect $Agent" -CliArgs @('agent', 'disconnect', $Agent)
+Invoke-Rbforge -Label "skills remove $Agent"    -CliArgs @('skills', 'remove', $Agent)
 
 Write-Host 'Remaining:'
 & $py.Source $cli skills status

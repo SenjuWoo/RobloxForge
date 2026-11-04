@@ -58,9 +58,9 @@ if (-not $SkipPull) {
 
 $failed = 0
 function Invoke-Rbforge {
-  param([string]$Label, [string[]]$Args)
+  param([string]$Label, [string[]]$CliArgs)
   Write-Host "-> $Label"
-  & $py.Source $cli @Args
+  & $py.Source $cli @CliArgs
   if ($LASTEXITCODE -ne 0) {
     Write-Warning "$Label exited $LASTEXITCODE"
     $script:failed++
@@ -70,9 +70,9 @@ function Invoke-Rbforge {
 
 # `skills update` is the same code path as install (see rbforge_cli._dispatch),
 # so this overwrites the copies in each agent home with the freshly pulled ones.
-Invoke-Rbforge -Label "skills update $Agent" -Args @('skills', 'update', $Agent)
-if ($Docs) { Invoke-Rbforge -Label 'docs update' -Args @('docs', 'update') }
-Invoke-Rbforge -Label 'doctor --no-probe' -Args @('doctor', '--no-probe')
+Invoke-Rbforge -Label "skills update $Agent" -CliArgs @('skills', 'update', $Agent)
+if ($Docs) { Invoke-Rbforge -Label 'docs update' -CliArgs @('docs', 'update') }
+Invoke-Rbforge -Label 'doctor --no-probe' -CliArgs @('doctor', '--no-probe')
 
 if ($failed) {
   Write-Warning "$failed step(s) reported problems (see above)."

@@ -3,6 +3,14 @@
 All notable changes to RobloxForge. Versions are pre-1.0; the skill reference
 set and the `rb_*` tool surface are the public contract.
 
+## 0.3.1 — 2026-11-04
+
+### Fixed
+- `Install.ps1`, `Update.ps1` and `Uninstall.ps1` named their helper parameter `$Args`, a PowerShell
+  automatic variable, so every `rbforge` call ran with no arguments: the scripts printed usage and installed,
+  updated or removed nothing (and skipped `doctor`). The parameter is now `$CliArgs`; a test rejects `$Args`
+  parameters in any shipped script.
+
 ## 0.3.0 — 2026-11-01
 
 The free-only guarantee, a beginner entry point, and optional plugin awareness.
