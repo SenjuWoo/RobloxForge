@@ -33,6 +33,12 @@ Treat these as a snapshot; verify before pinning a new project.
 Pinned form for a project lives in `templates/source-controlled/rokit.toml`
 (`rokit install` reads it). Copy it, do not hand-edit versions from memory.
 
+The Forge checkout pins the same set at its own root `rokit.toml` and can
+install it with `tools/install-toolchain.ps1` (or `Install.ps1 -Toolchain`).
+That also adds a global rokit manifest, so the tools resolve in *any*
+directory — `rbforge check` runs in a fixture dir, not a project dir, and a
+bare shim with no manifest errors instead of skipping.
+
 ## The gate works without any of this
 
 `rbforge check` degrades honestly: each missing tool is reported as `skip`, and

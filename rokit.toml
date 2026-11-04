@@ -1,0 +1,20 @@
+# RobloxForge pinned toolchain.
+#
+# `rokit install` reads this file and puts exactly these versions in ~/.rokit/bin,
+# so a machine, a CI runner and an agent worktree all format, lint and typecheck
+# identically. Versions verified against upstream GitHub releases 2026-11-01;
+# `rokit update` when you deliberately want to move.
+#
+# Every tool here is optional for a Studio-native prototype. `rbforge check`
+# reports each absent one as a skip and refuses to call the run a pass.
+# Install them with:  .\\tools\\install-toolchain.ps1
+
+[tools]
+rojo = "rojo-rbx/rojo@7.7.1"
+wally = "UpliftGames/wally@0.3.2"
+wally-package-types = "JohnnyMorganz/wally-package-types@1.7.0"
+luau-lsp = "JohnnyMorganz/luau-lsp@1.70.1"
+selene = "Kampfkarren/selene@0.32.0"
+stylua = "JohnnyMorganz/StyLua@2.6.0"
+lune = "lune-org/lune@0.11.1"
+run-in-roblox = "rojo-rbx/run-in-roblox@0.3.0"

@@ -3,6 +3,29 @@
 All notable changes to RobloxForge. Versions are pre-1.0; the skill reference
 set and the `rb_*` tool surface are the public contract.
 
+## 0.4.0 — 2026-11-04
+
+The Forge ships its own pinned Luau toolchain instead of only recommending it.
+
+### Added
+- Root `rokit.toml` pinning the full set the template recommends: rojo 7.7.1,
+  StyLua 2.6.0, selene 0.32.0, luau-lsp 1.70.1, lune 0.11.1, wally 0.3.2,
+  wally-package-types 1.7.0, run-in-roblox 0.3.0.
+- `tools/install-toolchain.ps1`: installs rokit via cargo when missing, then
+  `rokit self-install`, `rokit add --global` for every pinned tool and
+  `rokit install` from the checkout's manifest, and prints each version.
+  `Install.ps1 -Toolchain` runs it.
+- `rb_toolchain_status` now also searches `~/.rokit/bin`, so a shell started
+  before the install still reports the tools as found.
+
+### Why the global manifest matters
+The rokit shims in `~/.rokit/bin` resolve a tool from the *nearest* manifest.
+`rbforge check` runs in a fixture directory with no manifest at all, so a bare
+shim exits with "Failed to find tool" — which the gate reads as a defect (`fail`)
+instead of a skip, turning a green run red on any machine that installed rokit
+but never added anything globally. The global manifest makes the shims resolve
+everywhere; the pinned project's own manifest still wins inside that project.
+
 ## 0.3.1 — 2026-11-04
 
 ### Fixed

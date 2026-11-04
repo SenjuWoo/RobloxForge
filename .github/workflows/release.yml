@@ -41,6 +41,7 @@ jobs:
           git archive --format=zip --prefix="$name/" -o "$name.zip" \
             "$GITHUB_REF_NAME" \
             src mcp_server skills scripts templates knowledge assets \
+            tools rokit.toml \
             Install.ps1 Update.ps1 Uninstall.ps1 START-HERE.bat \
             README.md CHANGELOG.md LICENSE SECURITY.md THIRD-PARTY-NOTICES.md \
             CONTRIBUTING.md CODE_OF_CONDUCT.md

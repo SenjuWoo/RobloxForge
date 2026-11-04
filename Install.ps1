@@ -17,7 +17,11 @@ param(
   [switch]$ConnectMcp,
   # Fetch the creator-docs cache (~27 MB via git). Off by default: it is a
   # large network fetch and `docs update` can be run any time.
-  [switch]$Docs
+  [switch]$Docs,
+  # Install the pinned Luau toolchain (rokit + rojo/stylua/selene/...) so
+  # `rbforge check` runs for real instead of reporting `incomplete`. This is
+  # a network fetch of ~50 MB and can be re-run any time.
+  [switch]$Toolchain
 )
 $ErrorActionPreference = 'Stop'
 
@@ -56,6 +60,18 @@ function Invoke-Rbforge {
 Invoke-Rbforge -Label "skills install $Agent" -CliArgs @('skills', 'install', $Agent)
 if ($ConnectMcp) { Invoke-Rbforge -Label "agent connect $Agent" -CliArgs @('agent', 'connect', $Agent) }
 if ($Docs)       { Invoke-Rbforge -Label 'docs update'          -CliArgs @('docs', 'update') }
+if ($Toolchain) {
+  Write-Host '-> install Luau toolchain'
+  $toolchainScript = Join-Path $root 'tools\install-toolchain.ps1'
+  if (Test-Path -LiteralPath $toolchainScript -PathType Leaf) {
+    & $toolchainScript
+    if ($LASTEXITCODE -ne 0) { $failed++; Write-Warning "toolchain exited $LASTEXITCODE" }
+  } else {
+    Write-Warning 'tools/install-toolchain.ps1 not found in this checkout.'
+    $failed++
+  }
+  Write-Host ''
+}
 
 # --no-probe: the live MCP handshake needs Roblox Studio open, and an install
 # must not fail merely because the user has not started Studio yet.

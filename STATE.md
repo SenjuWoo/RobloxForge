@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.3.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.4.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## Done (verified)
 
@@ -40,6 +40,15 @@ claim checkable.
   beginner playbook.
 - Toolchain pins verified against upstream releases; `rokit.toml` shipped in
   the source-controlled template and in scaffolds.
+- 0.4.0 (2026-11-04): the checkout ships its own pinned `rokit.toml` and
+  `tools/install-toolchain.ps1` (also `Install.ps1 -Toolchain`), which installs
+  rokit via cargo, adds a *global* manifest so the shims resolve everywhere,
+  and `rokit install`s the pin. `rb_toolchain_status` also searches
+  `~/.rokit/bin`. Verified on Windows: all 8 tools resolve and report versions,
+  `rbforge check` runs rung 1 for real, test suite 34/34.
+  Related bug found and fixed: a bare rokit shim in a fixture dir exits
+  "Failed to find tool", which the gate read as `fail` instead of `skip` —
+  that is why the global manifest is part of the installer, not a detail.
 - Creator-docs cache populated on this machine (2,214 docs, sparse clone) — so
   `rb_docs_search` / `rb_docs_read` actually answer.
 - Skills installed into every Hermes profile root plus Claude/Codex/Grok
@@ -50,15 +59,13 @@ claim checkable.
 
 - Run the E2E weak-model benchmark (`tests/agent-benchmarks/01-weak-model-obby.md`)
   — the only thing blocking 1.0.0.
-- Optional and deliberate: install the pinned toolchain so rungs 1-2 stop
-  reporting `incomplete` — `winget install rokit` (or cargo), then
-  `rokit install` inside a project that has `rokit.toml`.
 
 ## Known gaps (honest)
 
-- No Luau toolchain on PATH, so `rbforge check` currently exercises the
-  structural rung only and reports `incomplete`. That is the designed
-  behaviour, not a silent pass.
+- The toolchain is shipped but not installed on every machine. `rbforge check`
+  reports `incomplete` wherever `tools/install-toolchain.ps1` has not been run.
+  That is the designed behaviour, not a silent pass. CI runners are in this
+  state by default (no Roblox, no network in the gate job).
 - `verification.py` receipts are static evidence records; there is no automated
   Studio checkpoint/undo. Rule 7 in `SKILL.md` asks the agent to name a
   ChangeHistoryService waypoint before mutating; it is not enforced in code.
