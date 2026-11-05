@@ -199,3 +199,46 @@ Rule of thumb for a coherent world without spending anything:
 Randomise with a **seeded** generator (`Random.new(seed)`), never `math.random`
 for layout: a re-run must reproduce the same world, or you cannot tell a
 regression from a reshuffle.
+
+## Uploading generated images through the Studio MCP
+
+`upload_image` takes **http(s) URLs**, not file paths, and uploads into the
+signed-in account. The loop that works:
+
+1. Generate the PNG locally (Pillow + numpy are enough; nothing is bought).
+2. Serve the folder: `python -m http.server 8791 --bind 127.0.0.1`, or
+   `python scripts/serve_assets.py --dir <folder> --port 8791`.
+3. Call `upload_image` with `http://127.0.0.1:8791/<name>.png` for every file;
+   it returns `{url: "rbxassetid://<id>"}`.
+4. Store the ids in config. Never re-upload on every run — the account asset
+   list is the record.
+5. `ContentProvider:PreloadAsync(ids)` on the client, and keep a painted
+   fallback underneath every ImageLabel: 225 slices still stream in over ~15 s,
+   and Studio edit mode does not fetch textures at all.
+
+Constraints that shaped the design:
+
+- Roblox clamps an upload to **1024 px** on its longest side, so a panorama is
+  1024x512, not 4096x2048. Across 32 segments that is ~32 px per panel: sharp at
+  distance, visibly pixelated up close - which is exactly what a simulated
+  display should look like.
+- Uploading is a real write to the owner's account. Ask before the first one and
+  record the ids in the repo so nobody has to repeat it.
+
+### Equirectangular projection onto a dome
+
+For azimuth `th` and elevation `phi` (0 at the horizon, pi/2 at the zenith),
+each panel takes its slice of one shared panorama:
+
+```
+u0 = th0 / (2*pi)          u1 = th1 / (2*pi)
+v0 = 1 - phi1 / (pi/2)     v1 = 1 - phi0 / (pi/2)
+ImageRectOffset = (round(u0*W), round(v0*H))
+ImageRectSize   = (max(1, round(u1*W) - round(u0*W)),
+                   max(1, round(v1*H) - round(v0*H)))
+```
+
+Round **both edges** from the shared boundary, never the width: rounding widths
+independently makes each seam drift a pixel and the joins visibly crawl. Keep
+the generator seamless in `u` (integer-frequency sine sums, or blur the noise
+field with a wrap) and the seam hides behind a strut.

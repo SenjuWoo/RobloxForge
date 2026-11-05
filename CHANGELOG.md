@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.6.0 - 2026-11-04
+
+Field notes from building a projected-sky dome: 225 SurfaceGui panels per plot,
+five generated panorama assets uploaded through the Studio MCP, and six plots
+rebuilt in edit mode so the editor matched the runtime.
+
+### Added
+- `references/sharp-edges.md`: a screen-surface section - which `SurfaceGui.Face`
+  a matrix-built panel needs (probe, do not guess), RenderStepped dying on its
+  first error, client caches capturing a half-built world, the edit-session
+  `require` cache and how to bust it, corner gaps on planar panels over a curved
+  shell, the floating base ring of an ellipsoid, and shells that silently wall a
+  walk route.
+- `references/assets.md`: the generated-image upload loop (`upload_image` wants
+  URLs; serve the folder over loopback), the 1024 px clamp, preload plus painted
+  fallback, and the equirectangular slice maths for dome projection including the
+  round-both-edges rule that keeps seams from crawling.
+- `references/testing-debugging.md`: geometry tests must wait for `WorldReady`,
+  and the assertion has to carry the failure detail.
+- `scripts/serve_assets.py`: loopback static server for the upload loop.
+
+### Why
+Each entry above cost a wasted Studio boot in a real session. The dome shipped;
+these are the parts that were not obvious until the capture looked wrong.
+
 All notable changes to RobloxForge. Versions are pre-1.0; the skill reference
 set and the `rb_*` tool surface are the public contract.
 

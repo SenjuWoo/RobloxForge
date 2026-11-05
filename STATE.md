@@ -10,9 +10,11 @@ claim checkable.
 
 ## Version
 
-0.5.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.6.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## Done (verified)
+
+- 0.6.0: screen-surface traps (SurfaceGui face direction, RenderStepped death, stale client caches, edit-session require cache, planar panel gaps, floating base ring, shells that wall routes), the generated-image upload loop with the equirectangular slice maths, geometry-test readiness rules, and `scripts/serve_assets.py`.
 
 - 0.5.0: live-iteration reference, engine traps, geometry proofs and
   `templates/studio/` snippets from a real procedural build; snippets pass

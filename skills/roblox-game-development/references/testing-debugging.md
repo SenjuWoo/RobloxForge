@@ -138,3 +138,15 @@ catch them; templates live in `templates/studio/`.
    server never creates. Do not add a longer timeout; find the missing instance.
 5. Re-run the *same* scenario after the fix. A different path proves nothing
    about the one that broke.
+
+## Geometry tests run against a world that does not exist yet
+
+The world builder is asynchronous. A route or clearance test fired immediately
+after `start_stop_play` reports hundreds of failures that all mean "nothing has
+been built": 126 failures across five plots in one run, zero after the same test
+waited for `workspace:GetAttribute("WorldReady")`. Start every geometry test
+with a bounded wait for the ready flag, then assert it.
+
+Make the assertion carry the detail. `assert(#failures == 0, "6 checks failed")`
+costs another whole play cycle to diagnose; embedding the first six failure
+strings in the message turned that round trip into a five-second read.

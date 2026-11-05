@@ -76,3 +76,41 @@ first build session.
 - Building 15 systems before proving one loop.
 - Trusting client-sent numbers because "it's just a prototype" - prototypes
   get published.
+
+## Screen surfaces (dome walls, billboards, in-world displays)
+
+Field notes from building a 225-panel projection dome across six plots. Each one
+was invisible in the code and obvious in the capture.
+
+- **`SurfaceGui.Face` is not "the side you can see".** A panel built with
+  `CFrame.fromMatrix(centre, right, up)` has its LookVector along `right × up`,
+  which on an inward-facing shell points *outward*, so the screen belongs on
+  `Enum.NormalId.Back`. Probe before painting 200 panels:
+  `panel.CFrame.LookVector:Dot((centre - panel.Position).Unit)`. Negative means
+  the LookVector points away from the interior: use `Back`.
+- **A RenderStepped connection dies on its first error**, silently and
+  permanently. Everything after the throw stops for the rest of the session.
+  Put optional visual passes on their own connection, wrap the body in `pcall`,
+  and write the message to a workspace attribute you can read back.
+- **A client cache built during world construction is permanently wrong.** A
+  display pass scanned the dome while it was still being built, cached 62 of 225
+  panels, and because the table was non-empty it never refreshed — the whole
+  feature did nothing with no error. Publish a `PanelCount` attribute on the
+  server after building and recache whenever the client's count disagrees.
+- **Edit `require` caches a ModuleScript for the whole session.** Pushing new
+  source into Studio does not invalidate it: a rebuild used a `GameConfig` from
+  before a field existed and died with `attempt to index nil with 'Ground'`.
+  Bust it by cloning the module, parenting the clone under the same name,
+  destroying the original, then requiring the clone.
+- **Planar panels on a curved shell leave wedge gaps at the corners**, and the
+  world sky leaks through as bright spikes on a bright screen. Fix both ends:
+  overlap each panel ~12 % past its true quad, and put a dark backing slab behind
+  it so any pinhole reads as bezel instead of sky.
+- **An ellipsoid's base ring does not touch the ground.** When the dome centre
+  sits at courtyard height, the wall floats and players walk out underneath. Add
+  a skirt ring and leave exactly one opening, skipping segments whose
+  *endpoints* fall in the corridor — a midpoint-only test skipped nothing and
+  walled the tunnel.
+- **Any new collidable shell can invalidate walk routes.** After adding a skirt,
+  wall or gate, re-run the route test: the tunnel went `NoPath` on all six plots
+  while the capture looked perfect.
