@@ -102,6 +102,12 @@ def scan_text(rel, text):
         add("T022", "high", n,
             "a cloned weapon keeps the welds that bind it to the hand; welded to an anchored viewmodel it flings the player",
             "destroy JointInstance/Constraint in the clone before welding it to the camera", REF + "animation.md")
+    m = re.search(r'[\"\'][A-Za-z]*(Tendril|Nodule|Vein|Decor|Foliage|Pine|Blossom|Cable|Rust[A-Za-z]*)[\"\'][^\n]*,\s*true\s*\)', text)
+    if m and "CanCollide" not in text[m.start():m.start() + 400]:
+        n = text.count("\n", 0, m.start()) + 1
+        add("T025", "high", n,
+            "decorative geometry created with collision: players snag on it and probes report it as a wall",
+            "pass collide=false and set CanCollide/CanQuery false on decor parts", REF + "sightlines-and-openings.md")
     m = re.search(r'GetAttribute\(\s*[\"\']Debug', text)
     if m and "IsStudio()" not in text:
         n = text.count("\n", 0, m.start()) + 1

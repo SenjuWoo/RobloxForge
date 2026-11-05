@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.4 - 2026-11-05
+
+### Added
+- Trap rule **T025**: decorative geometry (tendril, nodule, vein, foliage, cable, rubble) created with collision -
+  players snag on it and "is this corridor clear" probes lie. Asserted positive and negative.
+- `sightlines-and-openings.md`: **decorative geometry is not structure** - `CanCollide`/`CanQuery` false on decor, and
+  clamp generated growth to the room's own bounds at creation, or it renders through the door and under the deck.
+
 ## 0.11.3 - 2026-11-05
 
 ### Added

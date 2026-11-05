@@ -637,6 +637,9 @@ def _():
     trig = 'local on = player:GetAttribute("DebugFirstPerson")'
     assert "T024" in ids("src/client/move.luau", trig)
     assert "T024" not in ids("src/client/move.luau", "local on = RunService:IsStudio() and player:GetAttribute(\"DebugFirstPerson\")")
+    deco = 'w.rod("Tendril", a, b, 1, flesh, M.Slate, true)'
+    assert "T025" in ids("src/server/t.server.luau", deco)
+    assert "T025" not in ids("src/server/t.server.luau", 'w.rod("Tendril", a, b, 1, flesh, M.Slate, false)')
 
 
 @check("traps: review skips snapshot folders")

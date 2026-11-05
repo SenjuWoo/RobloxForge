@@ -101,3 +101,15 @@ cut panels, a blast door), all aimed at the wrong cause.
 - **One mechanism, and say so in a comment.** If a generator fix and a place fix can
   both own the behaviour, the generator one is authoritative - delete the other and
   write down which survived and why.
+
+## Decorative geometry is not structure
+
+Anything that exists to be looked at - rot, foliage, cables, rubble, decals built as
+parts - must be `CanCollide = false` and usually `CanQuery = false`. A collidable
+tendril snags the player in a doorway, and a queryable one makes every "is this
+corridor clear" probe lie to you.
+
+Generated decor also has to stay inside the volume it decorates. Clamp every node to
+the room's own bounds (above the deck, inside the wall face) at the point of creation:
+a growth that starts 40 studs outside the wall renders through the exit door and under
+the floor, and then reads as a rendering bug rather than a placement one.
