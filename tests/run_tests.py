@@ -581,6 +581,88 @@ def _():
             assert "@Args" not in text, name
 
 
+# ---------------------------------------------------------------- probes + traps
+
+@check("probes: every probe renders with defaults and leaves no placeholder")
+def _():
+    from rbforge import probes
+    cat = probes.catalog()
+    names = {p["name"] for p in cat}
+    for need in ("console", "gui-overflow", "ray-all", "box-scan", "hide", "restore", "camera-pin", "ui-audit"):
+        assert need in names, need
+    for p in cat:
+        r = probes.render(p["name"])
+        assert "{{" not in r["code"], p["name"]
+        assert r["datamodel"] in ("any", "Edit", "Client", "Server"), p["name"]
+        assert "execute_luau" in r["run"] and r["purpose"], p["name"]
+        assert "return" in r["code"], p["name"] + " returns nothing for execute_luau to show"
+
+
+@check("probes: overrides land, unknown names and params are refused")
+def _():
+    from rbforge import probes
+    r = probes.render("whereis", probes.parse_sets(['pattern="ExitDoor"', "limit=5"]))
+    assert '"ExitDoor"' in r["code"] and ", 5" in r["code"]
+    for bad in (lambda: probes.render("nope"), lambda: probes.render("whereis", {"nope": "1"}),
+                lambda: probes.render("whereis", {"pattern": "a\nb"}), lambda: probes.render("../x")):
+        try:
+            bad()
+            raise AssertionError("accepted bad input")
+        except err_mod.ForgeError:
+            pass
+
+
+@check("traps: each rule fires on its pattern and stays quiet on the fix")
+def _():
+    from rbforge import traps
+
+    def ids(rel, text):
+        return {f["id"] for f in traps.scan_text(rel, text)}
+    assert "T003" in ids("a.luau", 'local g = Instance.new("SurfaceGui")')
+    assert "T003" not in ids("a.luau", 'local g = Instance.new("SurfaceGui")\ng.ClipsDescendants = true')
+    assert "T005" in ids("x.server.luau", "local p = game.Players.LocalPlayer")
+    assert "T005" not in ids("x.client.luau", "local p = game.Players.LocalPlayer")
+    assert "T007" in ids("src/client/a.luau", 'Instance.new("RemoteEvent")')
+    assert "T011" in ids("a.server.luau", "local v = store:GetAsync(key)")
+    assert "T011" not in ids("a.server.luau", "local ok, v = pcall(function()\n return store:GetAsync(key)\nend)")
+    assert "T001" in ids("a.luau", "wait(1)") and "T001" not in ids("a.luau", "task.wait(1)")
+    assert "T013" in ids("a.server.luau", "RunService.Heartbeat:Connect(function() r:FireAllClients(1) end)")
+    assert not ids("a.luau", "-- wait(1) in a comment")
+
+
+@check("traps: review skips snapshot folders")
+def _():
+    from rbforge import traps
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        os.makedirs(os.path.join(d, "artifacts", "recovery"))
+        open(os.path.join(d, "default.project.json"), "w").write("{}")
+        open(os.path.join(d, "src", "a.server.luau"), "w").write("wait(1)\n")
+        open(os.path.join(d, "artifacts", "recovery", "b.server.luau"), "w").write("wait(1)\n")
+        res = traps.review(d)
+        files = {f["file"] for f in res["findings"]}
+        assert files == {"src/a.server.luau"}, files
+        assert res["files_skipped"] == 1
+
+
+@check("skills: router links the debugging playbook and the probes")
+def _():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ref = os.path.join(root, "skills", "roblox-game-development")
+    skill = open(os.path.join(ref, "SKILL.md"), encoding="utf-8").read()
+    assert "references/debugging-playbook.md" in skill and "rb_studio_probe" in skill
+    assert os.path.isfile(os.path.join(ref, "references", "debugging-playbook.md"))
+
+
+@check("mcp: probe and traps tools are registered")
+def _():
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location("rbf_server", os.path.join(root, "mcp_server", "server.py"))
+    text = open(spec.origin, encoding="utf-8").read()
+    assert '"rb_studio_probe"' in text and '"rb_traps_review"' in text
+
+
 # ---------------------------------------------------------------- helpers (moved above)
 
 if __name__ == "__main__":

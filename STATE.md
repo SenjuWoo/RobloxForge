@@ -10,9 +10,14 @@ claim checkable.
 
 ## Version
 
-0.9.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.11.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## Done (verified)
+
+- 0.11.0: probes (14, engine-query-safe), trap lint (17 rules) wired to CLI and MCP; `references/debugging-playbook.md`;
+  one shared Studio session for push/exec/probe/servertest. 40/40 tests.
+- 0.10.1: SurfaceGui `ClipsDescendants` is the one-sided flat-colour wall; query helpers skip `CanQuery = false`.
+- 0.10.0 / 0.9.1 / 0.9.2: sight-line diagnosis, runtime builds do not persist, match the pixels before the code.
 
 - 0.9.0: `references/animation.md` - procedural gait, viewmodel recipe, debug-attribute testing, and the welding/scale traps.
 

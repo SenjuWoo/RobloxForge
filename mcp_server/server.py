@@ -179,6 +179,54 @@ def _plugins(a):
 
 # ------------------------------------------------------------------ wire
 
+@tool("rb_studio_probe", {"type": "object", "properties": {
+    "name": {"type": "string", "description": "probe name; omit to list all probes"},
+    "params": {"type": "object", "additionalProperties": {"type": "string"},
+               "description": "parameter overrides as Luau expressions, e.g. {\"pattern\": \"\\\"Door\\\"\"}"},
+    "run": {"type": "boolean", "description": "run it in Studio now and return the output"},
+    "datamodel": {"type": "string", "enum": ["Edit", "Client", "Server"]},
+    "studio_id": {"type": "string"}}},
+      "Ready-made, reviewed Luau diagnostics to pass to the Roblox Studio MCP's execute_luau: "
+      "gui-overflow (SurfaceGui content painting outside its part), ray-all (sight line incl. CanQuery=false "
+      "parts), box-scan (area really clear?), hide/restore (bisect a visual artefact), scene-audit, console "
+      "(deduped errors), camera-pin/camera-free (comparable captures), perf, whereis, ui-audit, player-state, "
+      "remotes. Returns code plus the datamodel to run it in. Prefer these over writing inspection code.")
+def _studio_probe(a):
+    from rbforge import probes
+    if not a.get("name"):
+        return probes.catalog()
+    if a.get("run"):
+        from rbforge import live
+        return live.run_probe(a["name"], a.get("params") or {}, a.get("datamodel"), a.get("studio_id"))
+    return probes.render(a["name"], a.get("params") or {})
+
+
+@tool("rb_studio_push", {"type": "object", "properties": {
+    "paths": {"type": "array", "items": {"type": "string"},
+              "description": "source files mapped by the Rojo project (absolute or relative to project), or [\"ALL\"]"},
+    "project": {"type": "string", "description": "path to default.project.json"},
+    "studio_id": {"type": "string", "description": "omit when one Studio is open"}}, "required": ["paths", "project"]},
+      "Copy script sources from disk into the open Studio place through the official MCP and verify each one "
+      "with a checksum computed inside Studio. Use this instead of pasting big scripts through execute_luau: "
+      "no tokens spent on the source, no whitespace damage, and a proof of what landed.")
+def _studio_push(a):
+    from rbforge import live
+    proj = a["project"]
+    base = os.path.dirname(os.path.abspath(proj))
+    paths = [p if p == "ALL" or os.path.isabs(p) else os.path.join(base, p) for p in a["paths"]]
+    return live.push(paths, proj, a.get("studio_id"))
+
+
+@tool("rb_traps_review", {"type": "object", "properties": {
+    "path": {"type": "string", "description": "project root; omit for cwd"}}},
+      "Engine-trap lint over Luau sources: patterns that compile but break a Roblox game "
+      "(unclipped SurfaceGuis, LocalPlayer on the server, client-created remotes, DataStore calls without "
+      "pcall, per-frame remote spam, deprecated APIs). Each finding has file, line, why, fix and a reference.")
+def _traps_review(a):
+    from rbforge import traps
+    return traps.review(a.get("path") or ".")
+
+
 def _j(obj):
     return json.dumps(obj, indent=2, default=str)
 

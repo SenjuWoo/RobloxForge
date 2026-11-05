@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.11.0 - 2026-11-05
+
+Diagnosis stops being improvised.
+
+### Added
+- **Probes** - 14 reviewed Luau diagnostics with headers (`probe:`, `datamodel:`, `params:`, `purpose:`) in
+  `templates/probes/`: `console`, `gui-overflow`, `ray-all`, `box-scan`, `hide`/`restore`, `camera-pin`/`camera-free`,
+  `scene-audit`, `ui-audit`, `player-state`, `whereis`, `remotes`, `perf`. `rbforge probe [name] [--run key=value]` and
+  MCP `rb_studio_probe` render them with parameter substitution; rendering never executes anything. Every probe exists
+  because an agent burned a Studio boot writing the same inspection code wrong - `ray-all` and `box-scan` include
+  `CanQuery = false` parts, which engine queries skip.
+- **Trap lint** - `rbforge review --kind traps` and MCP `rb_traps_review`: 17 rules for Luau that compiles and still
+  breaks a Roblox game (`wait`, `spawn`/`delay`, `LocalPlayer` on the server, `RenderStepped` on the server, and more),
+  each carrying severity, why it bites, the fix, and the reference that explains it.
+- **`references/debugging-playbook.md`** - symptom -> probe -> cause -> fix, and the fix protocol (reproduce at the
+  reported pose, one decisive test, revert failed attempts, never hide a symptom, never unseal to chase a visual bug).
+  The router skill now points at it first when something looks wrong.
+- **`rbforge live`** (`src/rbforge/live.py`) - one stdio MCP session shared by `push`, `exec`, `probe --run` and
+  `servertest`: pushes are checksum-verified against what Studio holds, and a single open Studio is picked
+  automatically.
+
+### Changed
+- `sharp-edges.md` and `animation.md` corrected against what the engine actually does, not what the previous entries
+  claimed.
+
 ## 0.10.1 - 2026-11-05
 
 ### Fixed (wrong guidance from 0.9.x-0.10.0)

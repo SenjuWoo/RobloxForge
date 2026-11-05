@@ -117,12 +117,12 @@ was invisible in the code and obvious in the capture.
 
 ## Verifying things the MCP cannot press
 
-- **`user_mouse_input` does not drive a camera zoom.** `scrollDown` returns
-  `Success` and the game's `MouseWheel` handler never fires, so a wheel-zoom or
-  first-person feature looks broken when it is not. Do not call it dead: read the
-  state the feature writes (an attribute, a camera distance, a HUD flag) and
-  verify the code path that produces it, then ask the owner for one real scroll
-  to confirm the feel. Treat anything needing a focused viewport or
+- **Wheel input needs the pointer on the viewport.** `user_mouse_input` with a
+  `moveTo` onto the 3D view first, then `scrollUp`, did reach the game's
+  `MouseWheel` handler (first-person zoom verified 2026-11-05). A scroll with no
+  prior `moveTo` may land nowhere. If a scroll seems ignored, do not call the
+  feature dead: read the state it writes (an attribute, a camera distance, a HUD
+  flag) and verify that code path. Treat anything needing a focused viewport or
   `MouseBehavior.LockCenter` the same way.
 - **A SurfaceGui with `Adornee` lives in PlayerGui, not under its part.** Walking
   the part's children for the gui returns nothing and reads as "no panes

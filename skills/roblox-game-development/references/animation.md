@@ -67,8 +67,9 @@ image. What matters, in the order it bites:
 
 ## Verifying it without a mouse
 
-MCP synthetic input cannot turn a mouse wheel, so a zoom-to-first-person feature
-cannot be driven from a test. Add a debug attribute the movement code respects:
+MCP wheel input works when the pointer is moved onto the viewport first (`moveTo`,
+then `scrollUp`), but a test that does not depend on the pointer is sturdier. Add a
+debug attribute the movement code respects:
 
 ```lua
 local firstPerson = st.zoom == 0 or player:GetAttribute("DebugFirstPerson") == true

@@ -72,7 +72,33 @@ def main(argv=None):
     p_rev = sub.add_parser("review", help="static architecture/security review")
     p_rev.add_argument("--path", default=".")
     p_rev.add_argument("--live", action="store_true", help="review the live Studio place")
-    p_rev.add_argument("--kind", default="both", choices=["both", "architecture", "security"])
+    p_rev.add_argument("--kind", default="both", choices=["both", "architecture", "security", "traps", "all"],
+                       help="traps = engine-trap lint (Luau that compiles but breaks in Roblox); all = everything")
+
+    p_probe = sub.add_parser("probe", help="ready-made Luau diagnostics for execute_luau (list, or render one)")
+    p_probe.add_argument("name", nargs="?", help="probe name; omit to list")
+    p_probe.add_argument("--set", action="append", default=[], metavar="KEY=LUAU",
+                         help='override a parameter with a Luau expression, e.g. --set pattern=\"Door\"')
+    p_probe.add_argument("--json", action="store_true", help="emit JSON instead of raw code")
+    p_probe.add_argument("--run", action="store_true", help="run it in Studio now (official MCP) and print the result")
+    p_probe.add_argument("--dm", choices=["Edit", "Client", "Server"], help="datamodel for --run (default: the probe's)")
+    p_probe.add_argument("--studio", help="Studio id for --run (auto when one Studio is open)")
+
+    p_push = sub.add_parser("push", help="set Studio script sources from disk via the official MCP, checksum-verified")
+    p_push.add_argument("paths", nargs="+", help="source files mapped by the Rojo project, or ALL")
+    p_push.add_argument("--project", default="default.project.json")
+    p_push.add_argument("--studio")
+
+    p_exec = sub.add_parser("exec", help="run a Luau file in Studio (official MCP) and print what it returns")
+    p_exec.add_argument("file")
+    p_exec.add_argument("--dm", default="Edit", choices=["Edit", "Client", "Server"])
+    p_exec.add_argument("--studio")
+
+    p_st = sub.add_parser("servertest", help="run a test as a temporary server Script in Play (shares module cache)")
+    p_st.add_argument("file")
+    p_st.add_argument("attr", help="workspace attribute the test sets to 'PASS ...' or 'FAIL ...'")
+    p_st.add_argument("--timeout", type=int, default=120)
+    p_st.add_argument("--studio")
 
     p_proj = sub.add_parser("project", help="analyze an existing project layout")
     p_proj.add_argument("path", nargs="?", default=".")
@@ -183,12 +209,51 @@ def _dispatch(args):
     if args.cmd == "review":
         from rbforge import review
         out = {}
-        if args.kind in ("both", "architecture"):
+        if args.kind in ("both", "architecture", "all"):
             out["architecture"] = review.architecture(path=args.path, live=args.live)
-        if args.kind in ("both", "security"):
+        if args.kind in ("both", "security", "all"):
             out["security"] = review.security(path=args.path, live=args.live)
+        if args.kind in ("traps", "all"):
+            from rbforge import traps
+            out["traps"] = traps.review(args.path)
         _emit(out)
         return ExitCode.OK
+
+    if args.cmd == "probe":
+        from rbforge import probes
+        if not args.name:
+            _emit({"probes": probes.catalog(),
+                   "usage": "rbforge probe <name> [--set key=luau]  ->  paste into execute_luau"})
+            return ExitCode.OK
+        if args.run:
+            from rbforge import live
+            out = live.run_probe(args.name, probes.parse_sets(args.set), args.dm, args.studio)
+            print(out["output"])
+            return ExitCode.OK
+        res = probes.render(args.name, probes.parse_sets(args.set))
+        if args.json:
+            _emit(res)
+        else:
+            print("-- run: %s" % res["run"])
+            print(res["code"])
+        return ExitCode.OK
+
+    if args.cmd == "push":
+        from rbforge import live
+        res = live.push(args.paths, args.project, args.studio)
+        _emit(res)
+        return ExitCode.OK if not res["failed"] else 1
+
+    if args.cmd == "exec":
+        from rbforge import live
+        print(live.run_file(args.file, args.dm, args.studio))
+        return ExitCode.OK
+
+    if args.cmd == "servertest":
+        from rbforge import live
+        res = live.server_test(args.file, args.attr, args.timeout, args.studio)
+        _emit(res)
+        return ExitCode.OK if res["passed"] else 1
 
     if args.cmd == "project":
         from rbforge import project

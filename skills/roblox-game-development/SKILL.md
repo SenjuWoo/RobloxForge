@@ -78,6 +78,12 @@ without calling it.
 
 ## References (load only what the task needs)
 
+**Inspecting a live place?** Never improvise inspection Luau: `rbforge probe <name>` / MCP
+`rb_studio_probe` returns a reviewed snippet (console, gui-overflow, ray-all, box-scan, hide/restore,
+camera-pin, scene-audit, ui-audit, player-state, whereis, remotes, perf) for `execute_luau`.
+Before Studio, run `rbforge review --kind traps` (MCP `rb_traps_review`).
+
+- `references/debugging-playbook.md` - START HERE when something looks or behaves wrong: symptom -> cause -> probe, and the fix protocol
 - `references/studio-mcp.md` - all 34 live tools, exact argument quirks, subagents
 - `references/live-iteration.md` - disk-to-Studio sync, require-cache rebuilds, capture limits, camera restore
 - `references/development-loop.md` - the vertical-slice method per genre
