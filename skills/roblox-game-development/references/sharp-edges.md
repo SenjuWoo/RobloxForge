@@ -169,3 +169,10 @@ was invisible in the code and obvious in the capture.
   spot is clear. Fix it by running the same builder against the **Edit** datamodel
   (`--dm Edit --exec tools/dev_rebuild_all.luau`), then have the owner save the
   place once - without that save the next reopen restores the old state.
+
+- **Blind a screen, do not delete the panel.** When a generated surface shows up
+  where it was never meant to be seen (a panorama band filling a tunnel), removing
+  the panel opens a hole in whatever it was sealing, and the owner reports the hole
+  next. Keep the geometry, keep it out of the material/style pass, and give it the
+  structure colour instead: sealed and invisible at once. Deleting is only right
+  when the panel covers solid structure that already seals the gap.
