@@ -102,6 +102,12 @@ def scan_text(rel, text):
         add("T022", "high", n,
             "a cloned weapon keeps the welds that bind it to the hand; welded to an anchored viewmodel it flings the player",
             "destroy JointInstance/Constraint in the clone before welding it to the camera", REF + "animation.md")
+    m = re.search(r'GetAttribute\(\s*[\"\']Debug', text)
+    if m and "IsStudio()" not in text:
+        n = text.count("\n", 0, m.start()) + 1
+        add("T024", "medium", n,
+            "a Debug* attribute read without an IsStudio guard is a switch any client can flip in a shipped build",
+            "gate it: RunService:IsStudio() and player:GetAttribute(...)", REF + "live-iteration.md")
     m = re.search(r"LocalTransparencyModifier\s*=\s*(saved|prev|original|value)\b", text)
     if m:
         n = text.count("\n", 0, m.start()) + 1

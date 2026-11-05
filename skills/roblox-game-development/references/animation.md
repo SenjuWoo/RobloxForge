@@ -108,3 +108,19 @@ code path the wheel uses.
   stale `1`: the head stays invisible for about a second until the engine corrects
   it. Hide the parts you hide, then restore them to `0`, and never touch
   `HumanoidRootPart`.
+
+### Framing a viewmodel that reads as held
+
+Numbers that survive a 16:9 and a 21:9 window: `SCALE = 0.5` on a
+character-sized weapon, `BASE = CFrame.new(0.22, -0.30, -1.20)` in camera space.
+That covers roughly **12% of the width and 32% of the height** in the lower right;
+bigger than ~20% wide and it reads as a wall, smaller than ~8% and it looks like a
+prop on the floor. Measure it instead of eyeballing: project every part corner with
+`Camera:WorldToViewportPoint` and compare the bounding box to the viewport size.
+
+### One mechanism per job
+
+Two systems solving the same problem is how the tunnel saga restarted twice. When a
+runtime build and a saved build can both own a fix (a shutter in the generated dome
+*and* a throat in the tunnel), pick the one that survives a fresh Play, delete the
+other, and leave a comment saying which one you kept and why.

@@ -634,6 +634,9 @@ def _():
     assert "T022" not in ids("src/client/vm.luau", bugh + '\nfor _, d in ipairs(m:GetDescendants()) do\n if d:IsA("JointInstance") then d:Destroy() end\nend')
     assert "T023" in ids("src/client/vm.luau", "part.LocalTransparencyModifier = saved")
     assert "T023" not in ids("src/client/vm.luau", "part.LocalTransparencyModifier = 0")
+    trig = 'local on = player:GetAttribute("DebugFirstPerson")'
+    assert "T024" in ids("src/client/move.luau", trig)
+    assert "T024" not in ids("src/client/move.luau", "local on = RunService:IsStudio() and player:GetAttribute(\"DebugFirstPerson\")")
 
 
 @check("traps: review skips snapshot folders")

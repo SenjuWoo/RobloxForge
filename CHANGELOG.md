@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.2 - 2026-11-05
+
+### Added
+- Trap rule **T024**: a `Debug*` attribute read without a `RunService:IsStudio()` guard is a switch any client can
+  flip in a shipped build. Asserted positive and negative.
+- `animation.md`: **framing numbers that read as held** (`SCALE 0.5`, `BASE (0.22, -0.30, -1.20)` = ~12% x 32% of the
+  viewport; measure with `WorldToViewportPoint`, do not eyeball) and **one mechanism per job** - pick the fix that
+  survives a fresh Play, delete the duplicate, and comment which one is authoritative.
+
 ## 0.11.1 - 2026-11-05
 
 ### Added
