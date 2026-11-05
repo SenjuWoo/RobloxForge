@@ -152,3 +152,13 @@ was invisible in the code and obvious in the capture.
   is carved along its whole length lies in an open cut with its roof slab
   exposed. Carve the run inside the shell and the far mouth; fill everything
   between and the structure reads as a hillside with an entrance.
+
+- **A runtime world build does not persist.** Terrain carving, dome panels and
+  anything else built by a server script exist only in that session; the saved
+  place still holds whatever geometry was there before. A user who reports a
+  wall, plug or leftover hill blocking a tunnel they can walk in Play is usually
+  looking at **edit mode**, where the carve never happened. Two cheap tells: their
+  screenshot has no HUD (scripts are not running) and a Play ray from the same
+  spot is clear. Fix it by running the same builder against the **Edit** datamodel
+  (`--dm Edit --exec tools/dev_rebuild_all.luau`), then have the owner save the
+  place once - without that save the next reopen restores the old state.

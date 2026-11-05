@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.1 - 2026-11-05
+
+### Fixed
+- `sharp-edges.md`: a runtime world build (terrain carve, generated geometry) never persists into the saved
+  place. A user reporting a wall or plug inside a tunnel playable in Play is usually in edit mode - check for a
+  missing HUD in their screenshot and a clear Play ray before touching geometry, then rebuild against the Edit
+  datamodel and have the owner save once.
+
+
 ## 0.9.0 - 2026-11-05
 
 Procedural animation and first-person viewmodels.
