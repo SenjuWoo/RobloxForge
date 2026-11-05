@@ -85,3 +85,19 @@ cut panels, a blast door), all aimed at the wrong cause.
 - **Rebuild then save.** An Edit-mode rebuild changes the open place only; the owner must
   save (Ctrl+S) or the file on disk still holds the old build.
 
+## Closing an opening: the checklist that survives a rebuild
+
+- **Build the closure where it cannot be lost.** Generated worlds (domes, tunnels,
+  corridors) are usually rebuilt at runtime from scripts, while a hand-placed part
+  lives only in the saved place. If a fix must hold for every session, put it in the
+  generator; if it must hold for every *plot*, take the plot's own coordinates.
+- **World-space scopes are the quiet killer.** A builder scoped at `CFrame.new()`
+  places parts in world space, so a hardcoded `z = 0` puts the closure in exactly one
+  plot out of six and nowhere else. Always pass the plot axis (`plan.cz`) explicitly.
+- **Prove it with state, not a screenshot.** Read the part's `Transparency` at two
+  distances (far = closed, near = open) and count the parts across every plot; a
+  third-person camera inside a tight corridor will jam against walls and show you
+  nothing useful.
+- **One mechanism, and say so in a comment.** If a generator fix and a place fix can
+  both own the behaviour, the generator one is authoritative - delete the other and
+  write down which survived and why.

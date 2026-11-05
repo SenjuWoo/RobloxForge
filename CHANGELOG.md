@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.3 - 2026-11-05
+
+### Added
+- `sightlines-and-openings.md`: **closing an opening** - build the closure in the generator (a saved-place part is lost
+  on the next rebuild), pass the plot axis instead of a hardcoded `0` when the builder is world-scoped, prove it by
+  reading `Transparency` at two distances and counting parts per plot rather than screenshotting a camera wedged in a
+  corridor, and keep exactly one mechanism with a comment naming it.
+
 ## 0.11.2 - 2026-11-05
 
 ### Added
