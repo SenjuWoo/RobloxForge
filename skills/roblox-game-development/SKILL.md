@@ -87,6 +87,7 @@ without calling it.
 - `references/ui-mobile.md` - Fusion 0.3 scoped UI, safe area, touch
 - `references/ui-craft.md` - HUD craft: what reads as agent slop and what to build instead
 - `references/animation.md` - procedural gait and first-person viewmodels on R15
+- `references/sightlines-and-openings.md` - openings show the world: diagnose flat colour/screen artefacts and seal them with structure
 - `references/testing-debugging.md` - five-rung verification ladder, console triage
 - `references/sharp-edges.md` - the traps that break AI-built games
 - `references/game-design.md` - loop design and game-feel ("juice") matrices

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.0 - 2026-11-05
+
+### Added
+- `references/sightlines-and-openings.md`, linked from the router skill: how to diagnose a flat colour, "screen" or
+  panel artefact that only appears from one direction. Covers sampling pixels and matching part colours, testing one
+  system at a time, the signature of world geometry seen through an opening (hard edge plus sky strip), and the fixes
+  that hold: carry structure past the hole, an approaching player opens the door, cut panels by box overlap never by
+  centre, and never delete geometry that seals an opening. Also records the two traps that cost the most time - a
+  runtime world build never persists, and generated geometry is `CanQuery = false` so rays miss it.
+
 ## 0.9.2 - 2026-11-05
 
 ### Added
