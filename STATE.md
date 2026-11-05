@@ -10,9 +10,11 @@ claim checkable.
 
 ## Version
 
-0.7.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.8.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## Done (verified)
+
+- 0.8.0: `references/ui-craft.md` - UI slop tells, build rules, the slop check, and how to use a concept image.
 
 - 0.7.0: MCP input-verification limits (wheel scroll never reaches the game), Adornee'd SurfaceGui lookup, and HUD counting plus LogService error reads.
 

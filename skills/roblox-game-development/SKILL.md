@@ -85,6 +85,7 @@ without calling it.
 - `references/security-networking.md` - remotes, buffer serialization, validation
 - `references/persistence.md` - ProfileStore session locking, migrations, test doubles
 - `references/ui-mobile.md` - Fusion 0.3 scoped UI, safe area, touch
+- `references/ui-craft.md` - HUD craft: what reads as agent slop and what to build instead
 - `references/testing-debugging.md` - five-rung verification ladder, console triage
 - `references/sharp-edges.md` - the traps that break AI-built games
 - `references/game-design.md` - loop design and game-feel ("juice") matrices

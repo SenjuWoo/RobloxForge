@@ -3,4 +3,4 @@
 The live engine belongs to Roblox Studio's built-in MCP server.
 This package owns the intelligence, orchestration and verification layer.
 """
-__version__ = "0.7.0"
+__version__ = "0.8.0"

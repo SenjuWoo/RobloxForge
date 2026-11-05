@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.0 - 2026-11-05
+
+UI craft: why an agent-built HUD reads as slop, and what to build instead.
+
+### Added
+- `references/ui-craft.md`, linked from the router skill. Seven tells a reviewer spots
+  immediately (everything is a rounded rectangle, default fonts, centre-stacked composition,
+  rainbow gradients, emoji icons, uniform spacing, fake progress), the build rules that produced
+  a HUD the owner accepted (legibility by text stroke instead of boxes, strip-built backdrops
+  with a 2D falloff, small-scale furniture like bearing ticks and per-round ticks, 150-250 ms
+  eased motion, three sizes and two weights, 1080p layout plus UIScale, ScreenGui vs 3D visor
+  panes, only expose what the server can do), a slop check to run before claiming done, and how
+  to read a concept image without flattening it into an ImageLabel.
+
+
 ## 0.7.0 - 2026-11-05
 
 Field notes from a HUD refactor and a companion-drone slice.
