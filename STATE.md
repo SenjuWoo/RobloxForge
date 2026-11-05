@@ -10,9 +10,11 @@ claim checkable.
 
 ## Version
 
-0.8.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.9.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## Done (verified)
+
+- 0.9.0: `references/animation.md` - procedural gait, viewmodel recipe, debug-attribute testing, and the welding/scale traps.
 
 - 0.8.1: gradient-vs-background transparency trap and curved-shell opening rules (quad corners, height gate, shell-space flattening).
 

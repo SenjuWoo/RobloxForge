@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0 - 2026-11-05
+
+Procedural animation and first-person viewmodels.
+
+### Added
+- `references/animation.md`, linked from the router skill: the additive layer (`Motor6D.Transform` after the
+  Animator, joint caching, drive from real speed), a gait that reads as movement (two-joint legs, damped arm
+  counter-swing while aiming, neck counter-rotation, airborne tuck, landing squash, idle breath), and the
+  viewmodel recipe (one anchor and welds, scale for the eye, palette lift plus key light, hide the whole body,
+  hands, sway/bob/recoil/reload on springs). Also the debug-attribute pattern for verifying states MCP cannot
+  drive, and the traps: anchored clones, cloned lights and scripts, scale before welding, C0 vs Transform.
+
+
 ## 0.8.1 - 2026-11-05
 
 Two traps that both read as "the build is broken" in a screenshot.
