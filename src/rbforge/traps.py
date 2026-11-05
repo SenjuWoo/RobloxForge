@@ -96,6 +96,18 @@ def scan_text(rel, text):
             n = text.count("\n", 0, m.start()) + 1
             add("T013", "medium", n, "firing remotes every frame floods the network",
                 "send on change, or batch at 5-10 Hz", REF + "security-networking.md")
+    # Viewmodel: a clone that still carries its character joints drags the player when it is anchored.
+    if ":Clone()" in text and re.search(r"CurrentCamera|Viewmodel|ViewmodelFolder", text) and "JointInstance" not in text:
+        n = next((i for i, l in enumerate(lines, 1) if ":Clone()" in l), 1)
+        add("T022", "high", n,
+            "a cloned weapon keeps the welds that bind it to the hand; welded to an anchored viewmodel it flings the player",
+            "destroy JointInstance/Constraint in the clone before welding it to the camera", REF + "animation.md")
+    m = re.search(r"LocalTransparencyModifier\s*=\s*(saved|prev|original|value)\b", text)
+    if m:
+        n = text.count("\n", 0, m.start()) + 1
+        add("T023", "medium", n,
+            "the engine also owns the local head's LocalTransparencyModifier; restoring a saved value leaves the head invisible",
+            "restore hidden parts to 0 explicitly and never touch HumanoidRootPart", REF + "animation.md")
     if re.search(r"ImageTransparency\s*=\s*1\b", text) and "IsLoaded" in text:
         n = next(i for i, l in enumerate(lines, 1) if re.search(r"ImageTransparency\s*=\s*1\b", l))
         add("T014", "low", n, "an ImageLabel at ImageTransparency = 1 never reports IsLoaded",

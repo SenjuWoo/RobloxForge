@@ -8,6 +8,7 @@ Studio MCP's `execute_luau`. List them with `rbforge probe`.
 | Probe | Answers |
 |---|---|
 | `console` (`since=60`) | Which errors are NEW since my change? (deduped, counted) |
+| `player-state` | "I fly / get launched": is the position actually changing, and did a viewmodel weld grab the assembly? |
 | `gui-overflow` | Is a SurfaceGui painting outside its part / an AlwaysOnTop gui not rendering? |
 | `ray-all` | What does this sight line pass through, including CanQuery=false and invisible parts? |
 | `box-scan` | Is this doorway / corridor / spawn really empty? (engine queries skip CanQuery=false) |

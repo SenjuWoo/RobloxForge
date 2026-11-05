@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.1 - 2026-11-05
+
+### Added
+- Trap rules **T022** (a cloned weapon parented to the camera without destroying its `JointInstance`/`Constraint`
+  welds - the anchored viewmodel then drags the player) and **T023** (`LocalTransparencyModifier` restored from a
+  saved value - the engine owns the local head's value, so the head stays invisible for about a second). Both are
+  asserted in the test suite, positive and negative.
+- `animation.md`: "Viewmodel traps that only show up in first person" - kill the clone's joints, park the anchor
+  before a `WeldConstraint` (it keeps the offset it saw at creation, so the gun ends up hundreds of studs off camera
+  and looks like it never rendered), never restore a saved transparency.
+- `debugging-playbook.md`: `player-state` gains the "I fly / get launched" case.
+
 ## 0.11.0 - 2026-11-05
 
 Diagnosis stops being improvised.

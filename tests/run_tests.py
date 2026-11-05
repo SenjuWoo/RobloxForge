@@ -628,6 +628,12 @@ def _():
     assert "T001" in ids("a.luau", "wait(1)") and "T001" not in ids("a.luau", "task.wait(1)")
     assert "T013" in ids("a.server.luau", "RunService.Heartbeat:Connect(function() r:FireAllClients(1) end)")
     assert not ids("a.luau", "-- wait(1) in a comment")
+    # viewmodel clone keeping its character joints, and a saved transparency restored
+    bugh = 'local m = weapon:Clone()\nlocal cam = workspace.CurrentCamera\nm.Parent = cam'
+    assert "T022" in ids("src/client/vm.luau", bugh)
+    assert "T022" not in ids("src/client/vm.luau", bugh + '\nfor _, d in ipairs(m:GetDescendants()) do\n if d:IsA("JointInstance") then d:Destroy() end\nend')
+    assert "T023" in ids("src/client/vm.luau", "part.LocalTransparencyModifier = saved")
+    assert "T023" not in ids("src/client/vm.luau", "part.LocalTransparencyModifier = 0")
 
 
 @check("traps: review skips snapshot folders")

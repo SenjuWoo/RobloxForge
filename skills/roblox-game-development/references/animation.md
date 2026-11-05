@@ -89,3 +89,22 @@ code path the wheel uses.
   first, then weld.
 - Setting `Motor6D.Transform` on a joint that no animation touches is safe;
   writing `Motor6D.C0` fights the Animator and jitters.
+
+## Viewmodel traps that only show up in first person
+
+- **Kill the clone's joints.** An equipped weapon carries the welds that bind it to
+  the hand. Clone it, parent it to the camera, anchor the assembly, and those welds
+  still point at the live character - the anchored viewmodel then drags the
+  assembly, and the player is flung into the air the instant first person starts.
+  Sweep the clone for `JointInstance` and `Constraint` and destroy them before you
+  add your own.
+- **`WeldConstraint` keeps the offset it saw at creation.** If the anchor is still
+  at the origin when you weld, the gun keeps the whole clone offset and sits
+  hundreds of studs off camera - it looks like the viewmodel "does not render".
+  Park the anchor on the weapon root first (`anchor.CFrame = body.CFrame`), then
+  weld. A legacy `Weld` with `C0 = CFrame.new()` hides the bug instead of fixing it.
+- **Never restore a saved `LocalTransparencyModifier`.** The engine also writes
+  that value for the local head. Save it, hide the body, and on exit you restore a
+  stale `1`: the head stays invisible for about a second until the engine corrects
+  it. Hide the parts you hide, then restore them to `0`, and never touch
+  `HumanoidRootPart`.
