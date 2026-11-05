@@ -150,3 +150,16 @@ with a bounded wait for the ready flag, then assert it.
 Make the assertion carry the detail. `assert(#failures == 0, "6 checks failed")`
 costs another whole play cycle to diagnose; embedding the first six failure
 strings in the message turned that round trip into a five-second read.
+
+## Count the HUD, do not just photograph it
+
+A screenshot proves the HUD looks right; instance counts prove it finished
+building. A third-person HUD that stopped halfway still photographs as a HUD, and
+a failed require leaves an empty PlayerGui that photographs as nothing at all.
+Report both every time: `hud=true frames=467 labels=151`, `visor panes=6`,
+`drone parts=12`. If a count is zero, the module threw or never ran, no matter
+how good the picture looks.
+
+Read the errors the same way: `LogService:GetLogHistory()` on the Client
+datamodel, filtered to `MessageError`, is the only cheap way to prove a client
+script is clean without dumping the whole Studio console into context.

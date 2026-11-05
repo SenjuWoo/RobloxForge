@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0 - 2026-11-05
+
+Field notes from a HUD refactor and a companion-drone slice.
+
+### Added
+- `references/sharp-edges.md`: what the MCP cannot press - `user_mouse_input`
+  scroll does not reach a game's `MouseWheel` handler (a working zoom looks
+  broken), a SurfaceGui with `Adornee` lives in PlayerGui rather than under its
+  part, and an assigned camera is reset before a capture, so verify state before
+  pictures.
+- `references/testing-debugging.md`: count the HUD instead of only photographing
+  it, and read client errors from `LogService:GetLogHistory()` rather than
+  dumping the whole Studio console into context.
+
+
 ## 0.6.0 - 2026-11-04
 
 Field notes from building a projected-sky dome: 225 SurfaceGui panels per plot,

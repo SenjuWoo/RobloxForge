@@ -114,3 +114,19 @@ was invisible in the code and obvious in the capture.
 - **Any new collidable shell can invalidate walk routes.** After adding a skirt,
   wall or gate, re-run the route test: the tunnel went `NoPath` on all six plots
   while the capture looked perfect.
+
+## Verifying things the MCP cannot press
+
+- **`user_mouse_input` does not drive a camera zoom.** `scrollDown` returns
+  `Success` and the game's `MouseWheel` handler never fires, so a wheel-zoom or
+  first-person feature looks broken when it is not. Do not call it dead: read the
+  state the feature writes (an attribute, a camera distance, a HUD flag) and
+  verify the code path that produces it, then ask the owner for one real scroll
+  to confirm the feel. Treat anything needing a focused viewport or
+  `MouseBehavior.LockCenter` the same way.
+- **A SurfaceGui with `Adornee` lives in PlayerGui, not under its part.** Walking
+  the part's children for the gui returns nothing and reads as "no panes
+  rendered". Search `PlayerGui` by name or Adornee instead.
+- **A client-side feature can be complete and still be invisible in a capture.**
+  Studio resets a camera you assign from `execute_luau` before the capture lands.
+  Verify state first, picture second.
