@@ -130,3 +130,25 @@ was invisible in the code and obvious in the capture.
 - **A client-side feature can be complete and still be invisible in a capture.**
   Studio resets a camera you assign from `execute_luau` before the capture lands.
   Verify state first, picture second.
+
+## Cutting a hole in a curved shell
+
+- **Test the quad, not the centre.** A panel 37 studs wide easily covers a 24-stud
+  corridor while its centre sits outside it, so a centre-only test leaves the
+  shell hanging inside the tunnel and blocks the view. Test all four corners.
+- **Test the height too, or the hole climbs.** On a dome, panels higher up shrink
+  toward the axis, so their corners also fall inside a corridor test. Add a height
+  gate (a panel whose bottom is above the opening cannot be in it) or you delete
+  rings all the way to the oculus.
+- **Flatten floors in shell space, not plot space.** A dome offset from its build
+  rectangle will rise inside the rectangle-based apron: the wall buries itself in
+  the hillside and panels clip through terrain. Flatten out to ~1.25 of the shell's
+  own normalised radius before the hill function starts.
+- **Trim the panel, do not delete it.** A deleted panel leaves a hole in the
+  sky that reads as "the dome is not sealed". Cut the panel at the opening's top
+  edge instead (re-centre it and shrink its height by the same fraction) and the
+  shell stays continuous above a door, gate or tunnel mouth.
+- **Carve terrain only where the structure is meant to be open.** A tunnel that
+  is carved along its whole length lies in an open cut with its roof slab
+  exposed. Carve the run inside the shell and the far mouth; fill everything
+  between and the structure reads as a hillside with an entrance.

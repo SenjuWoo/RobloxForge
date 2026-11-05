@@ -10,9 +10,11 @@ claim checkable.
 
 ## Version
 
-0.8.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.8.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## Done (verified)
+
+- 0.8.1: gradient-vs-background transparency trap and curved-shell opening rules (quad corners, height gate, shell-space flattening).
 
 - 0.8.0: `references/ui-craft.md` - UI slop tells, build rules, the slop check, and how to use a concept image.
 

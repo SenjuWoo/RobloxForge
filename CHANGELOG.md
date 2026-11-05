@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.1 - 2026-11-05
+
+Two traps that both read as "the build is broken" in a screenshot.
+
+### Added
+- `references/ui-craft.md`: `UIGradient.Transparency` overrides `BackgroundTransparency`, so a "glass"
+  panel with a gradient starting at 0 renders as a solid black bar - the cause of the non-blending HUD.
+- `references/sharp-edges.md`: cutting a hole in a curved shell - test the quad's corners rather than the
+  panel centre (a wide panel covers a corridor its centre misses), gate it by height or the hole climbs
+  ring by ring, trim the panel at the opening instead of deleting it (a deleted panel leaves the shell
+  unsealed), carve terrain only where a structure is meant to be open, and flatten terrain in
+  shell-normalised space so an offset dome does not bury itself.
+
+
 ## 0.8.0 - 2026-11-05
 
 UI craft: why an agent-built HUD reads as slop, and what to build instead.

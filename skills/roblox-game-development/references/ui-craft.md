@@ -71,3 +71,16 @@ it implemented.
 
 When the owner rejects a pass, ask which of these failed - boxes, fonts, composition, colour,
 detail, motion - and fix that axis. "Make it better" is not feedback; the axis is.
+
+## A "glass" panel that renders as a black bar
+
+`UIGradient.Transparency` **overrides** the object's `BackgroundTransparency` for
+every pixel it covers. A panel set to `BackgroundTransparency = 0.62` with a
+gradient whose first keypoint is `0` renders fully opaque at that end - which is
+how a translucent HUD ends up sitting on solid black slabs that do not blend with
+the scene. Either drop the gradient, or give its keypoints the transparency you
+actually want (0.55 to 0.72 reads as tint over gameplay).
+
+The same trap applies to `ImageLabel` tint gradients and to `UIStroke`
+transparency keypoints. When a review says "weird black bars", check the gradient
+before you touch the layout.
