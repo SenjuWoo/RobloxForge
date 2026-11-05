@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.10.1 - 2026-11-05
+
+### Fixed (wrong guidance from 0.9.x-0.10.0)
+- `live-iteration.md` claimed Edit captures never render SurfaceGuis. False: ordinary SurfaceGuis render; what did not
+  render was `AlwaysOnTop = true` SurfaceGuis. Also notes `ImageLabel.IsLoaded` stays false at `ImageTransparency = 1`.
+- `sightlines-and-openings.md` now leads with the real cause of a one-direction "flat colour wall": a SurfaceGui with
+  `ClipsDescendants = false` (the default) painting oversized children past its part, one-sided. Includes a scan
+  snippet, bisect-by-hiding with a fixed capture camera, and the fact that `GetPartBoundsInBox` skips
+  `CanQuery = false` parts just like rays. Replaced "cut panels by box overlap" with splitting crossing panels around
+  a corridor-sized doorway, constrained on every axis. Added process rules (reproduce at the reported pose, one
+  decisive test, revert failed attempts, no symptom-hiding workarounds, never unseal to chase a visual bug).
+- `sharp-edges.md`: replaced "blind a screen" with the ClipsDescendants trap, AlwaysOnTop note, query-skip note.
+
+### Added
+- `ui-craft.md`: helmet-HUD recipe (pane depth, FOV-invariant depth and PixelsPerStud formulas, yaw/pitch-only pane
+  tilt, head-locked sway cap), companion-drone station keyed to the camera, strip-built soft backdrops.
+
 ## 0.10.0 - 2026-11-05
 
 ### Added

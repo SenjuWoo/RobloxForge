@@ -47,6 +47,20 @@ A reviewer spots these instantly. Check your own work against the list before sh
 - **Separate the two views properly.** A third-person HUD belongs in a `ScreenGui`; a visor or
   helmet belongs in 3D panes bound to the camera (`SurfaceGui` with `LightInfluence = 0`,
   depth-tested, FOV-scaled). Rendering a "helmet" as a full-screen overlay fools nobody.
+  Recipe that held up: panes about 0.75 studs from the eye (`AlwaysOnTop` panes did not
+  render); `depth = D * tan(refFov/2) / tan(fov/2)` so aiming does not resize the visor;
+  `PixelsPerStud = 1080 / (2 * depth * tan(fov/2))` to author in 1080p pixels; tilt each pane
+  toward the eye by yaw/pitch only (`CFrame.fromEulerAnglesYXZ(-pitch, math.pi - yaw, 0)` - a
+  `lookAt` rolls the corner panes); keep the visor locked to the head with at most ~1.5 degrees
+  of sway (a lerped "lag" rotation throws panes off-screen on fast mouse turns).
+- **A companion that feeds the HUD needs a body.** A drone over the shoulder makes
+  third-person intel credible. Key its station to the *camera* heading, not the body, or it
+  swings behind the camera on every turn; give it a faint `Highlight` outline so it reads on
+  dark and bright backgrounds; build it from few, touching parts and preview it in Edit
+  (require a clone of the module, build at a spot in the sky, capture) before Play.
+- **Soft backdrops without boxes:** one UIGradient fades in one direction only, so a
+  gradient frame shows hard side edges. Stack ~16 horizontal strips, each fading at both
+  ends and fainter with distance from the screen edge.
 - **Only expose what the server can actually do.** Hide or disable a tab whose backend does not
   exist. A dead button is worse than a missing feature.
 

@@ -86,9 +86,14 @@ then read the outcome from the Server datamodel a few seconds later.
 
 ## Captures: what they can and cannot show
 
-- **Edit captures do not render SurfaceGuis** (either face). Lettering, signs
-  and SurfaceGui hazard stripes look blank there. Do not "fix" them on that
-  evidence; check them in a Play capture.
+- **Edit captures DO render ordinary SurfaceGuis** (dome panoramas, signs,
+  lettering all show). An earlier note here claimed the opposite; it was wrong
+  and sent a session chasing terrain. What did not render in captures (Edit or
+  Play) is **`AlwaysOnTop = true` SurfaceGuis**: use depth-tested panes instead
+  (see ui-craft.md, helmet HUD).
+- **An `ImageLabel` at `ImageTransparency = 1` never reports `IsLoaded`.**
+  Start a fade-in at 0.99, or also accept
+  `ContentProvider:GetAssetFetchStatus(id) == Enum.AssetFetchStatus.Success`.
 - **A Play capture with no camera arguments shows the client viewport**,
   including ScreenGuis - this is how to review a HUD.
 - Always pass `camera_position` + `look_at_position` for world evidence, and

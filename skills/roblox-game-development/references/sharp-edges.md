@@ -170,9 +170,12 @@ was invisible in the code and obvious in the capture.
   (`--dm Edit --exec tools/dev_rebuild_all.luau`), then have the owner save the
   place once - without that save the next reopen restores the old state.
 
-- **Blind a screen, do not delete the panel.** When a generated surface shows up
-  where it was never meant to be seen (a panorama band filling a tunnel), removing
-  the panel opens a hole in whatever it was sealing, and the owner reports the hole
-  next. Keep the geometry, keep it out of the material/style pass, and give it the
-  structure colour instead: sealed and invisible at once. Deleting is only right
-  when the panel covers solid structure that already seals the gap.
+- **`SurfaceGui.ClipsDescendants` defaults to false.** Children past the canvas
+  render in mid-air beyond the part, one-sided. Oversized parallax/background layers
+  then "appear" in doorways and tunnels from one direction only. Set it to `true` on
+  every screen-style SurfaceGui. Check this before blaming terrain or geometry.
+- **Do not delete a panel that seals a shell.** Split it around the opening (see
+  sightlines-and-openings.md); removing it opens a hole the owner reports next.
+- **`AlwaysOnTop = true` SurfaceGuis did not render** (Studio captures and Play).
+  For camera-bound HUD panes use depth-tested panes about 0.75 studs from the eye.
+- **`GetPartBoundsInBox` skips `CanQuery = false` parts**, same as raycasts.
