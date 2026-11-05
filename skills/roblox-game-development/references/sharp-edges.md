@@ -153,6 +153,13 @@ was invisible in the code and obvious in the capture.
   exposed. Carve the run inside the shell and the far mouth; fill everything
   between and the structure reads as a hillside with an entrance.
 
+- **Match the pixels before the code.** When a user sends a screenshot of a
+  "wall", "panel" or "screen effect" that your raycasts say is not there, sample
+  the image: read the RGB at the offending surface, then scan `workspace` for
+  parts whose `Color` is within ~0.07 of it inside the reported box. That found a
+  tunnel blocked by `PineTier` foliage from a treeline ring the same session that
+  three geometry hypotheses (panels, skirt, terrain) had already failed on. Colour
+  is a part's identity; positions alone will not tell you what you are looking at.
 - **A runtime world build does not persist.** Terrain carving, dome panels and
   anything else built by a server script exist only in that session; the saved
   place still holds whatever geometry was there before. A user who reports a

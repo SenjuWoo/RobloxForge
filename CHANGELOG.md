@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.2 - 2026-11-05
+
+### Added
+- `sharp-edges.md`: **match the pixels before the code**. Sample the RGB of the surface in the user's screenshot and
+  scan parts by colour proximity in the reported box - positions and raycasts alone cannot identify a visual artefact,
+  and colour identifies a part in one query when geometry hypotheses keep failing.
+
 ## 0.9.1 - 2026-11-05
 
 ### Fixed
