@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.13.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.13.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## Gaps to close (next session)
 
@@ -20,7 +20,9 @@ claim checkable.
 2. **E2E weak-model benchmark** (`tests/agent-benchmarks`) has not been run - it is the 1.0.0 gate.
 3. **`luau-lsp` skip** is still the normal case: no `globalTypes.d.luau` on this machine, so the type rung never runs
    here. Install definitions (or set `RBFORGE_LUAU_DEFINITIONS`) to exercise the exit-status fix against a real tool.
-4. **Receipt provenance is an id, not a signature.** An observation id proves the record came from
+4. **The test suite needs `selene`.** The generated-Luau test fails (not skips) without it, by design; both CI and
+   the release workflow install a pinned copy via `scripts/install_selene.py`.
+5. **Receipt provenance is an id, not a signature.** An observation id proves the record came from
    `collect_evidence`, but an agent that can run that tool can also run a throwaway test; the guard is the
    expiry, the Studio/place binding and the honest levels, not cryptography. An agent with full write access
    to the receipts directory can still forge files.
@@ -30,6 +32,12 @@ claim checkable.
 
 ## Done (verified)
 
+- 0.13.1: `_push_code` emits valid Luau (class map travels as a JSON string, decoded with
+  `HttpService:JSONDecode`; every string uses `long_string`), existing parents are checked against the declared
+  class, an overwrite restores the previous `Source` on a failed readback (`ROLLED_BACK`/`ROLLBACK_FAILED`),
+  `servePlaceIds` blocks the wrong place before writing, `record_observation` is private and `collect_evidence`
+  reads `get_console_output`/`screen_capture` for real, observations bind to project+scenario, legacy receipts keep
+  their chain, `--changed-only` always runs the typechecker and takes `--base-ref`. 67 tests.
 - 0.13.0: verified status requires an observation recorded by RobloxForge (`rb_collect_evidence` ->
   `observation_id`), not a caller-asserted provenance; one function decides the level so receipts cannot
   contradict themselves; new `playtest_observed_partial`; receipts are serialized under a file lock with a
