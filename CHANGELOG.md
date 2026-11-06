@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.12.2 - 2026-11-06
+
+Second audit pass: the gate can no longer be satisfied by a tool that did not run, and verification
+distinguishes what it observed from what it was told.
+
+### Fixed
+- **A crashed linter passed the gate.** selene's exit status was mapped to "warn" for anything that was
+  not a clean run with the word "error" in it, so exit 127 `process terminated unexpectedly` left the
+  overall gate at PASS. Exit 0 = pass, 1 = findings (fail only for `error[...]`, otherwise warn),
+  anything else = tool failure = fail. A tool that cannot execute is a failure, not a skip.
+- **Mixed push batches raised `KeyError`.** An unmapped path produced a result without `state`, and the
+  aggregation read `r["state"]`. Every row now carries `file`, `target`, `state`, `ok`, `got`, `want`
+  (+`why`), with `unmapped` and `unreadable` as first-class states.
+- **Receipt chain broke at the third write.** Suffixed filenames sort `-2` before `.`, so the third
+  same-second receipt chained to the first. Receipts now reserve names atomically (`O_CREAT|O_EXCL`,
+  zero-padded index) and the chain is read in creation order (`mtime`, then name).
+- **Evidence was still self-certifiable.** `evidence` was caller-supplied and treated as observed.
+  Receipts now carry a provenance: `tool` (produced by `collect_evidence`, which talks to Studio) or
+  `agent`. Agent-supplied evidence caps at the new `playtest_claimed` level; `verified_playtest`
+  requires tool provenance, a logged console, zero console errors and an inspected screenshot.
+- **`limitations="not tested"`** became a list of characters; strings are one item now.
+- **MCP schema** for `rb_verify_receipt` gained `evidence`, `provenance` and a string-or-array
+  `limitations`; the server also advertised a stale `0.3.1` version and now reports the package version.
+
+### Added
+- `scripts/smoke_artifact.py` and a real release step: the archive is unpacked and checked for a working
+  import, CLI startup, an offline command, both skills and the MCP `initialize`/`tools/list` handshake.
+  The previous step ran a test file that is deliberately not shipped and swallowed the failure.
+- Six regression tests (53 total): crashed linter, mixed push batch, three-receipt chain, agent evidence
+  cap, limitation coercion, `collect_evidence` provenance.
+
+### Known gaps
+- No live Studio run in this pass (MCP was off): `collect_evidence`, `push` readback, `server_test`
+  parsing and `init.*` mapping are proven against fake sessions only.
+- The weak-model E2E benchmark has still not been run.
+
 ## 0.12.1 - 2026-11-06
 
 - `push` no longer destroys a script whose class changed (ModuleScript -> Script). The old instance is renamed

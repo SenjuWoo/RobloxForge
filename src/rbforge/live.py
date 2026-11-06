@@ -207,11 +207,21 @@ def push(paths, project_file="default.project.json", studio_id=None):
     with Session(studio_id) as s:
         for f in files:
             if f not in targets:
-                results.append({"file": f, "ok": False, "why": "not mapped by %s" % project_file})
+                # Every result carries the same keys: an unmapped path used to produce a row without
+                # "state", and the aggregation below then raised KeyError on a mixed batch.
+                results.append({"file": os.path.relpath(f, project_root), "target": None,
+                                "state": "unmapped", "ok": False, "got": None, "want": None,
+                                "why": "not mapped by %s" % project_file})
                 continue
             parent, name, klass = targets[f]
-            with open(f, encoding="utf-8") as fh:
-                text = fh.read().replace("\r\n", "\n")
+            try:
+                with open(f, encoding="utf-8") as fh:
+                    text = fh.read().replace("\r\n", "\n")
+            except OSError as exc:
+                results.append({"file": os.path.relpath(f, project_root), "target": None,
+                                "state": "unreadable", "ok": False, "got": None, "want": None,
+                                "why": str(exc)})
+                continue
             want = adler(text)
             got = s.luau(_push_code(parent, name, klass, text)).strip()
             state = ("synced" if got.startswith("SYNCED") and got.endswith(want) else

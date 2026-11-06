@@ -108,7 +108,7 @@ def rung_static(root):
                     pass
         rung["checks"].append({
             "id": "selene",
-            "status": "pass" if code == 0 else ("fail" if ("error[" in out or "error:" in out) else "warn"),
+            "status": _lint_status(code, out),
             "detail": "clean" if code == 0 else (out[:800] or "unknown")})
     else:
         rung["checks"].append({"id": "selene", "status": "skip",
@@ -148,6 +148,22 @@ def rung_static(root):
             status, detail = "fail", "luau-lsp exited %s without diagnostics: %s" % (code, out[:600])
         rung["checks"].append({"id": "luau-lsp", "status": status, "detail": detail})
     return rung
+
+
+def _lint_status(code, out):
+    """Map a linter's exit status to a check status.
+
+    selene exits 0 = clean, 1 = findings, anything else = the tool itself failed. A crash (127,
+    "process terminated unexpectedly") used to be demoted to a warning, which let the whole gate
+    report PASS on a linter that never ran.
+    """
+    if code is None:
+        return "fail"  # found on PATH but could not execute: a broken install, not a skip
+    if code == 0:
+        return "pass"
+    if code == 1:
+        return "fail" if ("error[" in out or "error:" in out) else "warn"
+    return "fail"
 
 
 def _default_selene_config():

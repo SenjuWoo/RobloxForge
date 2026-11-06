@@ -162,6 +162,7 @@ def _observed_evidence(**over):
     """Evidence as the tooling would report it, not as an agent would assert it."""
     from rbforge import verification
     ev = {
+        "provenance": "tool",
         "studio_id": "59d6c7b2-03ab-4b69-a878-d4fc7561b9f8",
         "place": "Deadzome Haven",
         "datamodel": "Server",
@@ -207,15 +208,20 @@ def _():
     assert r["verification_level"] == "playtested_with_errors", r["verification_level"]
 
 
-@check("verification: same-second receipts do not overwrite each other")
+@check("verification: three same-second receipts keep the chain in creation order")
 def _():
     from rbforge import verification
     with _isolated_home():
         a = verification.receipt("same name", save=True)
         b = verification.receipt("same name", save=True)
-        assert a["saved_to"] != b["saved_to"], "receipt filenames collided"
-        assert os.path.isfile(a["saved_to"]) and os.path.isfile(b["saved_to"])
-        assert json.load(open(b["saved_to"], encoding="utf-8"))["prev_digest"] == a["digest"]
+        c = verification.receipt("same name", save=True)
+        paths = [a["saved_to"], b["saved_to"], c["saved_to"]]
+        assert len({os.path.basename(p) for p in paths}) == 3, "receipt filenames collided"
+        assert all(os.path.isfile(p) for p in paths)
+        loaded = [json.load(open(p, encoding="utf-8")) for p in paths]
+        assert loaded[0]["prev_digest"] is None, loaded[0]["prev_digest"]
+        assert loaded[1]["prev_digest"] == a["digest"], "second receipt lost the chain"
+        assert loaded[2]["prev_digest"] == b["digest"], "third receipt chained to the first"
 
 
 @check("verification: receipt persists to disk")
@@ -849,6 +855,104 @@ def _():
         rung = check.rung_static(d)
         got = [c for c in rung["checks"] if c["id"] == "selene"][0]
         assert "parse_error" not in got["detail"], got["detail"]
+
+
+@check("verification: agent-supplied evidence cannot outrank playtest_claimed")
+def _():
+    from rbforge import verification
+    ev = _observed_evidence()
+    ev.pop("provenance", None)
+    r = verification.receipt("agent evidence", evidence=ev, console_errors=0,
+                             playtest_performed=True, save=False)
+    assert r["verification_level"] == "playtest_claimed", r["verification_level"]
+    assert r["evidence"]["provenance"] == "agent"
+
+
+@check("verification: a limitation string is one item, not characters")
+def _():
+    from rbforge import verification
+    r = verification.receipt("limits", limitations="not tested on mobile", save=False)
+    assert r["limitations"] == ["not tested on mobile"], r["limitations"]
+
+
+@check("verification: collect_evidence marks its provenance tool")
+def _():
+    from rbforge import live, verification
+    orig = live.Session
+
+    class FakeSession:
+        studio_id = "fake-studio"
+
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def luau(self, code, dm="Edit"):
+            return "Smoke Place"
+
+    try:
+        live.Session = FakeSession
+        ev = verification.collect_evidence()
+        assert ev["provenance"] == "tool" and ev["place"] == "Smoke Place", ev
+        r = verification.receipt("tool ev", evidence=ev, save=False)
+        assert r["evidence"]["provenance"] == "tool"
+    finally:
+        live.Session = orig
+
+
+@check("check: a crashed linter is a failure, never a quiet warning")
+def _():
+    from rbforge import check
+    orig_run, orig_which = check._run, check.shutil.which
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        open(os.path.join(d, "src", "a.luau"), "w").write("return 1\n")
+
+        def fake(argv, cwd, timeout=180):
+            if argv[0] == "selene":
+                return (127, "process terminated unexpectedly")
+            return (0, "ok")
+
+        try:
+            check.shutil.which = lambda name: "/fake/" + name
+            check._run = fake
+            rung = check.rung_static(d)
+            got = [c for c in rung["checks"] if c["id"] == "selene"][0]
+            assert got["status"] == "fail", got
+            report = check.run(d, scope=["static"])
+            assert report["status"] != "pass", report["status"]
+        finally:
+            check._run, check.shutil.which = orig_run, orig_which
+
+
+@check("live: a mixed push batch reports every file without raising")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        json.dump({"tree": {"$className": "DataModel", "ServerScriptService": {"$path": "src"}}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        good = os.path.join(d, "src", "A.luau")
+        open(good, "w").write("return 1\n")
+        stray = os.path.join(d, "stray.luau")
+        open(stray, "w").write("return 2\n")
+        want = live.adler("return 1\n")
+        try:
+            live.Session = _fake_session("SYNCED " + want)
+            r = live.push([good, stray], os.path.join(d, "default.project.json"))
+            states = sorted(row["state"] for row in r["results"])
+            assert states == ["synced", "unmapped"], states
+            assert r["pushed"] == 1 and r["failed"] == 1, r
+            for row in r["results"]:
+                assert set(row) >= {"file", "target", "state", "ok"}, row
+        finally:
+            live.Session = orig
 
 
 if __name__ == "__main__":

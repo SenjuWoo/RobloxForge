@@ -26,7 +26,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from rbforge.errors import ForgeError
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "robloxforge", "version": "0.3.1"}
+from rbforge import __version__ as _forge_version
+
+SERVER_INFO = {"name": "robloxforge", "version": _forge_version}
 
 TOOLS = {}
 
@@ -134,14 +136,21 @@ def _sec_review(a):
 
 @tool("rb_verify_receipt", {"type": "object", "properties": {
     "task": {"type": "string"},
-    "checks": {"type": "array", "items": {"type": "string"}},
+    "checks": {"type": "array", "items": {"type": "string"},
+               "description": "the agent's claims; recorded, never treated as evidence"},
+    "evidence": {"type": "object", "description":
+                 "observations, e.g. from collect_evidence(); include provenance='tool' only if "
+                 "RobloxForge produced them"},
+    "provenance": {"type": "string", "enum": ["tool", "agent"], "default": "agent",
+                   "description": "who produced the evidence; agent-supplied caps the receipt at "
+                                  "playtest_claimed"},
     "console_errors": {"type": "integer", "default": 0},
     "playtest_performed": {"type": "boolean"},
     "screenshot_captured": {"type": "boolean"},
     "screenshot_inspected": {"type": "boolean"},
-    "limitations": {"type": "string"}}},
-      "Record a verification receipt for completed work. Evidence-gated: "
-      "claims without playtest evidence are recorded as UNVERIFIED.")
+    "limitations": {"type": ["string", "array"], "items": {"type": "string"}}}},
+      "Record a verification receipt for completed work. Claims alone are UNVERIFIED; only "
+      "tool-produced evidence (collect_evidence) can reach verified_playtest.")
 def _verify_receipt(a):
     from rbforge import verification
     return verification.receipt(**a)

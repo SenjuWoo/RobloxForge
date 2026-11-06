@@ -49,16 +49,15 @@ jobs:
           unzip -l "$name.zip" | tail -3
           ls -l "$name.zip"
 
-      - name: Verify the asset unpacked and runs
+      - name: Smoke-test the packaged artifact
         run: |
           set -euo pipefail
           name="RobloxForge-${GITHUB_REF_NAME}"
           unzip -q "$name.zip" -d verify
           cd "verify/$name"
-          python -m compileall -q src mcp_server
-          python tests/run_tests.py 2>/dev/null || echo "tests not shipped (expected)"
-          cd ../..
-          echo "asset OK"
+          # Real checks on what a downloader gets: import, CLI, an offline command, both skills,
+          # and the MCP initialize/tools-list handshake. A broken archive fails the release.
+          python scripts/smoke_artifact.py
 
       - name: Publish
         env:
@@ -69,8 +68,12 @@ jobs:
           notes() {
             printf 'Automated release from tag `%s`.\n\n' "${GITHUB_REF_NAME}"
             printf '### Asset\n'
-            printf -- '- `%s.zip` - the checkout plus the two skills, exactly as tagged\n' "$name"
+            printf -- '- `%s.zip` - runtime files, CLI, MCP server, templates, installers and both skills, exactly as tagged\n' "$name"
             printf -- '- `%s.zip.sha256` - verify with `sha256sum -c`\n\n' "$name"
+            printf 'Tests, CI config and STATE.md are not shipped.\n\n'
+            printf '### Gate\n'
+            printf 'The archive was unpacked and smoke-tested: package import, CLI startup, an offline command, both skills,\n'
+            printf 'and the MCP initialize/tools-list handshake.\n\n'
             printf '### Install\n'
             printf '```\nunzip %s.zip && cd %s\n./Install.ps1          # Windows\n```\n' "$name" "$name"
             printf 'Python 3.11+ is the only prerequisite. Nothing here costs money.\n'
