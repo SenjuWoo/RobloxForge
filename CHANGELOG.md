@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.1 - 2026-11-06
+
+- `push` no longer destroys a script whose class changed (ModuleScript -> Script). The old instance is renamed
+  `<name>_backup_<time>` and moved to `ServerStorage.rbforge_backups`, so a mistaken mapping is recoverable.
+
 ## 0.12.0 - 2026-11-06
 
 Corrective audit: the gate no longer reports work it did not do.

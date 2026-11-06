@@ -171,7 +171,16 @@ def _push_code(parent, name, klass, text):
         "  node = nxt\n"
         "end\n"
         "local inst = node:FindFirstChild(%s)\n" % json.dumps(name)
-        + "if inst and inst.ClassName ~= %s then inst:Destroy() inst = nil end\n" % json.dumps(klass)
+        # A class change used to destroy the old script outright. Move it to a backup folder instead, so the
+        # previous body stays recoverable and nothing is silently lost.
+        + "if inst and inst.ClassName ~= %s then\n" % json.dumps(klass)
+        + "  local store = game:GetService('ServerStorage')\n"
+        "  local backups = store:FindFirstChild('rbforge_backups')\n"
+        "  if not backups then backups = Instance.new('Folder') backups.Name = 'rbforge_backups' backups.Parent = store end\n"
+        "  inst.Name = inst.Name .. '_backup_' .. tostring(os.time())\n"
+        "  inst.Parent = backups\n"
+        "  inst = nil\n"
+        "end\n"
         + "if not inst then inst = Instance.new(%s) inst.Name = %s inst.Parent = node end\n" % (json.dumps(klass), json.dumps(name))
         + "local src = %s\n" % long_string(text)
         + "inst.Source = src\n"
