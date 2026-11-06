@@ -113,3 +113,13 @@ Generated decor also has to stay inside the volume it decorates. Clamp every nod
 the room's own bounds (above the deck, inside the wall face) at the point of creation:
 a growth that starts 40 studs outside the wall renders through the exit door and under
 the floor, and then reads as a rendering bug rather than a placement one.
+
+- **Search for the mechanism before you build one.** A project that already animates a
+  barrier (rams, lamps, alarm, prompt) does not need a second flat door in front of it.
+  `grep` the builders for gate/door/shutter/barrier first: replacing a good system with
+  a quick one is a regression with extra steps, and the owner will spot it instantly.
+- **Clamp in the coordinate space you measured in.** A builder that works in world
+  space must clamp against `wallX`, not against a local `-2.5`: the first attempt here
+  compared world X to a local constant and dragged 159 parts to the world origin.
+  Verify placement by counting parts on each side of the boundary, not by looking at
+  the scene - a whole set can move somewhere wrong and still look plausible.

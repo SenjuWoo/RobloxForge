@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.5 - 2026-11-05
+
+### Added
+- `sightlines-and-openings.md`: **search for the mechanism before you build one** (a project that already animates a
+  barrier does not need a second flat door; grep gate/door/shutter/barrier first) and **clamp in the coordinate space
+  you measured in** (world-space builders clamp against `wallX`, not a local constant - the wrong clamp here moved 159
+  parts to the origin and still looked plausible; verify by counting parts either side of the boundary).
+
 ## 0.11.4 - 2026-11-05
 
 ### Added
