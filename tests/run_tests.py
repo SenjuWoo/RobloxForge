@@ -2132,6 +2132,200 @@ def _():
     assert unique != base and not os.path.exists(unique), unique
 
 
+def _prepared_root():
+    """(src, root) with one installed skill whose roblox-docs copy the user then edited."""
+    from rbforge import skills
+    src = tempfile.mkdtemp(prefix="rbf-src-")
+    root = tempfile.mkdtemp(prefix="rbf-root-")
+    for name in skills.OUR_SKILLS:
+        os.makedirs(os.path.join(src, name))
+        open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+    orig = (skills.paths.skills_source_dir, skills.roots_for)
+    skills.paths.skills_source_dir = lambda: src
+    skills.roots_for = lambda agent: [root]
+    _sandbox_agent(skills, root, "sbx-prep")
+    skills.install(["sbx-prep"])
+    edited = os.path.join(root, "roblox-docs", "SKILL.md")
+    open(edited, "w").write("# user edit that must survive")
+    return src, root, edited, orig
+
+
+def _cleanup(skills, root, src, orig):
+    skills.paths.skills_source_dir, skills.roots_for = orig
+    skills._ROOTS.pop("sbx-prep", None)
+    import shutil as _sh
+    _sh.rmtree(root, ignore_errors=True)
+    _sh.rmtree(src, ignore_errors=True)
+
+
+@check("skills: a copy that dies after creating its stage leaves no debris")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        orig = (skills.paths.skills_source_dir, skills.roots_for, skills.shutil.copytree)
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        _sandbox_agent(skills, root, "sbx-partial")
+
+        def half_copy(a, b, *rest, **kw):
+            os.makedirs(b, exist_ok=True)          # the destination exists...
+            open(os.path.join(b, "half.txt"), "w").write("partial")
+            raise OSError("interrupted copy")       # ...and then the copy dies
+
+        skills.shutil.copytree = half_copy
+        try:
+            try:
+                skills.install(["sbx-partial"])
+                raised = False
+            except Exception:  # noqa: BLE001
+                raised = True
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for, skills.shutil.copytree = orig
+            del skills._ROOTS["sbx-partial"]
+        debris = [n for n in os.listdir(root) if n.startswith(".rbforge-stage")]
+        installed = [n for n in os.listdir(root) if n.startswith("roblox-")]
+    assert raised, "a failed copy was reported as success"
+    assert not debris, debris
+    assert not installed, installed
+
+
+@check("skills: a failed move to backup leaves the original in place")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        target = os.path.join(root, "roblox-docs")
+        os.makedirs(target)
+        open(os.path.join(target, "SKILL.md"), "w").write("# existing install")
+        # A legacy install (stamp, no manifest) is the case that gets replaced, so the backup move
+        # is actually attempted; a bare foreign directory would be refused before any write.
+        open(os.path.join(target, ".rbforge-version"), "w").write("0.13.0")
+        orig = (skills.paths.skills_source_dir, skills.roots_for, skills.os.replace)
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        _sandbox_agent(skills, root, "sbx-move")
+
+        def no_backup(a, b):
+            if ".rbforge-backup-" in str(b):
+                raise OSError("cannot move original")
+            return orig[2](a, b)
+
+        skills.os.replace = no_backup
+        try:
+            try:
+                skills.install(["sbx-move"])
+                raised = False
+            except Exception:  # noqa: BLE001
+                raised = True
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for, skills.os.replace = orig
+            del skills._ROOTS["sbx-move"]
+        intact = os.path.isfile(os.path.join(target, "SKILL.md")) and \
+            open(os.path.join(target, "SKILL.md")).read() == "# existing install"
+    assert raised, "the failure was swallowed"
+    assert intact, "the original skill was lost"
+
+
+@check("skills: an activation failure restores the skill that was in flight")
+def _():
+    from rbforge import skills
+    src, root, edited, orig = _prepared_root()
+    real_replace = skills.os.replace
+    try:
+        def fails_on_activation(a, b):
+            if ".rbforge-stage" in str(a) and str(b).endswith("roblox-docs"):
+                raise OSError("activation blocked")
+            return real_replace(a, b)
+
+        skills.os.replace = fails_on_activation
+        try:
+            skills.install(["sbx-prep"])
+            raised = False
+        except Exception:  # noqa: BLE001
+            raised = True
+        finally:
+            skills.os.replace = real_replace
+        restored = os.path.isfile(edited) and open(edited).read() == "# user edit that must survive"
+    finally:
+        _cleanup(skills, root, src, orig)
+    assert raised, "a failed activation was reported as success"
+    assert restored, "the in-flight skill was left in its backup"
+
+
+@check("skills: a restore that also fails reports ROLLBACK_FAILED and keeps the backup")
+def _():
+    from rbforge import skills
+    src, root, edited, orig = _prepared_root()
+    real_replace = skills.os.replace
+    try:
+        def fails_both_ways(a, b):
+            if ".rbforge-stage" in str(a) and str(b).endswith("roblox-docs"):
+                raise OSError("activation blocked")
+            if ".rbforge-backup" in str(a) and str(b).endswith("roblox-docs"):
+                raise OSError("restore blocked")
+            return real_replace(a, b)
+
+        skills.os.replace = fails_both_ways
+        try:
+            error = None
+            try:
+                skills.install(["sbx-prep"])
+            except Exception as exc:  # noqa: BLE001
+                error = exc
+        finally:
+            skills.os.replace = real_replace
+        code = getattr(error, "code", None)
+        backups = [n for n in os.listdir(root) if "roblox-docs.rbforge-backup" in n]
+    finally:
+        _cleanup(skills, root, src, orig)
+    assert error is not None, "no error was raised"
+    assert code == "RBF-SKILL-005", code
+    assert "ROLLBACK_FAILED" in str(error), error
+    assert backups, "the previous copy was not preserved"
+
+
+@check("skills: an edited KNOWLEDGE-PATH.txt survives uninstall")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        orig = (skills.paths.skills_source_dir, skills.roots_for)
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        _sandbox_agent(skills, root, "sandbox")
+        try:
+            skills.install(["sandbox"])
+            pointer = os.path.join(root, "roblox-docs", "KNOWLEDGE-PATH.txt")
+            open(pointer, "w").write("my own path notes")
+            result = skills.remove(["sandbox"])
+            kept = os.path.isfile(pointer) and open(pointer).read() == "my own path notes"
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for = orig
+            del skills._ROOTS["sandbox"]
+    assert kept, "the edited knowledge pointer was deleted"
+    assert "kept" in result["sandbox"], result
+
+
+@check("skills: a stamp without a manifest is legacy, never current")
+def _():
+    from rbforge import skills
+    with tempdir() as d:
+        target = os.path.join(d, "roblox-docs")
+        os.makedirs(target)
+        open(os.path.join(target, "SKILL.md"), "w").write("# x")
+        open(os.path.join(target, ".rbforge-version"), "w").write(skills_version())
+        state = skills.state_of(target)
+    assert state != "current", state
+    assert state.startswith("legacy"), state
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, exc in FAIL:

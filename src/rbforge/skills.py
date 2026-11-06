@@ -234,6 +234,9 @@ def state_of(skill_dir):
             return "partial (no SKILL.md)"
         if os.path.isfile(os.path.join(skill_dir, MANIFEST)):
             return "partial (manifest rejected)"
+        # Version stamp alone proves nothing: without a manifest there is no record of which files we
+        # wrote or whether they survived. Reinstall migrates it; until then it is not `current`.
+        return "legacy (no manifest)"
     else:
         for rel, want in manifest["files"].items():
             path = safe_rel(rel, skill_dir)
@@ -249,7 +252,7 @@ def state_of(skill_dir):
 
 
 # Worst-first: one bad root must not be hidden by a healthy one.
-_WORST = ("foreign", "partial", "stale", "modified", "absent")
+_WORST = ("foreign", "partial", "legacy", "stale", "modified", "absent")
 
 
 def _combine(values):
@@ -336,13 +339,13 @@ def _plan(agent):
             elif state.startswith("foreign"):
                 per_skill[name] = "blocked: %s exists and is not RobloxForge's (%s)" % (name, root)
             elif state == "current" and _installed_version(dst) == __version__:
-                # A pre-manifest install can look current because the stamp matches. Re-install it
-                # once so the directory gains a manifest - without a backup only when every byte is
-                # provably ours.
+                per_skill[name] = "current"
+            elif state.startswith("legacy") or state == "stale (unstamped)":
+                # A pre-manifest install: keep a copy unless every byte is provably ours.
                 src_dir = os.path.join(src_root, name)
                 per_skill[name] = ("replace" if _matches_source(dst, src_dir)
-                                   else "backup-and-replace") if _read_manifest(dst) is None else "current"
-            elif state.startswith(("modified", "partial")) or state == "stale (unstamped)":
+                                   else "backup-and-replace")
+            elif state.startswith(("modified", "partial")):
                 # Content we cannot prove is ours gets preserved, not deleted.
                 per_skill[name] = "backup-and-replace"
             else:
@@ -380,10 +383,14 @@ def install(agents=None):
 
             # Phase 1: stage and validate every replacement before activating any of them.
             staged = {}
+            attempted = []
             try:
                 for name in pending:
                     stage = _unique(os.path.join(root, ".rbforge-stage-%s-%s-%d"
                                                  % (name, os.urandom(3).hex(), os.getpid())))
+                    # Recorded before the copy: copytree can create the directory and then fail,
+                    # which would leave debris that no cleanup list knows about.
+                    attempted.append(stage)
                     shutil.copytree(os.path.join(src_root, name), stage)
                     _write_knowledge_pointer(stage, src_root)
                     _write_manifest(stage, __version__)
@@ -394,7 +401,7 @@ def install(agents=None):
                                          hint="nothing was activated")
                     staged[name] = stage
             except (OSError, ForgeError) as exc:
-                for stage in staged.values():
+                for stage in attempted:
                     shutil.rmtree(stage, ignore_errors=True)
                 raise ForgeError("RBF-SKILL-002", "could not stage %s: %s" % (agent, exc),
                                  hint="nothing was replaced")
@@ -411,8 +418,10 @@ def install(agents=None):
                             dst, time.strftime("%Y%m%d-%H%M%S"), os.urandom(2).hex())
                         backup = _unique(base)
                         os.replace(dst, backup)
-                    os.replace(stage, dst)
+                    # The operation is in flight from this point: the original is already in the
+                    # backup, so a failure below must put it back, not just report.
                     done.append((dst, backup, plan[root][name]))
+                    os.replace(stage, dst)
             except OSError as exc:
                 restored, failed = [], []
                 for dst, backup, decision in reversed(done):
@@ -421,17 +430,20 @@ def install(agents=None):
                             shutil.rmtree(dst, ignore_errors=True)
                         if backup and os.path.isdir(backup):
                             os.replace(backup, dst)
+                        elif not backup:
+                            pass  # nothing owned before: the empty destination is the restoration
                         restored.append(os.path.basename(dst))
                     except OSError:
                         failed.append(os.path.basename(dst))
                 for stage in staged.values():
                     shutil.rmtree(stage, ignore_errors=True)
                 detail = "restored %s" % ", ".join(restored) if restored else "nothing to restore"
+                code = "RBF-SKILL-003"
                 if failed:
-                    detail += "; COULD NOT RESTORE %s" % ", ".join(failed)
-                raise ForgeError("RBF-SKILL-003",
-                                 "activation failed at %s: %s" % (agent, exc),
-                                 hint=detail)
+                    detail += "; ROLLBACK_FAILED for %s - the previous copy is in " \
+                              "<name>.rbforge-backup-* beside the skill" % ", ".join(failed)
+                    code = "RBF-SKILL-005"
+                raise ForgeError(code, "activation failed at %s: %s" % (agent, exc), hint=detail)
 
             for _dst, backup, decision in done:
                 if backup and decision != "backup-and-replace":
@@ -496,11 +508,23 @@ def remove(agents=None):
                         os.remove(path)
                     except OSError:
                         modified.append(os.path.basename(path))
-                for rel in (STAMP, MANIFEST, "KNOWLEDGE-PATH.txt"):
+                for rel in (STAMP, MANIFEST):
                     try:
                         os.remove(os.path.join(d, rel))
                     except OSError:
                         pass
+                # The knowledge pointer is generated, but the user may have edited it: it goes through
+                # the same manifest-hash rule as every other managed file.
+                pointer = os.path.join(d, "KNOWLEDGE-PATH.txt")
+                if os.path.isfile(pointer):
+                    want = (manifest.get("files") or {}).get("KNOWLEDGE-PATH.txt")
+                    if want is None or _sha(pointer) == want:
+                        try:
+                            os.remove(pointer)
+                        except OSError:
+                            pass
+                    else:
+                        modified.append("KNOWLEDGE-PATH.txt")
                 # Empty directories only; the walk cannot delete the root it is iterating on Windows.
                 for base, _dirs, _files in os.walk(d, topdown=False):
                     try:

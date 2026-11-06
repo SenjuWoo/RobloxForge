@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.13.9 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.13.10 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -19,7 +19,7 @@ claim checkable.
 | Offline gate (`check`, traps, probes, review) | 82 automated tests + fixture projects |
 | Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
 | Receipts / observations | unit tests, including omission, mismatch, expiry, replay and tamper cases |
-| Skill installer | 16 tests: manifest path traversal refused, foreign/legacy/modified dirs preserved, empty+corrupt manifests never `current`, transactional staging and activation rollback, backup-name uniqueness, per-profile `current`, backup instead of delete, preflight abort, idempotent re-run, root dedupe; live across 10 Hermes roots + claude/codex/grok |
+| Skill installer | 22 tests: manifest path traversal refused, foreign/legacy/modified dirs preserved, empty+corrupt manifests never `current`, transactional staging and activation rollback, backup-name uniqueness, per-profile `current`, backup instead of delete, preflight abort, idempotent re-run, root dedupe; live across 10 Hermes roots + claude/codex/grok |
 | Skill installer (previous) | 8 tests: per-profile `current`, partial/modified/foreign states, backup instead of delete, preflight abort, idempotent re-run, remove-keeps-user-files, root dedupe; live on this PC across 10 Hermes roots + claude/codex/grok |
 | Release artifact | `smoke_artifact.py` checks all 25 skills, frontmatter and the 17-tool MCP handshake |
 | Live Studio: push + readback | disposable place, 2026-11-06: `synced` digests matched, ModuleScript/Script classes correct |

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.13.10 - 2026-11-06
+
+Recovery-safety pass: four narrow defects, each reproduced with fault injection before the fix.
+
+### Fixed
+- **The in-flight skill was never restored.** The operation was only recorded after its rename
+  succeeded, so when `os.replace(stage, dst)` raised, the previous copy stayed in its backup and the
+  destination was empty. The operation is now recorded before activation, restored first, then the
+  earlier ones roll back in reverse.
+- **A restore that also fails is now explicit.** `RBF-SKILL-005` says `ROLLBACK_FAILED`, names the
+  skill, and points at the `<name>.rbforge-backup-*` copy that still holds the original - instead of
+  reporting a clean undo that did not happen.
+- **Half-written staging directories survived.** `copytree` can create the destination and then die;
+  every attempted stage is now recorded before the copy and removed on failure.
+- **An edited `KNOWLEDGE-PATH.txt` was deleted on uninstall.** The pointer is generated metadata, but
+  the user can edit it, so it now goes through the same manifest-hash rule as every other managed
+  file: removed only when unchanged, otherwise kept and reported.
+- **A version stamp with no manifest reported `current`.** It is now `legacy (no manifest)`, never
+  current. Installing migrates it, replacing in place only when every byte is provably ours and
+  keeping a backup otherwise.
+
+### Tests
+111 total (was 105). New fault-injection matrix: stage failure before/after the destination exists,
+backup-move failure, activation failure with a user-edited installation, restore failure during
+rollback, edited knowledge pointer, legacy install. README counts corrected, bundle registry already
+points at `rbforge skills status`.
+
 ## 0.13.9 - 2026-11-06
 
 Safety pass on the manifest-backed installer, driven by an independent reproduction of each defect.
