@@ -1215,7 +1215,8 @@ def _():
     orig = live.Session
     with tempdir() as d:
         path = os.path.join(d, "t.luau")
-        open(path, "w").write("return 1\n")
+        # The fixture must declare the attribute: a test that cannot report is refused before it runs.
+        open(path, "w").write('workspace:SetAttribute("Attr", "PASS ...")\n')
         try:
             for text, want in [("PASS 30 routes", "pass"), ("FAIL 2 routes", "fail"),
                                ("NOT_PASS 30", "fail"), ("TIMEOUT", "fail"),
@@ -1758,6 +1759,20 @@ def _():
         tracked = listed.stdout.splitlines()
         missing = [n for n in names if not any(t.startswith("skills/%s/" % n) for t in tracked)]
         assert not missing, "untracked skill(s): %s" % missing
+
+
+@check("server_test: a test that never reports is refused before it burns the timeout")
+def _():
+    from rbforge import live
+    with tempdir() as d:
+        bad = os.path.join(d, "silent.luau")
+        with open(bad, "w", encoding="utf-8") as fh:
+            fh.write("return 'PASS'\n")  # a returned value goes nowhere
+        # The guard returns before opening a session, so this needs no Studio.
+        result = live.server_test(bad, "RbforgeTest", studio_id=None)
+    assert result["passed"] is False, result
+    assert result["outcome"] == "fail", result
+    assert "never sets" in result["result"], result
 
 
 if __name__ == "__main__":

@@ -186,3 +186,10 @@ was invisible in the code and obvious in the capture.
   barrel tip on every weapon (`Muzzle`) and resolve it before the raycast: `model:FindFirstChild("Muzzle", true)`, then
   PrimaryPart, then the old offset. First person needs one more step - the body gun is hidden behind the camera, so the
   local tracer must come from the viewmodel's muzzle while remote players keep the body one.
+
+## `tostring(Enum.Material.Grass)` is not `"Grass"`
+
+`tostring()` on an Enum item yields the full path - `"Enum.Material.Grass"` - so a lookup keyed by
+plain names (`{ Grass = ... }`) misses every time and falls through to its default. In an impact or
+surface-effect payload send `result.Material.Name`, and keep `tostring()` for logs only. The failure is
+silent: the effect still plays, it just plays the fallback for every surface.

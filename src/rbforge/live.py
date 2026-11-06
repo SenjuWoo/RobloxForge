@@ -425,6 +425,17 @@ def server_test(path, attr, timeout=120, studio_id=None):
     cache (execute_luau has its own). The test must set workspace:SetAttribute(attr, "PASS ..." | "FAIL ...")."""
     with open(path, encoding="utf-8") as fh:
         src = fh.read().replace("\r\n", "\n")
+    # A test that never writes the attribute cannot report: the runner would sit for the full timeout
+    # and call it TIMEOUT, which hides the real mistake. Say so immediately instead.
+    if "SetAttribute" not in src or attr not in src:
+        return {
+            "test": path,
+            "result": "INVALID: the test never sets workspace:%s" % attr,
+            "outcome": "fail",
+            "passed": False,
+            "reason": "a test that cannot report cannot pass; end it with "
+                      'workspace:SetAttribute("%s", "PASS ...") or "FAIL ..."' % attr,
+        }
     code = (
         "workspace:SetAttribute(%s, nil)\n" % json.dumps(attr)
         + "local s = Instance.new('Script')\n"

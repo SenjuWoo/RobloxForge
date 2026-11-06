@@ -163,3 +163,17 @@ how good the picture looks.
 Read the errors the same way: `LogService:GetLogHistory()` on the Client
 datamodel, filtered to `MessageError`, is the only cheap way to prove a client
 script is clean without dumping the whole Studio console into context.
+
+## Server tests must report themselves
+
+`live.server_test` (and anything built on it) runs your file as a temporary `Script` in a live Play
+session and waits for an attribute. The file has to write the verdict:
+
+```lua
+workspace:SetAttribute("RbforgeTest", ok and ("PASS " .. detail) or ("FAIL " .. detail))
+```
+
+A file that merely `return`s a value reports nothing: it was silently a 120 s `TIMEOUT`, which reads
+as "the test hung" instead of "the test never reported". Newer builds return
+`INVALID: the test never sets workspace:<attr>` immediately - if you see `TIMEOUT`, check that the
+attribute name in the test matches the one the runner passes (`test_attr`, default `RbforgeTest`).
