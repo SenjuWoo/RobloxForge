@@ -179,3 +179,10 @@ was invisible in the code and obvious in the capture.
 - **`AlwaysOnTop = true` SurfaceGuis did not render** (Studio captures and Play).
   For camera-bound HUD panes use depth-tested panes about 0.75 studs from the eye.
 - **`GetPartBoundsInBox` skips `CanQuery = false` parts**, same as raycasts.
+
+- **Weapon FX that starts at the character instead of the barrel.** `hrp.Position + Vector3.new(0, 1.6, 0)` is the
+  chest, and a weapon model's `PrimaryPart` is usually the **grip** - both put the ray and the tracer inside the body, so
+  shots look like they come out of the player's sternum and can hit geometry the barrel has already cleared. Name the
+  barrel tip on every weapon (`Muzzle`) and resolve it before the raycast: `model:FindFirstChild("Muzzle", true)`, then
+  PrimaryPart, then the old offset. First person needs one more step - the body gun is hidden behind the camera, so the
+  local tracer must come from the viewmodel's muzzle while remote players keep the body one.
