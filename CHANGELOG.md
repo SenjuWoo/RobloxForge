@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.13.3 - 2026-11-06
+
+Live Studio pass on a disposable sandbox place (Studio `Place1`, unpublished, `PlaceId 0`). Two real
+defects only live testing could find, plus the proof the fake-session tests could not give.
+
+### Fixed
+- **`screen_capture` was called without `capture_id`.** Studio answers
+  `Missing required argument: capture_id`, the collector swallowed it as "no screenshot", and every
+  receipt capped at `playtest_observed_partial`. A unique `capture_id` is now passed and the returned
+  `image/jpeg` block is decoded, hashed and stored (240 KB capture in the live run).
+- **Evidence collection failed in Play mode.** The place name was read from the Edit datamodel, which
+  does not exist during a playtest, so `collect_evidence` raised. It now falls back to the Server
+  context and records which datamodel answered.
+
+### Verified live (not mocked)
+| Check | Result |
+|---|---|
+| `push` first write | 2 files `synced`, readback digests matched, `Alpha` = ModuleScript, `Runner` = Script |
+| same-class overwrite | `synced`, no backup created |
+| declared `Model` vs existing `Folder` | `HIERARCHY ServerScriptService.Containers is Folder, the project expects Model`, folder untouched |
+| class change | `Swap` ModuleScript → Script `synced`; original preserved as `Swap_rbforge_1793986769000` in `ServerStorage.rbforge_backups` |
+| `init.luau` mapping | `Nested` = ModuleScript with `Child` ModuleScript beneath it |
+| `servePlaceIds` | wrong place → `RBF-STUDIO-003`; `["invalid"]` → `RBF-ARG-002` |
+| `servertest` | PASS → `pass`, FAIL → `fail`, malformed → `unknown`, timeout → `fail`/`TIMEOUT` |
+| console | `get_console_output` read, status `ok`, 0 errors |
+| `collect_evidence` end to end | `verified_playtest` with a real captured image and a recorded inspection attestation |
+
+Two regression tests were added from these runs (capture_id is sent; Play falls back to Server). 76 tests.
+
+### Removed
+- The `zToreviewandintergrateordocument` intake folder: its curated contents now live in
+  `knowledge/vendor/` (Forge) and in the pack (`_CANONICAL-SKILLS/roblox-*`,
+  `docs/roblox-assistant-briefs/`).
+
+### Still not verified
+- Rollback under a genuine Studio write failure was not forced; the code path is covered by unit tests
+  and generated-Luau review only.
+- Multiplayer, published-place path and the weak-model benchmark remain outstanding.
+
 ## 0.13.2 - 2026-11-06
 
 Final corrective pass: verification and push now fail closed, and the docs match the code.

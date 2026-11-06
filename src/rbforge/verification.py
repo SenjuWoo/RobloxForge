@@ -261,7 +261,13 @@ def collect_evidence(studio_id=None, test_path=None, test_attr="RbforgeTest",
     factory = session_factory or (lambda: live.Session(studio_id))
     with factory() as session:
         sid = session.studio_id
-        identity = session.luau("return game.Name", "Edit").strip()
+        # Evidence is usually collected during a playtest, where the Edit datamodel is unavailable.
+        dm = datamodel
+        try:
+            identity = session.luau("return game.Name", "Edit").strip()
+        except Exception:  # noqa: BLE001 - Studio is in Play; the Server context still answers
+            dm = "Server"
+            identity = session.luau("return game.Name", "Server").strip()
         place_name = identity or place
 
     tests = []
@@ -293,7 +299,10 @@ def collect_evidence(studio_id=None, test_path=None, test_attr="RbforgeTest",
     if capture_screenshot:
         try:
             with factory() as session:
-                blocks, is_error, text = session.call_content("screen_capture", {"studio_id": sid})
+                # The real tool requires a capture_id; without it the call fails with
+                # "Missing required argument: capture_id".
+                blocks, is_error, text = session.call_content(
+                    "screen_capture", {"studio_id": sid, "capture_id": "rbforge-%d" % int(time.time())})
             if not is_error:
                 shots = _save_capture(blocks, text)
         except Exception:  # noqa: BLE001 - capture is best effort, never a claim
@@ -307,7 +316,7 @@ def collect_evidence(studio_id=None, test_path=None, test_attr="RbforgeTest",
     payload = {
         "studio_id": sid,
         "place": place_name,
-        "datamodel": datamodel,
+        "datamodel": dm,
         "project": project,
         "scenario": scenario,
         "revision": revision,

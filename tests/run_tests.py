@@ -1459,6 +1459,71 @@ def _():
         assert option in accepted, option
 
 
+@check("verification: the collector asks Studio for a capture with a capture_id")
+def _():
+    from rbforge import verification
+    seen = {}
+
+    class SpyFake:
+        studio_id = "fake"
+
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def luau(self, code, dm="Edit"):
+            return "Place1"
+
+        def call(self, tool, args):
+            if tool == "get_console_output":
+                return "[Server] ok"
+            raise KeyError(tool)
+
+        def call_content(self, tool, args):
+            seen.update(args)
+            return ([], False, "")
+
+    verification.collect_evidence(session_factory=SpyFake, capture_screenshot=True)
+    # Studio rejects screen_capture without it: "Missing required argument: capture_id".
+    assert seen.get("capture_id"), seen
+
+
+@check("verification: collecting evidence during Play falls back to the Server context")
+def _():
+    from rbforge import verification
+
+    class PlayOnly:
+        studio_id = "fake"
+
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def luau(self, code, dm="Edit"):
+            if dm == "Edit":
+                raise AssertionError("Edit datamodel is not available in Play mode")
+            return "Game"
+
+        def call(self, tool, args):
+            return ""
+
+        def call_content(self, tool, args):
+            return ([], False, "")
+
+    obs = verification.collect_evidence(session_factory=PlayOnly)
+    assert obs["place"] == "Game" and obs["datamodel"] == "Server", obs
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, exc in FAIL:
