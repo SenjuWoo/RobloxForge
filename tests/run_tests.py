@@ -7,6 +7,7 @@ import base64
 import io
 import json
 import os
+import traceback
 import re
 import sys
 import tempfile
@@ -37,6 +38,11 @@ def _fake_session(out):
             return Fake.answer
     return Fake
 
+
+
+def skills_version():
+    from rbforge import __version__
+    return __version__
 
 
 @contextlib.contextmanager
@@ -76,6 +82,10 @@ def check(name):
         except Exception as exc:  # noqa: BLE001
             FAIL.append((name, exc))
             print("FAIL %s: %r" % (name, exc))
+            # A bare repr hides where it broke; the last frames name the line.
+            tb = traceback.format_exc().strip().splitlines()
+            for line in tb[-6:]:
+                print("     " + line)
         return fn
     return deco
 
@@ -1772,7 +1782,160 @@ def _():
         result = live.server_test(bad, "RbforgeTest", studio_id=None)
     assert result["passed"] is False, result
     assert result["outcome"] == "fail", result
-    assert "never sets" in result["result"], result
+    assert "never calls SetAttribute" in result["result"], result
+
+
+@check("skills: current requires every profile, not just one")
+def _():
+    from rbforge import skills
+    with tempdir() as d:
+        a, b = os.path.join(d, "a"), os.path.join(d, "b")
+        os.makedirs(os.path.join(a, "roblox-audio"))
+        os.makedirs(b)
+        stamp = os.path.join(a, "roblox-audio", ".rbforge-version")
+        open(stamp, "w").write(skills_version())
+        open(os.path.join(a, "roblox-audio", "SKILL.md"), "w").write("# x")
+        states = [skills.state_of(os.path.join(a, "roblox-audio")), skills.state_of(os.path.join(b, "roblox-audio"))]
+    assert states[1] == "absent", states
+    assert skills._combine(states) != "current", states
+
+
+@check("skills: a stamp without a payload is partial, not current")
+def _():
+    from rbforge import skills
+    with tempdir() as d:
+        target = os.path.join(d, "roblox-audio")
+        os.makedirs(target)
+        open(os.path.join(target, ".rbforge-version"), "w").write(skills_version())
+        assert skills.state_of(target).startswith("partial"), skills.state_of(target)
+
+
+@check("skills: a changed payload is modified, an added file keeps that meaning")
+def _():
+    from rbforge import skills
+    with tempdir() as d:
+        target = os.path.join(d, "roblox-audio")
+        os.makedirs(target)
+        open(os.path.join(target, "SKILL.md"), "w").write("# x")
+        skills._write_manifest(target, skills_version())
+        assert skills.state_of(target) == "current", skills.state_of(target)
+        open(os.path.join(target, "SKILL.md"), "w").write("# changed")
+        assert skills.state_of(target).startswith("modified"), skills.state_of(target)
+        open(os.path.join(target, "SKILL.md"), "w").write("# x")
+        open(os.path.join(target, "MY-NOTES.md"), "w").write("mine")
+        assert "extra" in skills.state_of(target), skills.state_of(target)
+
+
+@check("skills: reinstall keeps user files in a backup instead of deleting them")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        target = os.path.join(root, "roblox-audio")
+        os.makedirs(target)
+        open(os.path.join(target, "SKILL.md"), "w").write("# old")
+        skl = skills._write_manifest(target, "0.0.0")
+        open(os.path.join(target, "MY-NOTES.md"), "w").write("keep me")
+
+        orig_source, orig_roots = skills.paths.skills_source_dir, skills.roots_for
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        try:
+            first = skills.install(["hermes"])
+            backups = [n for n in os.listdir(root) if ".rbforge-backup-" in n]
+            saved = os.path.join(root, backups[0], "MY-NOTES.md") if backups else None
+            kept_text = open(saved).read() if saved and os.path.isfile(saved) else None
+            second = skills.install(["hermes"])
+            leftovers = [n for n in os.listdir(root) if n.startswith(".rbforge-stage")]
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for = orig_source, orig_roots
+    assert "installed" in first["hermes"], first
+    assert kept_text == "keep me", (backups, kept_text)
+    assert "already current" in second["hermes"], second
+    assert not leftovers, "stage left behind: %s" % leftovers
+
+
+@check("skills: a foreign skill blocks the whole batch before any write")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        os.makedirs(os.path.join(root, "roblox-audio"))
+        open(os.path.join(root, "roblox-audio", "SKILL.md"), "w").write("# someone else's")
+
+        orig_source, orig_roots = skills.paths.skills_source_dir, skills.roots_for
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        try:
+            result = skills.install(["hermes"])
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for = orig_source, orig_roots
+        installed_others = [n for n in os.listdir(root)
+                            if n.startswith("roblox-") and n != "roblox-audio"]
+    assert "blocked before any change" in result["hermes"], result
+    assert not installed_others, installed_others
+
+
+@check("skills: remove deletes our files and leaves the user's directory")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        orig_source, orig_roots = skills.paths.skills_source_dir, skills.roots_for
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        try:
+            skills.install(["hermes"])
+            notes = os.path.join(root, "roblox-audio", "MY-NOTES.md")
+            open(notes, "w").write("mine")
+            result = skills.remove(["hermes"])
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for = orig_source, orig_roots
+        kept = os.path.isfile(notes)
+        gone = not os.path.isfile(os.path.join(root, "roblox-audio", "SKILL.md"))
+    assert kept and gone, (kept, gone, result)
+    assert "kept" in result["hermes"], result
+
+
+@check("server_test: a mention in a comment or string is not a report, a dynamic name is")
+def _():
+    from rbforge import live
+    with tempdir() as d:
+        cases = {
+            "comment.luau": "-- workspace:SetAttribute('RbforgeTest', 'PASS')\nreturn 1\n",
+            "string.luau": "print('workspace:SetAttribute(\"RbforgeTest\", \"PASS\")')\n",
+            "dynamic.luau": "local n = 'Rbforge' .. 'Test'\nworkspace:SetAttribute(n, 'PASS')\n",
+        }
+        results = {}
+        for name, body in cases.items():
+            path = os.path.join(d, name)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            results[name] = live._lua_code_only(body)
+    assert "SetAttribute" not in results["comment.luau"], results["comment.luau"]
+    assert "SetAttribute" not in results["string.luau"], results["string.luau"]
+    assert "SetAttribute" in results["dynamic.luau"], results["dynamic.luau"]
+
+
+@check("skills: one root spelled two ways is one root")
+def _():
+    from rbforge import skills
+    with tempdir() as root:
+        orig = dict(skills._ROOTS)
+        skills._ROOTS["probe"] = ("RBFORGE_PROBE_SKILLS", (root, root.replace("\\", "/")))
+        os.environ.pop("RBFORGE_PROBE_SKILLS", None)
+        try:
+            roots = skills.roots_for("probe")
+        finally:
+            skills._ROOTS.clear()
+            skills._ROOTS.update(orig)
+    assert len(roots) == 1, roots
 
 
 if __name__ == "__main__":

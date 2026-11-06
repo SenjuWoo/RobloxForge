@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.13.8 - 2026-11-06
+
+The installer is now safe to run twice, and safe to run over work you have already done.
+
+### Fixed
+- `skills status` called an agent `current` when only one of its roots was current. Hermes runs one
+  skill tree per profile, so "profile A is fine, profile B has never seen it" read as healthy.
+  `current` now requires every root, and `by_root` carries each root's state.
+- A directory holding only `.rbforge-version` counted as installed. Every skill now carries
+  `.rbforge-manifest.json` (relative path + sha256 per file), so `status` distinguishes `partial`
+  (payload missing), `modified` (payload changed or user files added), `stale` and `foreign`.
+- Reinstalling deleted user files: the old code `rmtree`d any owned directory. A directory we cannot
+  prove is byte-identical to the shipped copy is now renamed to `<skill>.rbforge-backup-<stamp>` and
+  kept; only a provably identical copy is replaced in place.
+- A foreign skill in one root blocked halfway through a batch, after earlier skills were written.
+  Preflight now inspects every root and skill first and aborts before the first write.
+- Installation stages each skill next to its destination, swaps by rename, and restores the previous
+  copy if activation fails; a repeated install reports `already current` and touches nothing.
+- `skills remove` deletes only the files in the manifest and leaves a directory that still holds user
+  files, instead of removing the tree.
+- One skill root spelled two ways (`\\` vs `/`, case) was installed twice; roots are deduplicated by
+  normalized path.
+
+### Changed
+- `server_test` refuses a test file with no `SetAttribute` call in *executable* code: comments and
+  strings no longer count, and a dynamically built attribute name is accepted.
+- `scripts/smoke_artifact.py` verifies the whole catalog (25 skills, frontmatter, descriptions)
+  instead of the two skills it used to know about, and still checks the MCP handshake (17 tools).
+- README no longer claims two skills.
+
 ## 0.13.7 - 2026-11-06
 
 Proven end to end in a live Studio session, and one dead end removed.

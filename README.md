@@ -108,8 +108,9 @@ plugins` reports what each paid tool would change and what replaces it for $0.
 
 The 17 `rb_*` MCP tools are useful during Roblox work but waste context in
 every other session. `rbforge agent connect` therefore wires the forge's
-MCP server **disabled** into each agent, and installs the two skills
-(always-on; they cost nothing until a Roblox prompt triggers them):
+MCP server **disabled** into each agent, and installs the skill catalog - 25
+skills (2 first-party, 23 adopted MIT topic skills), always-on but free until a
+Roblox prompt triggers them:
 
 ```
 rbforge agent connect all       # or: hermes | claude | codex | grok
@@ -130,12 +131,17 @@ Disable again when done to reclaim the tool schemas. The official Roblox
 Studio MCP (`roblox-studio` / `mcp.bat`) is separate and stays enabled — it
 is only useful when Studio is open anyway.
 
-## The two skills (the actual product)
+## The skill catalog (the actual product)
 
 - **roblox-game-development** — router skill: vertical slices per genre,
   server/client ownership, security rules, playtest contract, sharp edges.
 - **roblox-docs** — current-knowledge system: search + read the official
   `Roblox/creator-docs` corpus locally, freshness reported honestly.
+- **23 topic skills** (`roblox-luau`, `roblox-networking`, `roblox-data-stores`, ...) adopt the MIT
+  EL4CTEO pack verbatim; `references/assistant-skills.md` routes to them.
+
+`rbforge skills status` reports every skill per root (`current`, `partial`, `modified`, `stale`,
+`foreign`) and only calls an agent `current` when every one of its profiles agrees.
 
 Resolution priority baked into both: observed runtime > current official
 docs > verified community practice > model memory.

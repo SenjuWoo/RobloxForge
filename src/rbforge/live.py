@@ -420,17 +420,52 @@ def run_probe(name, overrides=None, datamodel=None, studio_id=None):
         return {"probe": name, "datamodel": dm, "output": s.luau(r["code"], dm)}
 
 
+def _lua_code_only(src):
+    """Strip comments and string literals so a mention cannot masquerade as a call.
+
+    Deliberately small: it only has to be good enough to keep `SetAttribute` in a comment or a log
+    line from counting as a report. Real parsing is selene's job.
+    """
+    out = []
+    i, n = 0, len(src)
+    while i < n:
+        ch = src[i]
+        if ch == "-" and src.startswith("--", i):
+            close = src.find("]]", i)
+            nl = src.find("\n", i)
+            if src.startswith("--[[", i) and close != -1:
+                i = close + 2
+            elif src.startswith("--[=[", i) and src.find("]=]", i) != -1:
+                i = src.find("]=]", i) + 3
+            else:
+                i = n if nl == -1 else nl
+        elif ch in "\"'":
+            quote, i = ch, i + 1
+            while i < n and src[i] != quote:
+                i += 2 if src[i] == "\\" else 1
+            i += 1
+        elif ch == "[" and src.startswith("[[", i):
+            close = src.find("]]", i)
+            i = n if close == -1 else close + 2
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def server_test(path, attr, timeout=120, studio_id=None):
     """Run a test file as a temporary server Script in a running Play session, so it shares the game's module
     cache (execute_luau has its own). The test must set workspace:SetAttribute(attr, "PASS ..." | "FAIL ...")."""
     with open(path, encoding="utf-8") as fh:
         src = fh.read().replace("\r\n", "\n")
     # A test that never writes the attribute cannot report: the runner would sit for the full timeout
-    # and call it TIMEOUT, which hides the real mistake. Say so immediately instead.
-    if "SetAttribute" not in src or attr not in src:
+    # and call it TIMEOUT, which hides the real mistake. Only executable text counts - a mention in a
+    # comment or a string is not a report - and a dynamically built attribute name is fine, because
+    # the decision is "does this file call SetAttribute at all", not "does it contain this literal".
+    if "SetAttribute" not in _lua_code_only(src):
         return {
             "test": path,
-            "result": "INVALID: the test never sets workspace:%s" % attr,
+            "result": "INVALID: the test never calls SetAttribute for workspace:%s" % attr,
             "outcome": "fail",
             "passed": False,
             "reason": "a test that cannot report cannot pass; end it with "

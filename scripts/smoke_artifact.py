@@ -43,10 +43,24 @@ def main():
         fail("rbforge probe rc=%s %s" % (out.returncode, (out.stderr or out.stdout)[:300]))
     print("probe list ok")
 
-    for name in ("roblox-game-development", "roblox-docs"):
-        if not os.path.isfile(os.path.join(ROOT, "skills", name, "SKILL.md")):
-            fail("missing skill %s" % name)
-    print("skills present")
+    # The whole shipped catalog, not the two skills this check used to know about.
+    sys.path.insert(0, os.path.join(ROOT, "src"))
+    from rbforge import skills as skill_mod
+
+    on_disk = sorted(n for n in os.listdir(os.path.join(ROOT, "skills"))
+                     if os.path.isdir(os.path.join(ROOT, "skills", n)))
+    missing = [n for n in skill_mod.OUR_SKILLS if n not in on_disk]
+    unexpected = [n for n in on_disk if n not in skill_mod.OUR_SKILLS]
+    if missing or unexpected:
+        fail("skill catalog mismatch: missing=%s unexpected=%s" % (missing, unexpected))
+    for name in skill_mod.OUR_SKILLS:
+        path = os.path.join(ROOT, "skills", name, "SKILL.md")
+        if not os.path.isfile(path) or os.path.getsize(path) < 40:
+            fail("skill %s has no usable SKILL.md" % name)
+        text = open(path, encoding="utf-8").read()
+        if not text.startswith("---") or "description:" not in text:
+            fail("skill %s has no frontmatter description" % name)
+    print("skills present: %d" % len(skill_mod.OUR_SKILLS))
 
     proc = subprocess.Popen([sys.executable, SERVER], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, text=True)
