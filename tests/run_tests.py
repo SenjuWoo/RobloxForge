@@ -2549,6 +2549,64 @@ def _():
     assert sorted(listed) == ["link0", "link1", "link2"], listed
 
 
+@check("skills: an edited knowledge pointer is backed up on same-version reinstall")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        orig = (skills.paths.skills_source_dir, skills.roots_for)
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        _sandbox_agent(skills, root, "sandbox")
+        try:
+            skills.install(["sandbox"])
+            pointer = os.path.join(root, "roblox-docs", "KNOWLEDGE-PATH.txt")
+            open(pointer, "w").write("my own notes")
+            state = skills.state_of(os.path.join(root, "roblox-docs"))
+            skills.install(["sandbox"])
+            backups = [n for n in os.listdir(root) if "roblox-docs.rbforge-backup" in n]
+            saved = None
+            if backups:
+                cand = os.path.join(root, backups[0], "KNOWLEDGE-PATH.txt")
+                saved = open(cand).read() if os.path.isfile(cand) else None
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for = orig
+            del skills._ROOTS["sandbox"]
+    assert state.startswith("modified"), state
+    assert backups, "the reinstall replaced an edited pointer with no backup"
+    assert saved == "my own notes", saved
+
+
+@check("skills: an edited pointer survives a cross-version upgrade in a backup")
+def _():
+    from rbforge import skills
+    src, root, dst, _made = _prepared_old_tree(None)
+    pointer = os.path.join(dst, "KNOWLEDGE-PATH.txt")
+    open(pointer, "w").write("edited before the upgrade")
+    orig = (skills.paths.skills_source_dir, skills.roots_for)
+    skills.paths.skills_source_dir = lambda: src
+    skills.roots_for = lambda agent: [root]
+    _sandbox_agent(skills, root, "sbx-ptr")
+    try:
+        state = skills.state_of(dst)
+        skills.install(["sbx-ptr"])
+        backups = [n for n in os.listdir(root) if "roblox-docs.rbforge-backup" in n]
+        saved = None
+        if backups:
+            cand = os.path.join(root, backups[0], "KNOWLEDGE-PATH.txt")
+            saved = open(cand).read() if os.path.isfile(cand) else None
+    finally:
+        skills.paths.skills_source_dir, skills.roots_for = orig
+        del skills._ROOTS["sbx-ptr"]
+        import shutil as _sh
+        _sh.rmtree(root, ignore_errors=True); _sh.rmtree(src, ignore_errors=True)
+    assert state != "current", state
+    assert backups, "the upgrade dropped the edited pointer without a backup"
+    assert saved == "edited before the upgrade", saved
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, exc in FAIL:

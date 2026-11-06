@@ -384,6 +384,10 @@ def _plan(agent):
                 per_skill[name] = "blocked: %s exists and is not RobloxForge's (%s)" % (name, root)
             elif state == "current" and _installed_version(dst) == __version__:
                 per_skill[name] = "current"
+            elif state.startswith(("modified", "partial")):
+                # Something on disk differs from what we recorded - an edited file, an added folder,
+                # a touched generated pointer. Never replace in place: keep a copy, always.
+                per_skill[name] = "backup-and-replace"
             else:
                 # Replace in place only when the whole tree - files AND directories - is provably
                 # the shipped copy. A manifest written before 0.13.11 has no `dirs`, so its word

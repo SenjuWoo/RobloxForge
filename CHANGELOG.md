@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.13.13 - 2026-11-06
+
+One decision rule, one more case, caught by the reproduction rather than by a fresh install.
+
+### Fixed
+- **An edited `KNOWLEDGE-PATH.txt` was replaced without a backup.** `_matches_source()` ignores that
+  file on purpose - its absolute vendor path differs per machine - so it cannot be used to prove the
+  tree is untouched. A `modified` state therefore now goes straight to `backup-and-replace`, whatever
+  `_matches_source()` says. Status said `modified`, the plan said `replace`, and the edit vanished.
+- The legacy-manifest ownership fix from 0.13.12 is unchanged: a manifest without `dirs` still only
+  earns `replace` when the whole tree matches the shipped copy.
+
+### Tests
+120 total (was 118): an edited pointer on same-version reinstall, and an edited pointer across a
+0.13.10 -> current upgrade, both requiring a backup that contains the user's text. Negative control
+with the 0.13.12 decision: `state: modified (KNOWLEDGE-PATH.txt)`, `BACKUPS: []`, edit gone.
+
 ## 0.13.12 - 2026-11-06
 
 Two migration defects, found by upgrading a real 0.13.10 install rather than a fresh one.
