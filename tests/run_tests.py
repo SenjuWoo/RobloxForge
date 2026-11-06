@@ -1910,6 +1910,8 @@ def _():
         cases = {
             "comment.luau": "-- workspace:SetAttribute('RbforgeTest', 'PASS')\nreturn 1\n",
             "string.luau": "print('workspace:SetAttribute(\"RbforgeTest\", \"PASS\")')\n",
+            "long.luau": "print([==[ workspace:SetAttribute('RbforgeTest','PASS') ]==])\n",
+            "multiline.luau": "--[==[ workspace:SetAttribute('RbforgeTest','PASS') ]==]\nreturn 1\n",
             "dynamic.luau": "local n = 'Rbforge' .. 'Test'\nworkspace:SetAttribute(n, 'PASS')\n",
         }
         results = {}
@@ -1920,6 +1922,8 @@ def _():
             results[name] = live._lua_code_only(body)
     assert "SetAttribute" not in results["comment.luau"], results["comment.luau"]
     assert "SetAttribute" not in results["string.luau"], results["string.luau"]
+    assert "SetAttribute" not in results["long.luau"], results["long.luau"]
+    assert "SetAttribute" not in results["multiline.luau"], results["multiline.luau"]
     assert "SetAttribute" in results["dynamic.luau"], results["dynamic.luau"]
 
 
@@ -1936,6 +1940,196 @@ def _():
             skills._ROOTS.clear()
             skills._ROOTS.update(orig)
     assert len(roots) == 1, roots
+
+
+def _sandbox_agent(skills, root, name="sbx"):
+    skills._ROOTS[name] = ("RBFORGE_%s_SKILLS" % name.upper(), (root,))
+    return name
+
+
+@check("skills: a manifest naming ../victim.txt cannot delete outside the skill")
+def _():
+    from rbforge import skills
+    with tempdir() as root, tempdir() as outside:
+        victim = os.path.join(outside, "victim.txt")
+        open(victim, "w").write("do not delete")
+        d = os.path.join(root, "roblox-audio")
+        os.makedirs(d)
+        open(os.path.join(d, "SKILL.md"), "w").write("# ours")
+        open(os.path.join(d, ".rbforge-version"), "w").write(skills_version())
+        with open(os.path.join(d, ".rbforge-manifest.json"), "w") as fh:
+            json.dump({"version": skills_version(),
+                       "files": {"SKILL.md": skills._sha(os.path.join(d, "SKILL.md")),
+                                 "../victim.txt": skills._sha(victim)}}, fh)
+        agent = _sandbox_agent(skills, root, "sbxtrav")
+        try:
+            result = skills.remove([agent])
+        finally:
+            del skills._ROOTS[agent]
+        survived = os.path.isfile(victim)
+        refused = "refused" in result[agent]
+    assert survived, "traversal deleted an external file"
+    assert refused, result
+
+
+@check("skills: a foreign directory (manifest, no stamp) is never uninstalled")
+def _():
+    from rbforge import skills
+    with tempdir() as root:
+        d = os.path.join(root, "roblox-audio")
+        os.makedirs(d)
+        open(os.path.join(d, "SKILL.md"), "w").write("# someone else")
+        with open(os.path.join(d, ".rbforge-manifest.json"), "w") as fh:
+            json.dump({"version": "1.0",
+                       "files": {"SKILL.md": skills._sha(os.path.join(d, "SKILL.md"))}}, fh)
+        agent = _sandbox_agent(skills, root, "sbxforeign")
+        try:
+            result = skills.remove([agent])
+            gone = not os.path.isdir(d)
+        finally:
+            del skills._ROOTS[agent]
+    assert not gone, "a foreign directory was deleted"
+    assert "refused" in result[agent], result
+
+
+@check("skills: a modified managed file survives uninstall")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        orig = (skills.paths.skills_source_dir, skills.roots_for)
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        _sandbox_agent(skills, root, "sandbox")
+        try:
+            skills.install(["sandbox"])
+            target = os.path.join(root, "roblox-audio", "SKILL.md")
+            open(target, "w").write("# edited by the user")
+            result = skills.remove(["sandbox"])
+            kept = os.path.isfile(target)
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for = orig
+            del skills._ROOTS["sandbox"]
+    assert kept, "the customized file was deleted"
+    assert "kept" in result["sandbox"], result
+
+
+@check("skills: a legacy install with only a stamp is refused, not rmtree'd")
+def _():
+    from rbforge import skills
+    with tempdir() as root:
+        d = os.path.join(root, "roblox-audio")
+        os.makedirs(d)
+        open(os.path.join(d, "SKILL.md"), "w").write("# legacy")
+        open(os.path.join(d, ".rbforge-version"), "w").write("0.13.0")
+        agent = _sandbox_agent(skills, root, "sbxlegacy")
+        try:
+            result = skills.remove([agent])
+            survived = os.path.isdir(d)
+        finally:
+            del skills._ROOTS[agent]
+    assert survived, "a legacy install was deleted wholesale"
+    assert "refused" in result[agent], result
+
+
+@check("skills: an empty or corrupt manifest never reports current")
+def _():
+    from rbforge import skills
+    with tempdir() as d:
+        target = os.path.join(d, "roblox-audio")
+        os.makedirs(target)
+        open(os.path.join(target, "SKILL.md"), "w").write("# ours")
+        open(os.path.join(target, ".rbforge-version"), "w").write(skills_version())
+        with open(os.path.join(target, ".rbforge-manifest.json"), "w") as fh:
+            json.dump({"version": skills_version(), "files": {}}, fh)
+        empty = skills.state_of(target)
+        with open(os.path.join(target, ".rbforge-manifest.json"), "w") as fh:
+            fh.write("{not json")
+        corrupt = skills.state_of(target)
+    assert empty != "current", empty
+    assert corrupt != "current", corrupt
+
+
+@check("skills: a staging failure installs nothing")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        orig = (skills.paths.skills_source_dir, skills.roots_for, skills.shutil.copytree)
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        _sandbox_agent(skills, root, "sandbox")
+        calls = {"n": 0}
+
+        def flaky(a, b, *rest, **kw):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("disk full")
+            return orig[2](a, b, *rest, **kw)
+
+        skills.shutil.copytree = flaky
+        error = None
+        try:
+            try:
+                skills.install(["sandbox"])
+            except Exception as exc:  # noqa: BLE001
+                error = exc
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for, skills.shutil.copytree = orig
+            del skills._ROOTS["sandbox"]
+        installed = [n for n in os.listdir(root) if n.startswith("roblox-")]
+        stages = [n for n in os.listdir(root) if n.startswith(".rbforge-stage")]
+    assert error is not None, "a failed stage was reported as success"
+    assert "nothing was replaced" in str(error), error
+    assert not installed, installed
+    assert not stages, stages
+
+
+@check("skills: a failed activation rolls the earlier skills back")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        orig = (skills.paths.skills_source_dir, skills.roots_for, skills.os.replace)
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        _sandbox_agent(skills, root, "sandbox")
+
+        def flaky(a, b):
+            if os.path.basename(str(b)).startswith("roblox-docs"):
+                raise OSError("target locked")
+            return orig[2](a, b)
+
+        skills.os.replace = flaky
+        error = None
+        try:
+            try:
+                skills.install(["sandbox"])
+            except Exception as exc:  # noqa: BLE001
+                error = exc
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for, skills.os.replace = orig
+            del skills._ROOTS["sandbox"]
+        installed = [n for n in os.listdir(root) if n.startswith("roblox-")]
+    assert error is not None, "a failed activation was reported as success"
+    assert "restored" in str(error), error
+    assert not installed, installed
+
+
+@check("skills: backup names never collide")
+def _():
+    from rbforge import skills
+    with tempdir() as d:
+        base = os.path.join(d, "x.rbforge-backup-1")
+        open(base, "w").write("taken")
+        unique = skills._unique(base)
+    assert unique != base and not os.path.exists(unique), unique
 
 
 if __name__ == "__main__":

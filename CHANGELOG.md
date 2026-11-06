@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.13.9 - 2026-11-06
+
+Safety pass on the manifest-backed installer, driven by an independent reproduction of each defect.
+
+### Fixed
+- **Arbitrary file deletion (P0).** `remove()` joined manifest entries straight onto the skill path, so
+  a manifest containing `../victim.txt` deleted a file outside the tree. Manifests are now treated as
+  untrusted input: `_read_manifest()` validates schema, version, a non-empty file map, the essential
+  `SKILL.md`, and every path through `safe_rel()` (absolute, drive-qualified, `..`, empty segments and
+  symlink escapes are refused). A rejected manifest means `partial`, never `current`, and the skill is
+  refused by `remove()` rather than deleted.
+- **Foreign directories were uninstallable.** A directory with a manifest but no version stamp was
+  reported `foreign` and then deleted. `remove()` now refuses anything without our stamp.
+- **Modified files were deleted.** Uninstall removes only files whose bytes still match the manifest;
+  a customized `SKILL.md` stops that file and the directory survives, listed as `kept`.
+- **Legacy installs were `rmtree`d.** A stamped directory with no manifest is now refused with
+  `legacy or invalid manifest - reinstall first` instead of being removed wholesale.
+- **Empty/corrupt manifests reported `current`.** A manifest must be non-empty and name `SKILL.md`;
+  `{}` and malformed JSON now report `partial`.
+- **Installation was not a transaction.** Per-skill staging could leave the first skills installed when
+  a later stage failed. Every skill is now staged and validated before any activation; a failed stage
+  reports `nothing was replaced`, and a failed activation restores what was already activated and names
+  anything it could not restore.
+- **Backup names could collide.** Stage and backup paths carry a random suffix and never overwrite an
+  existing backup (`_unique`).
+- **Luau precheck still fooled by long brackets.** `_lua_code_only()` now parses `[[`, `[=[`, `[==[` …
+  for both strings and comments at any level; dynamic attribute names still pass.
+
+### Documentation
+- README: 13 → 17 MCP tools, two → 25 skills, 33 → 105 tests, status heading 0.3.0 → 0.13.9.
+- The bundle's companion registry no longer hardcodes two skill names; it points at
+  `rbforge skills status` as the single source of truth.
+
 ## 0.13.8 - 2026-11-06
 
 The installer is now safe to run twice, and safe to run over work you have already done.

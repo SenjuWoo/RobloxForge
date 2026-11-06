@@ -5,13 +5,17 @@ Design rules, each one earned by a defect this file used to have:
 * A version stamp alone never proves an install. Every skill carries a manifest of the files we
   wrote and their hashes, so `status` can tell `current` from `partial` (payload missing) and
   `modified` (the payload changed, or extra files appeared).
+* Manifests are untrusted input. They live on disk, in a directory the user can edit, so every path
+  in one is validated and proven to stay inside the skill directory before anything is deleted.
 * `current` means current in EVERY root the agent uses. Hermes runs one skill tree per profile, so
   one healthy profile and one untouched profile is not "current".
 * Nothing is deleted to make room. Preflight runs over every root before a single byte is written; a
   foreign skill aborts the whole install, and a directory we do not fully own is moved to a
   timestamped backup instead of being removed.
-* Activation is a rename, not a mirror: the new copy is staged, then swapped in, and the previous
-  copy is restored if the swap fails.
+* Installation is a transaction: every skill is staged and validated first, then activated by rename,
+  and a failure anywhere restores what was already activated.
+* Uninstall removes only files whose bytes still match the manifest. A modified file, an extra file,
+  or a directory without a valid manifest is preserved and reported.
 """
 import hashlib
 import json
@@ -51,6 +55,7 @@ OUR_SKILLS = (
 )
 STAMP = ".rbforge-version"
 MANIFEST = ".rbforge-manifest.json"
+ESSENTIAL = "SKILL.md"
 
 # Discovered skill roots on this machine class. Env override wins.
 _ROOTS = {
@@ -125,13 +130,55 @@ def _sha(path):
     return h.hexdigest()
 
 
-def _read_manifest(skill_dir):
+def safe_rel(rel, skill_dir):
+    """Absolute path for a manifest entry, or None when the entry is not provably inside.
+
+    A manifest is user-editable data, so it can name `../victim.txt`, a drive-qualified path, or a
+    link out of the tree. Anything that does not resolve inside the skill directory is refused, and
+    the refusal is what stops `remove` from becoming an arbitrary file deleter.
+    """
+    if not isinstance(rel, str) or not rel.strip():
+        return None
+    if rel.startswith(("/", "\\")) or ":" in rel or "\x00" in rel:
+        return None
+    parts = rel.replace("\\", "/").split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return None
+    candidate = os.path.join(skill_dir, *parts)
+    root = os.path.realpath(skill_dir)
+    real = os.path.realpath(candidate)
+    if os.path.commonpath([root, real]) != root:
+        return None  # a symlink or a crafted name escaped the tree
+    return candidate
+
+
+def _read_manifest(skill_dir, version=None):
+    """A validated manifest, or None.
+
+    Requires the documented shape, a version that matches the stamp, at least one entry, the
+    essential file, and every path provably inside the directory. A manifest that fails any of these
+    is treated as absent: the install then reads as `partial`, never `current`.
+    """
     try:
         with open(os.path.join(skill_dir, MANIFEST), encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, ValueError):
         return None
-    return data if isinstance(data, dict) and isinstance(data.get("files"), dict) else None
+    if not isinstance(data, dict) or set(data) - {"version", "files"}:
+        return None
+    files = data.get("files")
+    if not isinstance(files, dict) or not files:
+        return None
+    if version is not None and data.get("version") != version:
+        return None
+    if ESSENTIAL not in files:
+        return None
+    for rel, want in files.items():
+        if not isinstance(want, str) or len(want) != 64:
+            return None
+        if safe_rel(rel, skill_dir) is None:
+            return None
+    return data
 
 
 def _manifest_files(skill_dir):
@@ -180,17 +227,20 @@ def state_of(skill_dir):
     version = _installed_version(skill_dir)
     if version is None:
         return "stale (unstamped)" if _looks_like_ours(skill_dir) else "foreign"
-    manifest = _read_manifest(skill_dir)
-    if manifest is not None:
+    manifest = _read_manifest(skill_dir, version)
+    if manifest is None:
+        if not os.path.isfile(os.path.join(skill_dir, ESSENTIAL)):
+            # Pre-manifest installs can only be judged by their entry point.
+            return "partial (no SKILL.md)"
+        if os.path.isfile(os.path.join(skill_dir, MANIFEST)):
+            return "partial (manifest rejected)"
+    else:
         for rel, want in manifest["files"].items():
-            path = os.path.join(skill_dir, rel.replace("/", os.sep))
-            if not os.path.isfile(path):
+            path = safe_rel(rel, skill_dir)
+            if path is None or not os.path.isfile(path):
                 return "partial (missing %s)" % rel
             if _sha(path) != want:
                 return "modified (%s)" % rel
-    elif not os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
-        # Pre-manifest installs can only be judged by their entry point.
-        return "partial (no SKILL.md)"
     if _extra_files(skill_dir, manifest):
         return "modified (extra files kept)"
     if version != __version__:
@@ -253,11 +303,20 @@ def _write_knowledge_pointer(dst, src_root):
                      "Roblox Creator Hub documentation.\n")
 
 
+def _unique(path):
+    """A path that does not exist yet - backups must never overwrite each other."""
+    candidate, n = path, 1
+    while os.path.exists(candidate):
+        candidate = "%s-%d" % (path, n)
+        n += 1
+    return candidate
+
+
 def _plan(agent):
     """Preflight every root before touching anything.
 
     Returns (roots, plan) where plan maps root -> {skill: decision}. Decision is one of
-    `current` (skip), `replace`, `backup-and-replace` or `blocked:<reason>`.
+    `current` (skip), `install`, `replace`, `backup-and-replace` or `blocked:<reason>`.
     """
     from . import __version__
 
@@ -293,7 +352,7 @@ def _plan(agent):
 
 
 def install(agents=None):
-    """Copy our skills into every skill root each agent has. Repeatable and non-destructive."""
+    """Copy our skills into every skill root each agent has, as one transaction per root."""
     from . import __version__
 
     targets = agents or list(_ROOTS)
@@ -316,50 +375,72 @@ def install(agents=None):
         src_root = paths.skills_source_dir()
         notes = []
         for root in roots:
-            changed, kept, skipped = [], [], []
-            for name in OUR_SKILLS:
-                decision = plan[root][name]
-                dst = os.path.join(root, name)
-                if decision == "current":
-                    skipped.append(name)
-                    continue
-                stage = os.path.join(root, ".rbforge-stage-%s-%d" % (name, os.getpid()))
-                if os.path.isdir(stage):
-                    shutil.rmtree(stage)
-                try:
+            pending = [name for name in OUR_SKILLS if plan[root][name] != "current"]
+            skipped = [name for name in OUR_SKILLS if plan[root][name] == "current"]
+
+            # Phase 1: stage and validate every replacement before activating any of them.
+            staged = {}
+            try:
+                for name in pending:
+                    stage = _unique(os.path.join(root, ".rbforge-stage-%s-%s-%d"
+                                                 % (name, os.urandom(3).hex(), os.getpid())))
                     shutil.copytree(os.path.join(src_root, name), stage)
                     _write_knowledge_pointer(stage, src_root)
                     _write_manifest(stage, __version__)
-                except OSError as exc:
+                    manifest = _read_manifest(stage, __version__)
+                    if manifest is None or not os.path.isfile(os.path.join(stage, ESSENTIAL)):
+                        raise ForgeError("RBF-SKILL-004",
+                                         "staged copy of %s failed validation" % name,
+                                         hint="nothing was activated")
+                    staged[name] = stage
+            except (OSError, ForgeError) as exc:
+                for stage in staged.values():
                     shutil.rmtree(stage, ignore_errors=True)
-                    raise ForgeError("RBF-SKILL-002",
-                                     "could not stage %s: %s" % (name, exc),
-                                     hint="nothing was replaced; fix the filesystem and rerun")
-                backup = None
-                try:
+                raise ForgeError("RBF-SKILL-002", "could not stage %s: %s" % (agent, exc),
+                                 hint="nothing was replaced")
+
+            # Phase 2: activate by rename, recording what to undo.
+            done, kept = [], []
+            try:
+                for name in pending:
+                    stage = staged[name]
+                    dst = os.path.join(root, name)
+                    backup = None
                     if os.path.isdir(dst):
-                        if decision == "backup-and-replace":
-                            backup = "%s.rbforge-backup-%s" % (dst, time.strftime("%Y%m%d-%H%M%S"))
-                            os.replace(dst, backup)
-                        else:
-                            os.replace(dst, stage + ".old")
-                            backup = stage + ".old"
+                        base = "%s.rbforge-backup-%s-%s" % (
+                            dst, time.strftime("%Y%m%d-%H%M%S"), os.urandom(2).hex())
+                        backup = _unique(base)
+                        os.replace(dst, backup)
                     os.replace(stage, dst)
-                except OSError as exc:
-                    # Put the previous copy back before reporting the failure.
+                    done.append((dst, backup, plan[root][name]))
+            except OSError as exc:
+                restored, failed = [], []
+                for dst, backup, decision in reversed(done):
+                    try:
+                        if os.path.isdir(dst):
+                            shutil.rmtree(dst, ignore_errors=True)
+                        if backup and os.path.isdir(backup):
+                            os.replace(backup, dst)
+                        restored.append(os.path.basename(dst))
+                    except OSError:
+                        failed.append(os.path.basename(dst))
+                for stage in staged.values():
                     shutil.rmtree(stage, ignore_errors=True)
-                    if backup and os.path.isdir(backup) and not os.path.isdir(dst):
-                        os.replace(backup, dst)
-                    raise ForgeError("RBF-SKILL-003", "could not activate %s: %s" % (name, exc),
-                                     hint="the previous copy was restored")
-                if backup and os.path.isdir(backup) and not backup.endswith(".old"):
-                    kept.append(os.path.basename(backup))
-                elif backup:
+                detail = "restored %s" % ", ".join(restored) if restored else "nothing to restore"
+                if failed:
+                    detail += "; COULD NOT RESTORE %s" % ", ".join(failed)
+                raise ForgeError("RBF-SKILL-003",
+                                 "activation failed at %s: %s" % (agent, exc),
+                                 hint=detail)
+
+            for _dst, backup, decision in done:
+                if backup and decision != "backup-and-replace":
                     shutil.rmtree(backup, ignore_errors=True)
-                changed.append(name)
+                elif backup:
+                    kept.append(os.path.basename(backup))
             parts = []
-            if changed:
-                parts.append("installed %d" % len(changed))
+            if done:
+                parts.append("installed %d" % len(done))
             if kept:
                 parts.append("kept user copies: %s" % ", ".join(kept))
             if skipped:
@@ -370,7 +451,12 @@ def install(agents=None):
 
 
 def remove(agents=None):
-    """Uninstall ONLY the files we wrote. Anything the user added stays where it is."""
+    """Uninstall ONLY files whose bytes still match our manifest.
+
+    Refuses a directory without a version stamp (not ours), skips a legacy install with no manifest
+    (we cannot tell our files from the user's without one), preserves modified and extra files, and
+    validates every manifest path before deleting anything.
+    """
     targets = agents or list(_ROOTS)
     results = {}
     for agent in targets:
@@ -378,49 +464,64 @@ def remove(agents=None):
         if not roots:
             results[agent] = "no skill directory"
             continue
-        removed, kept = [], []
+        removed, kept, refused = [], [], []
         for root in roots:
             for name in OUR_SKILLS:
                 d = os.path.join(root, name)
                 if not os.path.isdir(d):
                     continue
-                manifest = _read_manifest(d)
-                if manifest is None:
-                    if _installed_version(d) is None:
-                        continue  # not ours
-                    shutil.rmtree(d)  # pre-manifest install: nothing to preserve selectively
-                    removed.append(d)
+                stamp = _installed_version(d)
+                if stamp is None:
+                    refused.append("%s (no RobloxForge stamp)" % name)
                     continue
-                extras = _extra_files(d, manifest)
-                for rel in manifest["files"]:
-                    path = os.path.join(d, rel.replace("/", os.sep))
+                manifest = _read_manifest(d, stamp)
+                if manifest is None:
+                    refused.append("%s (legacy or invalid manifest - reinstall first)" % name)
+                    continue
+
+                # Preflight the whole skill before deleting one byte of it.
+                targets_ok, modified = [], []
+                for rel, want in manifest["files"].items():
+                    path = safe_rel(rel, d)
+                    if path is None:
+                        refused.append("%s (manifest names a path outside the skill)" % name)
+                        targets_ok = None
+                        break
+                    if os.path.isfile(path):
+                        targets_ok.append(path) if _sha(path) == want else modified.append(rel)
+                if targets_ok is None:
+                    continue
+                for path in targets_ok:
                     try:
                         os.remove(path)
                     except OSError:
-                        pass
+                        modified.append(os.path.basename(path))
                 for rel in (STAMP, MANIFEST, "KNOWLEDGE-PATH.txt"):
                     try:
                         os.remove(os.path.join(d, rel))
                     except OSError:
                         pass
-                # Drop directories that are now empty, but never one still holding user files.
-                for base, dirs, files in os.walk(d, topdown=False):
-                    if not dirs and not files:
-                        try:
-                            os.rmdir(base)
-                        except OSError:
-                            pass
-                if extras and os.path.isdir(d):
-                    kept.append(d)
-                elif os.path.isdir(d):
-                    shutil.rmtree(d, ignore_errors=True)
-                    removed.append(d)
+                # Empty directories only; the walk cannot delete the root it is iterating on Windows.
+                for base, _dirs, _files in os.walk(d, topdown=False):
+                    try:
+                        os.rmdir(base)
+                    except OSError:
+                        pass
+                leftovers = _manifest_files(d)
+                if leftovers:
+                    kept.append("%s (kept %s)" % (name, ", ".join(leftovers[:3])))
                 else:
-                    removed.append(d)
+                    try:
+                        os.rmdir(d)
+                    except OSError:
+                        shutil.rmtree(d, ignore_errors=True)
+                    removed.append(name)
         parts = []
         if removed:
             parts.append("removed %d" % len(removed))
         if kept:
-            parts.append("kept (user files inside): %s" % ", ".join(kept))
-        results[agent] = "; ".join(parts) or "nothing of ours present"
+            parts.append("kept: %s" % "; ".join(kept))
+        if refused:
+            parts.append("refused: %s" % "; ".join(refused))
+        results[agent] = " | ".join(parts) or "nothing of ours present"
     return results

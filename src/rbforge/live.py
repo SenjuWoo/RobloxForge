@@ -423,30 +423,48 @@ def run_probe(name, overrides=None, datamodel=None, studio_id=None):
 def _lua_code_only(src):
     """Strip comments and string literals so a mention cannot masquerade as a call.
 
-    Deliberately small: it only has to be good enough to keep `SetAttribute` in a comment or a log
-    line from counting as a report. Real parsing is selene's job.
+    Luau allows long brackets at any level (`[[`, `[=[`, `[==[`, ...) for both strings and comments,
+    and `--` starts a comment unless it opens a long bracket. Anything that is not executable text is
+    dropped; dynamic code survives untouched, because only comments and literals are removed.
     """
+    s_ = src
     out = []
     i, n = 0, len(src)
+
+    def long_bracket(at):
+        """(level, end_index) for a `[=*[` opener at `at`, else (None, at)."""
+        j = at + 1
+        while j < n and src[j] == "=":
+            j += 1
+        if j < n and src[j] == "[":
+            return j - at - 1, j + 1
+        return None, at
+
     while i < n:
         ch = src[i]
-        if ch == "-" and src.startswith("--", i):
-            close = src.find("]]", i)
-            nl = src.find("\n", i)
-            if src.startswith("--[[", i) and close != -1:
-                i = close + 2
-            elif src.startswith("--[=[", i) and src.find("]=]", i) != -1:
-                i = src.find("]=]", i) + 3
+        if s_.startswith("--", i):
+            level, after = long_bracket(i + 2)
+            if level is not None:
+                close = "]" + "=" * level + "]"
+                end = s_.find(close, after)
+                i = n if end == -1 else end + len(close)
             else:
-                i = n if nl == -1 else nl
+                end = s_.find("\n", i)
+                i = n if end == -1 else end
+        elif ch == "[":
+            level, after = long_bracket(i)
+            if level is not None:
+                close = "]" + "=" * level + "]"
+                end = s_.find(close, after)
+                i = n if end == -1 else end + len(close)
+            else:
+                out.append(ch)
+                i += 1
         elif ch in "\"'":
             quote, i = ch, i + 1
-            while i < n and src[i] != quote:
-                i += 2 if src[i] == "\\" else 1
+            while i < n and s_[i] != quote:
+                i += 2 if s_[i] == "\\" else 1
             i += 1
-        elif ch == "[" and src.startswith("[[", i):
-            close = src.find("]]", i)
-            i = n if close == -1 else close + 2
         else:
             out.append(ch)
             i += 1

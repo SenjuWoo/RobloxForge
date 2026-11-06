@@ -153,9 +153,9 @@ docs > verified community practice > model memory.
 | `src/rbforge_cli.py` | CLI — every command prints JSON |
 | `src/rbforge/check.py` | offline verification gate (rungs 1-3 of the ladder) |
 | `src/rbforge/plugins.py` | optional-plugin detection, each with a free alternative |
-| `mcp_server/server.py` | 13-tool MCP server (doctor, capabilities, docs, check, plugins, planning, reviews, receipts) |
-| `skills/` | the two agent skills, installed into Hermes/Claude/Codex/Grok/Kimi |
-| `tests/run_tests.py` | 33 checks, no Roblox required |
+| `mcp_server/server.py` | 17-tool MCP server (doctor, capabilities, docs, check, plugins, planning, reviews, receipts, probes, traps, evidence) |
+| `skills/` | 25 agent skills (2 first-party + 23 adopted MIT topic skills), installed into Hermes/Claude/Codex/Grok |
+| `tests/run_tests.py` | 105 checks, no Roblox required |
 
 Register the MCP server manually (all agents, disabled) instead:
 
@@ -163,7 +163,7 @@ Register the MCP server manually (all agents, disabled) instead:
 python src\rbforge_cli.py agent connect all
 ```
 
-## Status (v0.3.0 — honest)
+## Status (0.13.9 — honest)
 
 | Area | Status |
 |---|---|
@@ -173,7 +173,7 @@ python src\rbforge_cli.py agent connect all
 | `rbforge new` one-command project + plan | verified |
 | Plugin detection with a free alternative for every entry | verified (filename-based; none installed here) |
 | Doctor, capabilities matrix | verified |
-| Skill install into Hermes (live), Claude/Codex/Grok/Kimi roots | verified, multi-profile |
+| Skill install into Hermes (10 roots), Claude/Codex/Grok | verified; manifest-backed, per-profile status, non-destructive reinstall |
 | Vertical-slice planning, reviews, hash-chained verification receipts | implemented, static-only |
 | Real E2E weak-model benchmark (baseline vs RobloxForge obby) | **not yet run** |
 
