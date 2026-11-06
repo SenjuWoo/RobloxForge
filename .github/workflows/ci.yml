@@ -26,6 +26,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install selene (the Luau parser the generated-code tests need)
+        run: python scripts/install_selene.py
+
       - name: Byte-compile every module (catches syntax errors before tests)
         run: python -m compileall -q src mcp_server tests
 
@@ -49,7 +52,7 @@ jobs:
           # Assert the contract, not a count: adding a tool must not fail CI,
           # removing one that agents depend on must.
           required = {"rb_doctor", "rb_capabilities", "rb_docs_search", "rb_docs_read",
-                      "rb_check", "rb_plugins", "rb_verify_receipt"}
+                      "rb_check", "rb_plugins", "rb_verify_receipt", "rb_collect_evidence"}
           missing = required - names
           assert not missing, "missing tools: %s" % missing
           for t in tools:

@@ -73,10 +73,10 @@ def _rel(root, path):
 
 # ------------------------------------------------------------- rung 1: static
 
-def changed_files(root):
-    """Luau files changed in the working tree (tracked modifications + untracked), or None."""
+def changed_files(root, base_ref="HEAD"):
+    """Luau files changed since `base_ref` (default HEAD means the working tree), plus untracked."""
     try:
-        done = subprocess.run(["git", "-C", root, "diff", "--name-only", "--diff-filter=ACMR", "HEAD"],
+        done = subprocess.run(["git", "-C", root, "diff", "--name-only", "--diff-filter=ACMR", base_ref],
                               capture_output=True, text=True, timeout=30)
         others = subprocess.run(["git", "-C", root, "ls-files", "--others", "--exclude-standard"],
                                 capture_output=True, text=True, timeout=30)
@@ -124,33 +124,32 @@ def rung_static(root, changed=None):
         else:
             targets = [d for d in ("src", "ServerScriptService") if os.path.isdir(os.path.join(root, d))]
         if scoped is not None and not scoped:
+            # Nothing to lint is a skip for THIS check only; the typechecker still runs below.
             rung["checks"].append({"id": "selene", "status": "skip",
                                    "detail": "no changed Luau files in the working tree"})
-            targets = None
-        cfg = os.path.join(root, "selene.toml")
-        argv = ["selene"] + (targets or ["."])
-        generated = None
-        if os.path.isfile(cfg):
-            argv += ["--config", cfg]
         else:
-            # With no config selene parses as Lua 5.1 and rejects valid Luau (compound assignment,
-            # `continue`, type annotations), which reads as a project defect. Use the Roblox std.
-            generated = _default_selene_config()
-            argv += ["--config", generated]
-        if targets is None:
-            return rung
-        try:
-            code, out = _run(argv, root)
-        finally:
-            if generated:
-                try:
-                    os.remove(generated)
-                except OSError:
-                    pass
-        rung["checks"].append({
-            "id": "selene",
-            "status": _lint_status(code, out),
-            "detail": "clean" if code == 0 else (out[:800] or "unknown")})
+            cfg = os.path.join(root, "selene.toml")
+            argv = ["selene"] + (targets or ["."])
+            generated = None
+            if os.path.isfile(cfg):
+                argv += ["--config", cfg]
+            else:
+                # With no config selene parses as Lua 5.1 and rejects valid Luau (compound
+                # assignment, `continue`, type annotations). Use the Roblox std.
+                generated = _default_selene_config()
+                argv += ["--config", generated]
+            try:
+                code, out = _run(argv, root)
+            finally:
+                if generated:
+                    try:
+                        os.remove(generated)
+                    except OSError:
+                        pass
+            rung["checks"].append({
+                "id": "selene",
+                "status": _lint_status(code, out),
+                "detail": "clean" if code == 0 else (out[:800] or "unknown")})
     else:
         rung["checks"].append({"id": "selene", "status": "skip",
                                "detail": STATIC_TOOLS["selene"]})
@@ -337,9 +336,14 @@ def _validate_project(project_file, root):
     if not isinstance(data, dict):
         return None, ["root is %s, expected an object" % type(data).__name__]
 
+    name = data.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None, ["missing a 'name' string - Rojo requires it at the project root"]
     tree = data.get("tree")
     if not isinstance(tree, dict):
         return None, ["missing a 'tree' object - Rojo has nothing to build"]
+    if not any(not k.startswith("$") for k in tree):
+        return None, ["'tree' declares no child instances - Rojo would build nothing"]
 
     missing, errors = [], []
     seen = {}
@@ -380,21 +384,26 @@ def _validate_project(project_file, root):
 
 # ----------------------------------------------------------------- aggregation
 
-def run(root=".", scope=None, changed_only=False):
+def run(root=".", scope=None, changed_only=False, base_ref="HEAD"):
     """Run the ladder over a project. `scope` limits rungs; `changed_only` limits the linters."""
     root = os.path.abspath(root)
-    changed = changed_files(root) if changed_only else None
+    changed = changed_files(root, base_ref) if changed_only else None
     rungs = [rung_static, rung_unit, rung_structure]
     if scope:
         rungs = [r for r in rungs if r.__name__.split("_", 1)[1] in scope]
     results = []
     for fn in rungs:
         results.append(fn(root, changed=changed) if fn is rung_static else fn(root))
+    coverage = {
+        "mode": "changed-only" if changed_only else "full",
+        "base_ref": base_ref if changed_only else None,
+        "changed_luau_files": len(changed) if changed is not None else None,
+        "note": None,
+    }
     if changed_only:
-        note = ("lint/format limited to %d changed file(s); this is not a whole-project audit"
-                % len(changed)) if changed is not None else \
-               "changed-only requested but git is unavailable; the full project was checked"
-        results[0]["checks"].append({"id": "scope", "status": "pass", "detail": note})
+        coverage["note"] = (("lint/format limited to %d changed file(s); this is not a whole-project audit"
+                             % len(changed)) if changed is not None else
+                            "changed-only requested but git is unavailable; the full project was checked")
 
     statuses = [c["status"] for r in results for c in r["checks"]]
     if "fail" in statuses:
@@ -412,6 +421,7 @@ def run(root=".", scope=None, changed_only=False):
         "counts": counts,
         "rungs_run": [r["id"] for r in results],
         "rungs": results,
+        "coverage": coverage,
         "gate": {
             "pass": "Clean: %s. Studio work may start." % ran,
             "incomplete": "No defect found, but checks were skipped - do NOT "

@@ -17,6 +17,7 @@ the receipts directory. Claiming more than that would be dishonest.
 import hashlib
 import json
 import os
+import re
 import time
 
 from . import paths
@@ -101,27 +102,36 @@ def _as_list(value):
 
 
 def _receipt_files(out_dir):
-    """Receipts in creation order: sequence first, mtime as the fallback for older files."""
+    """Receipts in creation order, legacy first.
+
+    Pre-0.13 receipts have no `sequence`. Treating "missing sequence" as "late" made a legacy
+    receipt sort after newer ones and every link look broken, so the rule is: the legacy prefix
+    keeps its historical filename order, then sequenced receipts follow by sequence number.
+    """
     try:
         names = [n for n in os.listdir(out_dir)
                  if n.endswith(".json") and n != "observations.json"]
     except OSError:
         return []
-    rows = []
+    legacy, sequenced = [], []
     for name in names:
         path = os.path.join(out_dir, name)
-        seq = None
+        rec = {}
         try:
             with open(path, "r", encoding="utf-8") as fh:
-                seq = json.load(fh).get("sequence")
+                rec = json.load(fh)
         except (OSError, ValueError):
-            seq = None
+            rec = {}
+        seq = rec.get("sequence")
         try:
             mtime = os.stat(path).st_mtime
         except OSError:
             continue
-        rows.append(((seq if isinstance(seq, int) else 10 ** 9, mtime), name))
-    return [name for _key, name in sorted(rows)]
+        if isinstance(seq, int):
+            sequenced.append((seq, name))
+        else:
+            legacy.append((mtime, name))
+    return [n for _m, n in sorted(legacy)] + [n for _s, n in sorted(sequenced)]
 
 
 # --------------------------------------------------------------------- observations
@@ -131,11 +141,12 @@ def _observation_id(payload):
     return "obs-" + hashlib.sha256(body + str(time.time_ns()).encode()).hexdigest()[:16]
 
 
-def record_observation(payload):
+def _record_observation(payload):
     """Store one observation and return its opaque id.
 
-    Called by `collect_evidence` after Studio answered; exposed so tests - and any other
-    tool-integrated caller - register a genuine observation instead of inventing a dict.
+    Private on purpose: `collect_evidence` calls this after Studio answered. It is not a way
+    for a caller to promote its own dict to "observed" - tests inject a fake *session* into
+    `collect_evidence` instead, which exercises the real collector.
     """
     record = dict(payload)
     record["recorded_at"] = time.time()
@@ -170,25 +181,33 @@ def load_observation(obs_id, max_age=OBSERVATION_MAX_AGE):
     return record
 
 
+CONSOLE_ERROR = re.compile(r"\b(error|stack begin|stack trace|attempt to)\b", re.I)
+
+
 def collect_evidence(studio_id=None, test_path=None, test_attr="RbforgeTest",
                      screenshots=None, screenshots_inspected=False, untested=None,
-                     place=None):
+                     place=None, project=None, scenario=None, revision=None,
+                     capture_screenshot=False, session_factory=None, datamodel="Edit"):
     """Query Studio through RobloxForge's own MCP session and record what comes back.
 
-    Every value here is produced by the tooling; the caller supplies only intent (which test to
-    run, which screenshots exist). Raises ForgeError when Studio is unreachable - a missing
-    observation is a gap, not a pass.
+    The caller supplies intent (which test to run, whether to capture a screenshot); every value
+    that establishes trust is read from Studio. Console output is fetched through the documented
+    `get_console_output` tool - if that tool is unavailable, `console_logged` stays False and the
+    receipt can only be partial. Tests inject `session_factory`, which exercises this same path.
     """
     from . import live
 
-    with live.Session(studio_id) as session:
+    factory = session_factory or (lambda: live.Session(studio_id))
+    with factory() as session:
         sid = session.studio_id
-        place_name = session.luau("return game.Name", "Edit").strip()
-        datamodel = "Edit"
+        identity = session.luau("return game.Name", "Edit").strip()
+        place_name = identity or place
 
     tests = []
     if test_path:
-        result = live.server_test(test_path, test_attr, studio_id=sid)
+        runner = session_factory or (lambda: live.Session(studio_id, timeout=180))
+        with runner() as session:
+            result = live.server_test(test_path, test_attr, studio_id=sid)
         tests.append({
             "name": os.path.basename(test_path),
             "expected": "PASS",
@@ -196,18 +215,40 @@ def collect_evidence(studio_id=None, test_path=None, test_attr="RbforgeTest",
             "passed": result["passed"],
         })
 
+    console_text, console_logged = "", False
+    try:
+        with factory() as session:
+            console_text = session.call("get_console_output", {"studio_id": sid}) or ""
+        console_logged = True
+    except Exception:  # noqa: BLE001 - the tool may not exist in this Studio build
+        console_logged = False
+    console_errors = len(CONSOLE_ERROR.findall(console_text)) if console_logged else 0
+
+    shots = _as_list(screenshots)
+    if capture_screenshot and not shots:
+        try:
+            with factory() as session:
+                captured = session.call("screen_capture", {"studio_id": sid}) or ""
+            shots = [captured.strip()[:400]] if captured.strip() else []
+        except Exception:  # noqa: BLE001 - capture is best effort, not a claim
+            shots = []
+
     payload = {
         "studio_id": sid,
-        "place": place_name or place,
+        "place": place_name,
         "datamodel": datamodel,
+        "project": project,
+        "scenario": scenario,
+        "revision": revision,
         "tests": tests,
-        "console_logged": False,
-        "console_errors": 0,
-        "screenshots": _as_list(screenshots),
-        "screenshots_inspected": bool(screenshots_inspected),
+        "console_logged": console_logged,
+        "console_errors": console_errors,
+        "console_digest": hashlib.sha256(console_text.encode("utf-8")).hexdigest()[:16] if console_logged else None,
+        "screenshots": shots,
+        "screenshots_inspected": bool(screenshots_inspected and shots),
         "untested": _as_list(untested),
     }
-    payload["observation_id"] = record_observation(payload)
+    payload["observation_id"] = _record_observation(payload)
     return payload
 
 
@@ -236,18 +277,20 @@ def _required_checks():
     }
 
 
-def _next_receipt_path(out_dir, task):
+def _next_receipt_path(out_dir, task, sequence):
+    """A destination that cannot collide, without leaving an empty placeholder behind.
+
+    The sequence is allocated under the append lock, so `-<sequence>` alone is unique; the previous
+    implementation created an empty .json and then replaced it, which a crash could leave behind.
+    """
     stamp = time.strftime("%Y%m%d-%H%M%S")
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in task)[:60] or "receipt"
-    for n in range(1, 1000):
-        candidate = os.path.join(out_dir, "%s-%s-%03d.json" % (stamp, safe, n))
-        try:
-            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        except FileExistsError:
-            continue
-        os.close(fd)
-        return candidate
-    raise RuntimeError("could not reserve a receipt filename in %s" % out_dir)
+    path = os.path.join(out_dir, "%s-%06d-%s.json" % (stamp, sequence, safe))
+    n = 2
+    while os.path.exists(path):
+        path = os.path.join(out_dir, "%s-%06d-%s-%02d.json" % (stamp, sequence, safe, n))
+        n += 1
+    return path
 
 
 def _level(trusted, observation, agent_tests, agent_claim, console_errors):
@@ -270,7 +313,7 @@ def _level(trusted, observation, agent_tests, agent_claim, console_errors):
 def receipt(task, checks=None, evidence=None, observation_id=None, provenance=None,
             console_errors=0, playtest_performed=False, screenshot_captured=False,
             screenshot_inspected=False, limitations=None, project=None, studio_id=None,
-            save=True):
+            scenario=None, save=True):
     """Build (and by default persist) a verification receipt.
 
     Trust comes from `observation_id` alone - an id returned by `collect_evidence()` or
@@ -283,9 +326,15 @@ def receipt(task, checks=None, evidence=None, observation_id=None, provenance=No
 
     observation = load_observation(observation_id)
     trusted = observation is not None
+    # An observation is bound to the place, project and scenario it was collected for. A receipt
+    # that names a different project or scenario must not inherit an earlier success.
     if trusted and studio_id and observation.get("studio_id") != studio_id:
         trusted, observation = False, None
-    if trusted and project and observation.get("project") not in (None, project):
+    if trusted and project and observation.get("project") != project:
+        trusted, observation = False, None
+    if trusted and scenario and observation.get("scenario") != scenario:
+        trusted, observation = False, None
+    if trusted and project is None and observation.get("project") is not None:
         trusted, observation = False, None
 
     state = _required_checks()
@@ -365,9 +414,10 @@ def receipt(task, checks=None, evidence=None, observation_id=None, provenance=No
                 except (OSError, ValueError):
                     continue
             rec["sequence"] = sequence
+            rec["scenario"] = scenario
             rec["prev_digest"] = previous
             rec["digest"] = _digest(rec)
-            file_path = _next_receipt_path(out_dir, task)
+            file_path = _next_receipt_path(out_dir, task, sequence)
             _write_json(file_path, rec)
             rec["saved_to"] = file_path
     return rec
@@ -391,8 +441,9 @@ def verify_chain(out_dir=None):
             continue
         seq = rec.get("sequence")
         if not isinstance(seq, int):
-            problems.append("%s: no sequence" % name)
-        else:
+            # Legacy (pre-0.13) receipt: no sequence, but its digest and link must still hold.
+            seq = None
+        if seq is not None:
             if seq in seen:
                 problems.append("%s: duplicate sequence %s" % (name, seq))
             if seq <= last_seq:

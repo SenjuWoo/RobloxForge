@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.13.1 - 2026-11-06
+
+Hotfix: the push path generated invalid Luau, and several verification shortcuts were still open.
+
+### Fixed
+- **Generated Luau was not Luau.** `_push_code` pasted `json.dumps(parent_classes)` straight into the
+  script, producing `local classes = {"a.b": "Model"}` - JSON syntax, which Luau cannot parse - so every
+  push with a declared parent class failed inside Studio. The map now travels as a JSON *string* through
+  `long_string()` and is decoded with `HttpService:JSONDecode`. Every other interpolated value (parent,
+  name, class, source) also uses `long_string`, so quotes, backslashes, Unicode and long-bracket
+  delimiters survive. A regression test runs the generated script through **selene**, and CI installs a
+  pinned selene (`scripts/install_selene.py`) so the parser check is real.
+- **Existing parents were never checked.** A `Folder` where the project declares `Model` was accepted.
+  Each existing parent is now compared against the declared class and returns
+  `HIERARCHY <path> is Folder, the project expects Model` without touching anything.
+- **Overwrites were not recoverable.** The previous `Source` is read first; if the readback does not
+  match, the old body is restored and the result is `ROLLED_BACK` (or `ROLLBACK_FAILED` when the restore
+  itself fails). A newly created script is removed instead of left half-written.
+- **Wrong-place pushes.** A project that declares `servePlaceIds` now refuses a Studio session on any
+  other place (`RBF-STUDIO-003`) before a single source is written.
+- **`record_observation` was a public promotion path.** It is now private; the only way to obtain a
+  trusted observation is `collect_evidence`, which reads the place, runs the test and - new - fetches
+  `get_console_output` and `screen_capture` through the Studio MCP. Tests inject a fake *session* into
+  the real collector instead of fabricating a record.
+- **The collector could not verify anything.** `console_logged` was hardcoded `False`, so even a passing
+  test could only be partial. Console output is read for real, its error lines are counted from the text,
+  and the digest is recorded. A missing tool leaves the receipt partial instead of claiming otherwise.
+- **Observations were not bound to a task.** Receipts now require the observation's project and scenario
+  to match; an observation from another project, scenario or Studio cannot verify a receipt.
+- **Legacy receipts broke the chain.** Pre-0.13 receipts have no `sequence`; sorting them after newer
+  ones made every link look broken. The legacy prefix keeps its historical order, sequenced receipts
+  follow, and `verify_chain()` checks what a hash chain can actually check.
+- **A misleading test.** The old deletion test restored receipt A by writing receipt B into it. Rewritten:
+  exact-byte restore, then middle deletion (detected), then final deletion (documented as undetectable
+  without an external anchor).
+- **`--changed-only` skipped the typechecker** when the change set was empty, and ignored committed work.
+  The typechecker always runs; `--base-ref` checks against a commit; the coverage note moved to
+  `report["coverage"]` and states the mode, base ref and file count.
+- **Rojo validation** now requires a top-level `name` and a non-empty tree.
+
+### Tests
+67 total (was 58). New: generated-Luau parsing with selene, existing-class refusal, rollback states,
+wrong-place refusal, console-error counting, observation expiry, project/scenario binding, legacy receipt
+migration, base-ref change detection, and Rojo `name` validation.
+
+### Known gaps
+- No live Studio in this pass: `push`, `collect_evidence` and the console/screenshot tools are proven
+  against fake sessions and a real Luau parser. Live integration is still pending.
+- `verify_chain()` cannot detect truncation of the final receipt; that is inherent without an external
+  anchor and is now stated in the test.
+- The weak-model E2E benchmark has still not been run; 1.0.0 stays gated on it.
+
 ## 0.13.0 - 2026-11-06
 
 Final reliability audit. Verified status now depends on an observation RobloxForge recorded, not on

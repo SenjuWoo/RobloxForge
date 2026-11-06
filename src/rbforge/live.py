@@ -173,6 +173,22 @@ def rojo_parent_classes(project_file):
     return classes
 
 
+def _project_place_ids(project_file):
+    """`servePlaceIds` from the project, as ints. Empty means the project does not constrain it."""
+    try:
+        with open(project_file, encoding="utf-8") as fh:
+            ids = json.load(fh).get("servePlaceIds") or []
+    except (OSError, ValueError):
+        return []
+    out = []
+    for value in ids:
+        try:
+            out.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _rel(path, root):
     """Path relative to `root`, falling back to the absolute path across Windows drives."""
     try:
@@ -191,28 +207,44 @@ def _init_file(files):
 
 
 def _push_code(parent, name, klass, text, parent_classes=None):
-    """Luau that writes one script and reports SYNCED / MISMATCH / HIERARCHY / UNVERIFIED."""
+    """Luau that writes one script and reports SYNCED / MISMATCH / HIERARCHY / ROLLED_BACK.
+
+    Every string is embedded with `long_string`, never `json.dumps`: JSON escapes (`"a\u00e9"`) are
+    not Luau escapes, and the class map used to be pasted as JSON (`{"a": "Model"}`) which is not a
+    Luau table literal at all. The map travels as a JSON *string* and is decoded at runtime.
+    """
+    classes_json = json.dumps(parent_classes or {}, ensure_ascii=False)
+    # The script classes come from our own map (ModuleScript/Script/LocalScript); inlining them keeps
+    # Instance.new() a literal call, which is what selene's Roblox std expects.
+    inline_klass = klass if klass in ("ModuleScript", "Script", "LocalScript") else None
     return (
-        "local parts = string.split(%s, '.')\n" % json.dumps(parent)
-        + "local classes = %s\n" % json.dumps(parent_classes or {})
-        + "local node = game:GetService(parts[1])\n"
+        "local Http = game:GetService('HttpService')\n"
+        + "local parts = string.split(%s, '.')\n" % long_string(parent)
+        + "local classes = Http:JSONDecode(%s)\n" % long_string(classes_json)
+        + "local function stamp(s) local a,b=1,0 for i=1,#s do a=(a+string.byte(s,i))%%65521 "
+        "b=(b+a)%%65521 end return #s..':'..(b*65536+a) end\n"
+        "local function say(class, msg) return class .. ' ' .. msg end\n"
+        "local node = game:GetService(parts[1])\n"
         "for i = 2, #parts do\n"
+        "  local key = table.concat(parts, '.', 1, i)\n"
+        "  local want = classes[key]\n"
         "  local nxt = node:FindFirstChild(parts[i])\n"
-        "  if not nxt then\n"
-        "    local want = classes[table.concat(parts, '.', 1, i)] or 'Folder'\n"
-        "    -- Only containers can be created to hold a script; anything else means the project\n"
-        "    -- declares a hierarchy we cannot rebuild safely, so say so instead of guessing.\n"
-        "    if want ~= 'Folder' and want ~= 'Model' and want ~= 'Configuration' then\n"
-        "      return 'HIERARCHY ' .. table.concat(parts, '.', 1, i) .. ' must be a ' .. want\n"
+        "  if nxt then\n"
+        "    -- An existing parent of the wrong class is a hierarchy error, not something to convert.\n"
+        "    if want and want ~= 'Folder' and nxt.ClassName ~= want then\n"
+        "      return say('HIERARCHY', key .. ' is ' .. nxt.ClassName .. ', the project expects ' .. want)\n"
         "    end\n"
-        "    nxt = Instance.new(want) nxt.Name = parts[i] nxt.Parent = node\n"
+        "  else\n"
+        "    local cls = want or 'Folder'\n"
+        "    if cls ~= 'Folder' and cls ~= 'Model' and cls ~= 'Configuration' then\n"
+        "      return say('HIERARCHY', key .. ' must be a ' .. cls .. '; create it or fix the project')\n"
+        "    end\n"
+        "    nxt = Instance.new(cls) nxt.Name = parts[i] nxt.Parent = node\n"
         "  end\n"
         "  node = nxt\n"
         "end\n"
-        "local inst = node:FindFirstChild(%s)\n" % json.dumps(name)
-        # A class change used to destroy the old script outright. Move it to a backup folder instead, so the
-        # previous body stays recoverable and nothing is silently lost.
-        + "if inst and inst.ClassName ~= %s then\n" % json.dumps(klass)
+        "local inst = node:FindFirstChild(%s)\n" % long_string(name)
+        + "if inst and inst.ClassName ~= %s then\n" % long_string(klass)
         + "  local store = game:GetService('ServerStorage')\n"
         "  local backups = store:FindFirstChild('rbforge_backups')\n"
         "  if not backups then backups = Instance.new('Folder') backups.Name = 'rbforge_backups' backups.Parent = store end\n"
@@ -220,17 +252,29 @@ def _push_code(parent, name, klass, text, parent_classes=None):
         "  inst.Parent = backups\n"
         "  inst = nil\n"
         "end\n"
-        + "if not inst then inst = Instance.new(%s) inst.Name = %s inst.Parent = node end\n" % (json.dumps(klass), json.dumps(name))
-        + "local src = %s\n" % long_string(text)
+        "local created = false\n"
+        + ("if not inst then inst = Instance.new('%s') inst.Name = %s inst.Parent = node created = true end\n"
+           % (klass, long_string(name)) if inline_klass else
+           "if not inst then inst = Instance.new(%s) inst.Name = %s inst.Parent = node created = true end\n"
+           % (long_string(klass), long_string(name)))
+        + "local okPrev, prev = pcall(function() return inst.Source end)\n"
+        "if not okPrev or type(prev) ~= 'string' then prev = nil end\n"
+        "local src = %s\n" % long_string(text)
         + "inst.Source = src\n"
         "-- Read back what Studio actually stored: hashing the string we just sent proves nothing.\n"
         "local ok, got = pcall(function() return inst.Source end)\n"
-        "if not ok or type(got) ~= 'string' then return 'UNVERIFIED' end\n"
-        "local a, b = 1, 0\n"
-        "for i = 1, #got do a = (a + string.byte(got, i)) % 65521 b = (b + a) % 65521 end\n"
-        "local stamp = #got .. ':' .. (b * 65536 + a)\n"
-        "if got == src then return 'SYNCED ' .. stamp end\n"
-        "return 'MISMATCH ' .. stamp"
+        "if not ok or type(got) ~= 'string' then return say('UNVERIFIED', 'source is not readable') end\n"
+        "if got ~= src then\n"
+        "  -- Put the previous body back rather than leaving a half-applied edit behind.\n"
+        "  if prev then\n"
+        "    local okRestore = pcall(function() inst.Source = prev end)\n"
+        "    if okRestore then return say('ROLLED_BACK', stamp(got)) end\n"
+        "    return say('ROLLBACK_FAILED', stamp(got))\n"
+        "  end\n"
+        "  if created then pcall(function() inst:Destroy() end) return say('ROLLED_BACK', 'removed new script') end\n"
+        "  return say('MISMATCH', stamp(got))\n"
+        "end\n"
+        "return say('SYNCED', stamp(got))"
     )
 
 
@@ -243,8 +287,21 @@ def push(paths, project_file="default.project.json", studio_id=None):
     project_root = os.path.dirname(os.path.abspath(project_file))
     parent_classes = rojo_parent_classes(project_file)
     files = list(targets) if paths == ["ALL"] else [os.path.normcase(os.path.abspath(p)) for p in paths]
+    allowed_places = _project_place_ids(project_file)
     results = []
     with Session(studio_id) as s:
+        if allowed_places:
+            # Wrong-place protection runs before any source is touched.
+            try:
+                place_id = int((s.luau("return tostring(game.PlaceId)") or "0").strip() or 0)
+            except (TypeError, ValueError):
+                place_id = 0
+            if place_id not in allowed_places:
+                raise ForgeError(
+                    "RBF-STUDIO-003",
+                    "Studio is on place %s but the project serves %s"
+                    % (place_id or "unknown", ", ".join(str(i) for i in allowed_places)),
+                    hint="open the intended place, or remove servePlaceIds from the project")
         for f in files:
             if f not in targets:
                 # Every result carries the same keys: an unmapped path used to produce a row without
@@ -266,7 +323,9 @@ def push(paths, project_file="default.project.json", studio_id=None):
             got = s.luau(_push_code(parent, name, klass, text, parent_classes)).strip()
             state = ("synced" if got.startswith("SYNCED") and got.endswith(want) else
                      "mismatch" if got.startswith("MISMATCH") else
-                     "hierarchy" if got.startswith("HIERARCHY") else "unverified")
+                     "hierarchy" if got.startswith("HIERARCHY") else
+                     "rolled_back" if got.startswith("ROLLED_BACK") else
+                     "rollback_failed" if got.startswith("ROLLBACK_FAILED") else "unverified")
             results.append({"file": _rel(f, project_root), "target": "%s.%s" % (parent, name),
                             "state": state, "ok": state == "synced", "got": got, "want": want,
                             "why": got if state == "hierarchy" else None})
@@ -277,6 +336,8 @@ def push(paths, project_file="default.project.json", studio_id=None):
             "unmapped": [r for r in results if r["state"] == "unmapped"],
             "unreadable": [r for r in results if r["state"] == "unreadable"],
             "hierarchy": [r for r in results if r["state"] == "hierarchy"],
+            "rolled_back": [r for r in results if r["state"] == "rolled_back"],
+            "rollback_failed": [r for r in results if r["state"] == "rollback_failed"],
             "results": results,
             "note": "Edit-mode sources changed; stop/start Play to run them, and the owner saves the place"}
 

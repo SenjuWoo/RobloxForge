@@ -18,6 +18,25 @@ from rbforge import errors as err_mod  # noqa: E402
 
 PASS, FAIL = [], []
 
+def _fake_session(out):
+    """A Studio session double that returns `out` from execute_luau."""
+    class Fake:
+        answer = out
+
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def luau(self, code, dm="Edit"):
+            return Fake.answer
+    return Fake
+
+
 
 @contextlib.contextmanager
 def tempdir():
@@ -150,35 +169,82 @@ def _():
 
 # ---------------------------------------------------------------- verification
 
-def _store_observation(**over):
-    """Record a genuine observation through the same entry point the tooling uses."""
-    from rbforge import verification
-    payload = {
-        "studio_id": "59d6c7b2-03ab-4b69-a878-d4fc7561b9f8",
-        "place": "Deadzome Haven",
-        "datamodel": "Server",
-        "tests": [{"name": "Outpost.smoke", "expected": "0 failures",
-                   "actual": "0 failures", "passed": True}],
-        "console_logged": True,
-        "console_errors": 0,
-        "screenshots": ["C:/shots/smoke.png"],
-        "screenshots_inspected": True,
-        "untested": [],
-    }
-    payload.update(over)
-    return verification.record_observation(payload)
+def _fake_studio(console="", place="Deadzome Haven", capture="C:/shots/smoke.png"):
+    """A Studio session double: tests exercise the real collector, not a fabricated record."""
+    class FakeSession:
+        studio_id = "fake-studio"
+
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def luau(self, code, dm="Edit"):
+            return place
+
+        def call(self, tool, args):
+            if tool == "get_console_output":
+                if console is None:
+                    raise RuntimeError("get_console_output is not available")
+                return console
+            if tool == "screen_capture":
+                if capture is None:
+                    raise RuntimeError("screen_capture is not available")
+                return capture
+            raise KeyError(tool)
+    return FakeSession
 
 
-@check("verification: a recorded observation verifies the receipt")
+def _collect(project="demo", scenario="smoke", inspected=True, test_result=None, **over):
+    """Run collect_evidence against the double; returns the recorded observation payload."""
+    from rbforge import live, verification
+    orig = live.server_test
+    answer = test_result or {"result": "PASS smoke", "passed": True, "outcome": "pass"}
+    live.server_test = lambda *a, **k: answer
+    path = os.path.join(tempfile.mkdtemp(prefix="rbf-test-"), "Smoke.luau")
+    open(path, "w").write("return 1\n")
+    try:
+        return verification.collect_evidence(
+            session_factory=_fake_studio(**over), project=project, scenario=scenario,
+            screenshots_inspected=inspected, capture_screenshot=True, test_path=path)
+    finally:
+        live.server_test = orig
+
+
+@check("verification: a collected observation verifies, but only with console and screenshot")
 def _():
     from rbforge import verification
     with _isolated_home():
-        obs = _store_observation()
-        r = verification.receipt("observed", observation_id=obs, playtest_performed=True, save=False)
-        assert r["verification_level"] == "verified_playtest", r["verification_level"]
-        assert r["checks"]["screenshot_inspected"] is True
+        obs = _collect(console="[Server] ready")
+        r = verification.receipt("observed", observation_id=obs["observation_id"],
+                                 project="demo", scenario="smoke", playtest_performed=True, save=False)
+        assert r["verification_level"] == "verified_playtest", (r["verification_level"], r["limitations"])
+        assert r["checks"]["console_checked"] is True
         assert r["screenshot_inspected_by_vision"] is True
         assert r["evidence"]["provenance"] == "tool"
+
+        # No console tool available: the same run can only be partial.
+        obs2 = _collect(console=None)
+        r2 = verification.receipt("no console", observation_id=obs2["observation_id"], project="demo",
+                                  scenario="smoke", playtest_performed=True, save=False)
+        assert r2["verification_level"] == "playtest_observed_partial", r2["verification_level"]
+
+
+@check("verification: an observation from another project or scenario cannot verify")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        obs = _collect(project="demo", scenario="smoke")["observation_id"]
+        other_project = verification.receipt("other project", observation_id=obs, project="different",
+                                             playtest_performed=True, save=False)
+        other_scenario = verification.receipt("other scenario", observation_id=obs, project="demo",
+                                              scenario="night-raid", playtest_performed=True, save=False)
+        assert other_project["verification_level"] != "verified_playtest", other_project["verification_level"]
+        assert other_scenario["verification_level"] != "verified_playtest", other_scenario["verification_level"]
 
 
 @check("verification: forged provenance='tool' does not verify")
@@ -211,37 +277,15 @@ def _():
         assert r["verification_level"] == "static_only", r["verification_level"]
 
 
-@check("verification: unknown, stale and mismatched observations are rejected")
+@check("verification: console errors are read from output, not from a flag")
 def _():
     from rbforge import verification
     with _isolated_home():
-        assert verification.receipt("nope", observation_id="obs-deadbeefdeadbeef",
-                                    playtest_performed=True, save=False)["verification_level"] != "verified_playtest"
-        obs = _store_observation()
-        assert verification.load_observation(obs, max_age=-1) is None, "stale observation survived"
-        wrong = verification.receipt("wrong studio", observation_id=obs, studio_id="someone-else",
-                                     playtest_performed=True, save=False)
-        assert wrong["verification_level"] != "verified_playtest", wrong["verification_level"]
-
-
-@check("verification: missing screenshots or console downgrade to observed_partial")
-def _():
-    from rbforge import verification
-    with _isolated_home():
-        obs = _store_observation(screenshots=[], screenshots_inspected=False)
-        r = verification.receipt("partial", observation_id=obs, playtest_performed=True, save=False)
-        assert r["verification_level"] == "playtest_observed_partial", r["verification_level"]
-        assert not (r["verification_level"] == "verified_playtest" and
-                    r["screenshot_inspected_by_vision"] is False), "contradictory receipt"
-
-
-@check("verification: an observed failure is playtested_with_errors, not verified")
-def _():
-    from rbforge import verification
-    with _isolated_home():
-        obs = _store_observation(tests=[{"name": "smoke", "passed": False, "actual": "FAIL 2"}])
-        r = verification.receipt("failed", observation_id=obs, playtest_performed=True, save=False)
+        obs = _collect(console="Script error: attempt to index nil\nstack begin\n")
+        r = verification.receipt("errors", observation_id=obs["observation_id"], project="demo",
+                                 scenario="smoke", playtest_performed=True, save=False)
         assert r["verification_level"] == "playtested_with_errors", r["verification_level"]
+        assert r["console_errors_reported"] >= 2, r["console_errors_reported"]
 
 
 @check("verification: three same-second receipts keep the chain in creation order")
@@ -284,613 +328,133 @@ def _():
         assert chain["ok"], chain["problems"]
 
 
-@check("verification: tampering and deletion break the chain report")
+@check("verification: tampering and middle deletion are detected; final deletion is not")
 def _():
     from rbforge import verification
+    import shutil as _shutil
     with _isolated_home():
         a = verification.receipt("one", save=True)
         b = verification.receipt("two", save=True)
-        verification.receipt("three", save=True)
-        # Modify a historical payload: its digest no longer matches.
-        data = json.load(open(a["saved_to"], encoding="utf-8"))
+        c = verification.receipt("three", save=True)
+        original_a = open(a["saved_to"], "rb").read()
+
+        # 1. A modified payload no longer matches its digest.
+        data = json.loads(original_a.decode("utf-8"))
         data["verification_level"] = "verified_playtest"
         json.dump(data, open(a["saved_to"], "w", encoding="utf-8"))
         assert not verification.verify_chain()["ok"], "tampering went unnoticed"
-        # Restore, then delete the middle receipt.
-        json.dump(json.load(open(b["saved_to"], encoding="utf-8")), open(a["saved_to"], "w", encoding="utf-8"))
+
+        # 2. Restore A's exact original bytes, then delete the middle receipt.
+        open(a["saved_to"], "wb").write(original_a)
+        assert verification.verify_chain()["ok"], verification.verify_chain()["problems"]
+        keep_b = open(b["saved_to"], "rb").read()
         os.remove(b["saved_to"])
-        assert not verification.verify_chain()["ok"], "a missing receipt went unnoticed"
+        assert not verification.verify_chain()["ok"], "a missing middle receipt went unnoticed"
+
+        # 3. Restore the middle, delete the final receipt. A hash chain cannot see a truncation;
+        #    this asserts the documented limitation rather than pretending otherwise.
+        open(b["saved_to"], "wb").write(keep_b)
+        assert verification.verify_chain()["ok"]
+        os.remove(c["saved_to"])
+        chain = verification.verify_chain()
+        assert chain["receipts"] == 2, chain
+        assert chain["ok"], "truncation is not detectable from a hash chain alone"
 
 
-@check("review: client-authority write flagged")
+@check("verification: a pre-0.13 receipt without a sequence still chains")
 def _():
-    from rbforge import review
-    with tempdir() as d:
-        open(os.path.join(d, "evil.client.lua"), "w").write(
-            "local ls = Instance.new('Folder') ls.Name = 'leaderstats'\n")
-        out = review.security(d)
-        assert any(f["severity"] == "high" for f in out["findings"]), out["findings"]
+    from rbforge import verification
+    with _isolated_home():
+        r1 = verification.receipt("legacy one", save=True)
+        # Rewrite it the way 0.12.x wrote receipts: no sequence field, older filename.
+        legacy = json.load(open(r1["saved_to"], encoding="utf-8"))
+        legacy.pop("sequence", None)
+        legacy["digest"] = verification._digest({k: v for k, v in legacy.items() if k != "saved_to"})
+        legacy_path = os.path.join(verification._receipts_dir(), "20200101-000000-legacy-one.json")
+        json.dump(legacy, open(legacy_path, "w", encoding="utf-8"))
+        os.remove(r1["saved_to"])
+
+        r2 = verification.receipt("after upgrade", save=True)
+        assert r2["prev_digest"] == legacy["digest"], "new receipt did not chain to the legacy one"
+        chain = verification.verify_chain()
+        assert chain["ok"], chain["problems"]
 
 
-@check("review: guarded remote handler rates 'info', unguarded 'medium'")
+@check("verification: a receipt cannot inherit an observation from another project")
 def _():
-    from rbforge import review
-    with tempdir() as d:
-        open(os.path.join(d, "guarded.server.lua"), "w").write(
-            "r.OnServerEvent:Connect(function(p, amt) if typeof(amt) ~= 'number' then return end end)")
-        open(os.path.join(d, "unguarded.server.lua"), "w").write(
-            "r.OnServerEvent:Connect(function(p, amt) give(p, amt) end)")
-        out = review.security(d)
-        sev = {f["file"]: f["severity"] for f in out["findings"]}
-        assert sev.get("guarded.server.lua") == "info", sev
-        assert sev.get("unguarded.server.lua") == "medium", sev
+    from rbforge import verification
+    with _isolated_home():
+        obs = _collect(project="demo", scenario="smoke")["observation_id"]
+        r = verification.receipt("no project named", observation_id=obs, playtest_performed=True,
+                                 save=False)
+        assert r["evidence"]["observation_id"] is None, "an unscoped receipt reused a scoped observation"
 
 
-@check("scaffold: writes layout, refuses non-empty target")
-def _():
-    from rbforge import scaffold
-    with tempdir() as base:
-        target = os.path.join(base, "game")
-        r = scaffold.scaffold(target, "simulator")
-        assert os.path.isfile(os.path.join(target, "src", "server", "Main.server.lua"))
-        cfg = open(os.path.join(target, "src", "shared", "Config.lua")).read()
-        assert '"simulator"' in cfg
-        try:
-            scaffold.scaffold(target, "simulator")
-            raise AssertionError("should have raised")
-        except err_mod.ForgeError as e:
-            assert e.code == "RBF-ARG-002"
+# ---------------------------------------------------------------- generated Luau (push)
 
-
-# ---------------------------------------------------------------- studio (offline paths)
-
-@check("studio: snapshot fields independent even with no probe")
-def _():
-    from rbforge import studio
-    snap = studio.snapshot(probe=False)
-    for key in ("studio_installed", "mcp_launcher_found", "mcp_enabled_setting",
-                "studio_process"):
-        assert key in snap
-    assert snap["mcp_probe"]["responding"] is None
-
-
-# ---------------------------------------------------------------- capabilities
-
-@check("capabilities: statuses derived, optional absence calm")
-def _():
-    from rbforge import capabilities
-    m = capabilities.compute(probe=False)
-    assert m["official_studio_mcp"]["status"] in (
-        "verified", "unavailable", "runtime_required", "manual_step")
-    for t in ("rojo", "stylua", "selene"):
-        assert m[t]["status"] in ("installed", "optional")
-
-
-# ---------------------------------------------------------------- skills installer
-
-@check("skills: install/remove roundtrip into a sandbox root")
-def _():
-    from rbforge import skills
-    with tempdir() as root:
-        skills._ROOTS["sandbox"] = ("RBFORGE_SANDBOX_SKILLS", (root,))
-        try:
-            res = skills.install(["sandbox"])
-            assert "installed" in res["sandbox"], res
-            st = skills.status()
-            assert all(v == "current" for v in st["sandbox"]["skills"].values())
-            assert os.path.isdir(os.path.join(root, "roblox-game-development"))
-            skills.remove(["sandbox"])
-            assert not os.path.isdir(os.path.join(root, "roblox-game-development"))
-        finally:
-            del skills._ROOTS["sandbox"]
-
-
-@check("skills: foreign skill dir blocks overwrite")
-def _():
-    from rbforge import skills
-    with tempdir() as root:
-        foreign = os.path.join(root, "roblox-docs")
-        os.makedirs(foreign)
-        open(os.path.join(foreign, "SKILL.md"), "w").write("---\nname: roblox-docs\nnot ours\n")
-        skills._ROOTS["sbx2"] = ("RBFORGE_SBX2_SKILLS", (root,))
-        try:
-            res = skills.install(["sbx2"])
-            assert "blocked" in res["sbx2"], res
-        finally:
-            del skills._ROOTS["sbx2"]
-
-
-@check("agents: TOML block parses and removes cleanly (codex/grok)")
-def _():
-    from rbforge import agents
-    argv = ["C:\\Users\\x y\\py 3.11.exe", "C:\\repo\\mcp_server\\server.py"]  # worst case
-    block = agents._toml_block("robloxforge", argv)
-    import tomllib
-    doc = tomllib.loads("[mcp_servers.other]\ncommand = \"keep.exe\"\n" + block +
-                        "[mcp_servers.Roblox_Studio]\ncommand = \"official.exe\"\n")
-    assert doc["mcp_servers"]["other"]["command"] == "keep.exe"
-    assert doc["mcp_servers"]["robloxforge"]["enabled"] is False
-    assert doc["mcp_servers"]["Roblox_Studio"]["command"] == "official.exe"
-    cleaned = agents._toml_remove(
-        "[mcp_servers.other]\ncommand = \"keep.exe\"\n" + block +
-        "[mcp_servers.Roblox_Studio]\ncommand = \"official.exe\"\n", "robloxforge")
-    reparsed = tomllib.loads(cleaned)
-    assert "robloxforge" not in reparsed["mcp_servers"]
-    assert reparsed["mcp_servers"]["other"]["command"] == "keep.exe"
-    assert reparsed["mcp_servers"]["Roblox_Studio"]["command"] == "official.exe"
-
-
-@check("mcp server: notifications silent, junk JSON survives")
-def _():
-    import subprocess
-    p = subprocess.Popen([sys.executable, "mcp_server/server.py"],
-                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, text=True,
-                         cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    out, err = p.communicate(
-        '{"jsonrpc":"2.0","method":"notifications/cancelled"}\n'
-        '[1]\n'
-        '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n', timeout=60)
-    lines = [l for l in out.splitlines() if l.strip()]
-    assert len(lines) == 2, "notification must get NO response: %r" % out
-    assert json.loads(lines[0])["error"]["code"] == -32600  # the [1]
-    assert "tools" in json.loads(lines[1])["result"]
-    assert p.returncode == 0
-
-
-@check("shipped skills are loadable: frontmatter closes and carries a description")
-def _():
-    """v0.1.0 shipped `roblox-docs/SKILL.md` as 214 bytes ending in the literal
-    text `...[truncated]`, with the frontmatter block never closed.
-
-    A frontmatter block that does not close is not a skill: a strict reader
-    never opens it, so the description -- the only thing an agent sees when
-    deciding whether to load the skill -- is gone. It installed cleanly into
-    every agent, occupied an index entry, and could never be selected. Nothing
-    checked, because nothing here read a SKILL.md as a skill.
-    """
-    import re
-    from rbforge import skills as skills_mod
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills")
-    for name in skills_mod.OUR_SKILLS:
-        path = os.path.join(root, name, "SKILL.md")
-        assert os.path.isfile(path), "%s: SKILL.md is missing" % name
-        raw = open(path, "rb").read()
-        assert not raw.startswith(b"\xef\xbb\xbf"), (
-            "%s: UTF-8 BOM before frontmatter -- a strict reader sees '\\ufeff---' "
-            "and never opens the block" % name)
-        text = raw.decode("utf-8")
-        m = re.match(r"(?s)^---\s*\n(.*?)\n---\s*\n", text)
-        assert m, ("%s: frontmatter block never closes -- this is not a loadable "
-                   "skill, it is a file that installs and can never be selected" % name)
-        fm = m.group(1)
-        dm = re.search(r"(?ms)^description:[ \t]*(.*?)(?=^[A-Za-z_-]+:|\Z)", fm)
-        assert dm and dm.group(1).strip(), (
-            "%s: no description -- the agent has nothing to match on" % name)
-        desc = " ".join(dm.group(1).split())
-        assert "[truncated]" not in text, (
-            "%s: contains the literal marker '[truncated]'. Authoring tooling cut "
-            "this file and it was committed that way." % name)
-        assert re.match(r"^name:\s*%s\s*$" % re.escape(name), fm, re.M), (
-            "%s: frontmatter name does not match its directory" % name)
-        assert len(text) > len(m.group(0)) + 200, (
-            "%s: frontmatter parses but there is no body worth loading" % name)
-        assert len(desc) > 40, "%s: description is too short to route on" % name
-
-
-# ---------------------------------------------------------------- check gate
-
-@check("check: no toolchain is 'incomplete', never 'pass'")
-
-
-def _():
-    """A machine without StyLua is not a machine with clean formatting. If a
-    skip could ever read as a pass, an agent would report verified work it never
-    verified -- the exact failure this gate exists to prevent."""
-    from rbforge import check as check_mod
-    with tempdir() as root:
-        report = check_mod.run(root)
-        assert report["status"] == "incomplete", report["status"]
-        assert report["counts"]["skip"] > 0
-        assert "do NOT report this as verified" in report["gate"]
-
-
-@check("check: proven defects fail and name the file")
-
-
-def _():
-    from rbforge import check as check_mod
-    with tempdir() as root:
-        os.makedirs(os.path.join(root, "src", "client"))
-        with open(os.path.join(root, "src", "client", "Main.client.luau"), "w",
-                  encoding="utf-8") as fh:
-            fh.write("local f = loadstring('return 1')\n"
-                     "local DataStoreService = game:GetService('DataStoreService')\n")
-        report = check_mod.run(root, scope=["structure"])
-        assert report["status"] == "fail", report["status"]
-        details = " ".join(c["detail"] for r in report["rungs"] for c in r["checks"])
-        assert "loadstring" in details
-        assert "DataStoreService" in details
-        assert "Main.client.luau" in details, "a defect without a file is not actionable"
-
-
-@check("check: missing Rojo $path target is a failure")
-
-
-def _():
-    from rbforge import check as check_mod
-    with tempdir() as root:
-        with open(os.path.join(root, "default.project.json"), "w", encoding="utf-8") as fh:
-            json.dump({"name": "x", "tree": {"$className": "DataModel",
-                                             "ReplicatedStorage": {"$path": "src/shared"}}}, fh)
-        report = check_mod.run(root, scope=["structure"])
-        assert report["status"] == "fail", report["status"]
-        details = " ".join(c["detail"] for r in report["rungs"] for c in r["checks"])
-        assert "src/shared" in details
-
-
-@check("skills: every reference on disk is routed by SKILL.md")
-
-
-def _():
-    """A reference nobody can reach is dead weight, and the router listing a
-    file that does not exist sends an agent to a 404. Both directions checked."""
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        "skills", "roblox-game-development")
-    skill = open(os.path.join(root, "SKILL.md"), encoding="utf-8").read()
-    refs = sorted(n for n in os.listdir(os.path.join(root, "references")) if n.endswith(".md"))
-    for name in refs:
-        assert "references/%s" % name in skill, (
-            "%s exists but SKILL.md never routes to it" % name)
-    for token in set(__import__("re").findall(r"references/([\w-]+\.md)", skill)):
-        assert token in refs, "SKILL.md routes to missing reference %s" % token
-
-
-@check("doctor: renders when a studio reports no place name")
-
-
-def _():
-    from rbforge import doctor
-    report = {
-        "version": "test",
-        "studio": {"studio_installed": True, "studio_version": "version-x",
-                   "studio_process": {"running": True},
-                   "mcp_enabled_setting": {"enabled": True},
-                   "mcp_launcher_found": True,
-                   "active_places": [None, "Real Place"]},
-        "mcp_probe": {"responding": True, "tool_count": 34, "error": None},
-        "docs": {"present": False},
-        "toolchain": {},
-        "agents": {},
-        "capabilities_by_status": {},
-    }
-    text = doctor.render(report)
-    assert "Real Place" in text
-
-
-# ---------------------------------------------------------------- plugins
-
-@check("plugins: detects known tools and always names a free alternative")
-
-
-def _():
-    from rbforge import plugins
-    with tempdir() as root:
-        open(os.path.join(root, "ForgeGUI.rbxm"), "wb").close()
-        open(os.path.join(root, "MoonAnimator.rbxm"), "wb").close()
-        open(os.path.join(root, "SomeUnknownThing.rbxmx"), "wb").close()
-        os.environ["RBFORGE_PLUGIN_DIR"] = root
-        try:
-            info = plugins.status()
-        finally:
-            os.environ.pop("RBFORGE_PLUGIN_DIR", None)
-        ids = {k["id"] for k in info["known"]}
-        assert "forgegui" in ids and "moonanimator" in ids, ids
-        assert info["unknown_count"] == 1, info["unknown_count"]
-        assert all(k["free_alternative"] for k in info["known"]), (
-            "a detected paid tool without a free alternative is a paywall")
-        assert "never make them a requirement" in info["note"], info["note"]
-
-
-@check("plugins: no plugin folder is a calm free-path answer")
-
-
-def _():
-    from rbforge import plugins
-    os.environ["RBFORGE_PLUGIN_DIR"] = os.path.join(os.getcwd(), "does-not-exist")
-    try:
-        # force the default location to look empty for this assertion
-        info = plugins.status()
-    finally:
-        os.environ.pop("RBFORGE_PLUGIN_DIR", None)
-    assert info["free_path_is_default"] is True
-    assert "free" in info["note"].lower()
-
-
-@check("free-stack: search_asset filters match the live schema spelling")
-
-
-def _():
-    """`priceFilter` is lowercase and only valid with scope=creator_store.
-    A doc with `priceFilter="Free"` is not a style nit - the call is rejected."""
-    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        "skills", "roblox-game-development", "references")
-    text = open(os.path.join(root, "free-stack.md"), encoding="utf-8").read()
-    assert 'priceFilter="Free"' not in text
-    assert 'scope="CreatorStore"' not in text
-    assert 'priceFilter="free"' in text
-    assert 'scope="creator_store"' in text
-
-
-# ---------------------------------------------------------------- new project
-
-@check("new: one command yields a gated project with a filled-in plan")
-
-
-def _():
-    """The beginner entry point. If PLAN.md ships with empty sections the user
-    gets a scaffold and no idea what to build first."""
-    from rbforge import scaffold
-    with tempdir() as root:
-        target = os.path.join(root, "g")
-        res = scaffold.new_project(target, "obby", "dodge lasers")
-        plan_path = os.path.join(target, "PLAN.md")
-        assert os.path.isfile(plan_path)
-        text = open(plan_path, encoding="utf-8").read()
-        assert "1. " in text, "build order has no numbered steps"
-        assert "- [ ] " in text, "verification list is empty"
-        assert "## Build order" in text and "## Prove it" in text
-        assert "build[]" not in text, "internal key names leaked into user copy"
-        assert "rbforge check" in text
-        assert os.path.isfile(os.path.join(target, "rokit.toml"))
-        assert any("Baseplate" in s for s in res["next_steps"])
-        assert "No purchase" in res["free"]
-
-
-@check("scripts: no PowerShell helper declares the automatic $Args")
-def _():
-    """`param(... $Args)` is shadowed by PowerShell's automatic $args, so
-    `@Args` splats nothing: Install.ps1 printed usage and installed no skills."""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    for name in sorted(os.listdir(root)):
-        if name.endswith(".ps1"):
-            text = open(os.path.join(root, name), encoding="utf-8-sig").read()
-            assert not re.search(r"\[string\[\]\]\$Args\b", text, re.I), name
-            assert "@Args" not in text, name
-
-
-# ---------------------------------------------------------------- probes + traps
-
-@check("probes: every probe renders with defaults and leaves no placeholder")
-def _():
-    from rbforge import probes
-    cat = probes.catalog()
-    names = {p["name"] for p in cat}
-    for need in ("console", "gui-overflow", "ray-all", "box-scan", "hide", "restore", "camera-pin", "ui-audit"):
-        assert need in names, need
-    for p in cat:
-        r = probes.render(p["name"])
-        assert "{{" not in r["code"], p["name"]
-        assert r["datamodel"] in ("any", "Edit", "Client", "Server"), p["name"]
-        assert "execute_luau" in r["run"] and r["purpose"], p["name"]
-        assert "return" in r["code"], p["name"] + " returns nothing for execute_luau to show"
-
-
-@check("probes: overrides land, unknown names and params are refused")
-def _():
-    from rbforge import probes
-    r = probes.render("whereis", probes.parse_sets(['pattern="ExitDoor"', "limit=5"]))
-    assert '"ExitDoor"' in r["code"] and ", 5" in r["code"]
-    for bad in (lambda: probes.render("nope"), lambda: probes.render("whereis", {"nope": "1"}),
-                lambda: probes.render("whereis", {"pattern": "a\nb"}), lambda: probes.render("../x")):
-        try:
-            bad()
-            raise AssertionError("accepted bad input")
-        except err_mod.ForgeError:
-            pass
-
-
-@check("traps: each rule fires on its pattern and stays quiet on the fix")
-def _():
-    from rbforge import traps
-
-    def ids(rel, text):
-        return {f["id"] for f in traps.scan_text(rel, text)}
-    assert "T003" in ids("a.luau", 'local g = Instance.new("SurfaceGui")')
-    assert "T003" not in ids("a.luau", 'local g = Instance.new("SurfaceGui")\ng.ClipsDescendants = true')
-    assert "T005" in ids("x.server.luau", "local p = game.Players.LocalPlayer")
-    assert "T005" not in ids("x.client.luau", "local p = game.Players.LocalPlayer")
-    assert "T007" in ids("src/client/a.luau", 'Instance.new("RemoteEvent")')
-    assert "T011" in ids("a.server.luau", "local v = store:GetAsync(key)")
-    assert "T011" not in ids("a.server.luau", "local ok, v = pcall(function()\n return store:GetAsync(key)\nend)")
-    assert "T001" in ids("a.luau", "wait(1)") and "T001" not in ids("a.luau", "task.wait(1)")
-    assert "T013" in ids("a.server.luau", "RunService.Heartbeat:Connect(function() r:FireAllClients(1) end)")
-    assert not ids("a.luau", "-- wait(1) in a comment")
-    # viewmodel clone keeping its character joints, and a saved transparency restored
-    bugh = 'local m = weapon:Clone()\nlocal cam = workspace.CurrentCamera\nm.Parent = cam'
-    assert "T022" in ids("src/client/vm.luau", bugh)
-    assert "T022" not in ids("src/client/vm.luau", bugh + '\nfor _, d in ipairs(m:GetDescendants()) do\n if d:IsA("JointInstance") then d:Destroy() end\nend')
-    assert "T023" in ids("src/client/vm.luau", "part.LocalTransparencyModifier = saved")
-    assert "T023" not in ids("src/client/vm.luau", "part.LocalTransparencyModifier = 0")
-    trig = 'local on = player:GetAttribute("DebugFirstPerson")'
-    assert "T024" in ids("src/client/move.luau", trig)
-    assert "T024" not in ids("src/client/move.luau", "local on = RunService:IsStudio() and player:GetAttribute(\"DebugFirstPerson\")")
-    deco = 'w.rod("Tendril", a, b, 1, flesh, M.Slate, true)'
-    assert "T025" in ids("src/server/t.server.luau", deco)
-    assert "T025" not in ids("src/server/t.server.luau", 'w.rod("Tendril", a, b, 1, flesh, M.Slate, false)')
-
-
-@check("traps: review skips snapshot folders")
-def _():
-    from rbforge import traps
-    with tempdir() as d:
-        os.makedirs(os.path.join(d, "src"))
-        os.makedirs(os.path.join(d, "artifacts", "recovery"))
-        open(os.path.join(d, "default.project.json"), "w").write("{}")
-        open(os.path.join(d, "src", "a.server.luau"), "w").write("wait(1)\n")
-        open(os.path.join(d, "artifacts", "recovery", "b.server.luau"), "w").write("wait(1)\n")
-        res = traps.review(d)
-        files = {f["file"] for f in res["findings"]}
-        assert files == {"src/a.server.luau"}, files
-        assert res["files_skipped"] == 1
-
-
-@check("skills: router links the debugging playbook and the probes")
-def _():
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    ref = os.path.join(root, "skills", "roblox-game-development")
-    skill = open(os.path.join(ref, "SKILL.md"), encoding="utf-8").read()
-    assert "references/debugging-playbook.md" in skill and "rb_studio_probe" in skill
-    assert os.path.isfile(os.path.join(ref, "references", "debugging-playbook.md"))
-
-
-@check("mcp: probe and traps tools are registered")
-def _():
-    import importlib.util
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    spec = importlib.util.spec_from_file_location("rbf_server", os.path.join(root, "mcp_server", "server.py"))
-    text = open(spec.origin, encoding="utf-8").read()
-    assert '"rb_studio_probe"' in text and '"rb_traps_review"' in text
-
-
-# ---------------------------------------------------------------- helpers (moved above)
-
-
-# ------------------------------------------------- regression: audit 2026-11-06
-
-@check("check: typechecker exit status decides, never a word search")
-def _():
-    from rbforge import check
-    orig_run, orig_which = check._run, check.shutil.which
-    with tempdir() as d:
-        defs = os.path.join(d, "globalTypes.d.luau")
-        open(defs, "w").write("-- definitions\n")
-        os.environ["RBFORGE_LUAU_DEFINITIONS"] = defs
-
-        def fake(argv, cwd, timeout=180):
-            return (0, "ok") if argv[0] != "luau-lsp" else fake.answer
-
-        try:
-            check.shutil.which = lambda name: "/fake/" + name
-            check._run = fake
-            cases = [
-                ((None, "could not run 'luau-lsp': boom"), "skip"),
-                ((127, "process terminated unexpectedly"), "fail"),
-                ((0, "0 errors, 0 warnings"), "pass"),
-                ((0, "src/a.luau:12:5: TypeError: bad"), "fail"),
-                ((1, "src/a.luau:3:1: Unknown global 'x'"), "fail"),
-            ]
-            for answer, want in cases:
-                fake.answer = answer
-                rung = check.rung_static(d)
-                got = [c for c in rung["checks"] if c["id"] == "luau-lsp"][0]
-                assert got["status"] == want, (answer, want, got)
-        finally:
-            check._run, check.shutil.which = orig_run, orig_which
-            os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
-
-
-@check("check: malformed project JSON fails the project-map check")
-def _():
-    from rbforge import check
-    with tempdir() as d:
-        open(os.path.join(d, "default.project.json"), "w").write("{ not json")
-        rung = check.rung_structure(d)
-        got = [c for c in rung["checks"] if c["id"] == "project-map"][0]
-        assert got["status"] == "fail", got
-        assert "malformed" in got["detail"].lower(), got["detail"]
-
-
-@check("live: rojo init.* files map the directory to a script")
-def _():
+def _generated_push_code(**over):
     from rbforge import live
-    with tempdir() as d:
-        base = os.path.join(d, "src", "ServerScriptService")
-        os.makedirs(os.path.join(base, "Systems"))
-        json.dump({"tree": {"$className": "DataModel",
-                            "ServerScriptService": {"$path": "src/ServerScriptService"}}},
-                  open(os.path.join(d, "default.project.json"), "w"))
-        for name in ("init.server.luau", "Systems/init.luau", "Systems/A.luau"):
-            open(os.path.join(base, name), "w").write("-- \n")
-        targets = live.rojo_targets(os.path.join(d, "default.project.json"))
-        names = sorted(v for v in targets.values())
-        assert ("", "ServerScriptService", "Script") in names, names
-        assert ("ServerScriptService", "Systems", "ModuleScript") in names, names
-        assert ("ServerScriptService.Systems", "A", "ModuleScript") in names, names
+    args = dict(parent="ServerScriptService.Systems", name="Main", klass="Script",
+                text="print('hello')\n", parent_classes={"ServerScriptService.Systems": "Model"})
+    args.update(over)
+    return live._push_code(**args)
 
 
-def _fake_session(out):
-    class Fake:
-        answer = out
-
-        def __init__(self, *a, **k):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def luau(self, code, dm="Edit"):
-            return Fake.answer
-    return Fake
-
-
-@check("live: server test result parsing is exact")
+@check("live: generated push code is valid Luau, even with class mappings and odd text")
 def _():
+    import shutil as _shutil
+    import subprocess as _sub
     from rbforge import live
-    orig = live.Session
+    if not _shutil.which("selene"):
+        raise AssertionError("selene is required to parse generated Luau")
     with tempdir() as d:
-        path = os.path.join(d, "t.luau")
-        open(path, "w").write("return 1\n")
-        try:
-            for text, want in [("PASS 30 routes", "pass"), ("FAIL 2 routes", "fail"),
-                               ("NOT_PASS 30", "fail"), ("TIMEOUT", "fail"),
-                               ("", "unknown"), ("garbage output", "unknown"),
-                               ("PASS", "pass")]:
-                live.Session = _fake_session(text)
-                got = live.server_test(path, "Attr", timeout=1)
-                assert got["outcome"] == want, (text, got)
-                assert got["passed"] is (want == "pass")
-        finally:
-            live.Session = orig
+        cfg = os.path.join(d, "selene.toml")
+        open(cfg, "w").write('std = "roblox"\n')
+        cases = [
+            _generated_push_code(),
+            _generated_push_code(parent_classes={"ServerScriptService": "Folder",
+                                                 "ServerScriptService.Systems": "Model"}),
+            _generated_push_code(name='Wei"rd\u00e9 name', parent="Workspace.Thing",
+                                 text="-- ]=] ]] ]==] \u00e9 \\ backslash ' quote\n"),
+            _generated_push_code(klass="ModuleScript", text="return 1\n"),
+        ]
+        for i, code in enumerate(cases):
+            path = os.path.join(d, "gen%d.luau" % i)
+            open(path, "w", encoding="utf-8").write(code)
+            out = _sub.run(["selene", "--config", cfg, path], capture_output=True, text=True)
+            blob = (out.stdout or "") + (out.stderr or "")
+            assert "parse errors" in blob or "Results" in blob, blob[:300]
+            assert "0 parse errors" in blob, "generated Luau does not parse:\n%s" % blob[:600]
 
 
-@check("live: push reports synced, mismatch and unverified separately")
+@check("live: generated push code refuses a wrong existing class and can roll back")
+def _():
+    code = _generated_push_code()
+    assert "HIERARCHY" in code and "the project expects" in code, "no existing-class check"
+    assert "ROLLED_BACK" in code and "inst.Source = prev" in code, "no rollback path"
+    assert "JSONDecode" in code, "class map must be decoded, not pasted as a table"
+
+
+@check("live: push maps rollback and hierarchy outcomes to states")
 def _():
     from rbforge import live
     orig = live.Session
     with tempdir() as d:
         os.makedirs(os.path.join(d, "src"))
-        json.dump({"tree": {"$className": "DataModel",
-                            "ServerScriptService": {"$path": "src"}}},
+        json.dump({"name": "t", "tree": {"ServerScriptService": {"$path": "src"}}},
                   open(os.path.join(d, "default.project.json"), "w"))
         src = os.path.join(d, "src", "A.luau")
         open(src, "w").write("return 1\n")
-        want = live.adler("return 1\n")
         try:
-            for answer, state in [("SYNCED " + want, "synced"),
-                                  ("MISMATCH " + want, "mismatch"),
-                                  ("UNVERIFIED", "unverified")]:
+            for answer, state in [("ROLLED_BACK 3:1", "rolled_back"),
+                                  ("ROLLBACK_FAILED 3:1", "rollback_failed"),
+                                  ("HIERARCHY X is Folder, the project expects Model", "hierarchy")]:
                 live.Session = _fake_session(answer)
                 r = live.push(["ALL"], os.path.join(d, "default.project.json"))
                 assert r["results"][0]["state"] == state, (answer, r["results"][0])
-                assert r["pushed"] == (1 if state == "synced" else 0), r
+                assert r["pushed"] == 0
         finally:
             live.Session = orig
-
-
-@check("check: luau compound assignment is not a parse error")
-def _():
-    from rbforge import check
-    with tempdir() as d:
-        os.makedirs(os.path.join(d, "src"))
-        open(os.path.join(d, "src", "a.luau"), "w").write(
-            "--!strict\nlocal speed = 1\nspeed += 2\nreturn speed\n")
-        rung = check.rung_static(d)
-        got = [c for c in rung["checks"] if c["id"] == "selene"][0]
-        assert "parse_error" not in got["detail"], got["detail"]
 
 
 @check("verification: a limitation string is one item, not characters")
@@ -1032,8 +596,10 @@ def _():
         assert changed and any(p.endswith("fresh.luau") for p in changed), changed
         assert not any(p.endswith("legacy.luau") for p in changed), changed
         report = check.run(d, scope=["static"], changed_only=True)
-        scope = [c for c in report["rungs"][0]["checks"] if c["id"] == "scope"]
-        assert scope and "not a whole-project audit" in scope[0]["detail"], scope
+        cov = report["coverage"]
+        assert cov["mode"] == "changed-only" and "not a whole-project audit" in (cov["note"] or ""), cov
+        ids = {c["id"] for c in report["rungs"][0]["checks"]}
+        assert "luau-lsp" in ids, ids  # an empty change set must not skip the typechecker
 
 
 def _mcp_rpc(proc, message, timeout=40):
@@ -1093,6 +659,661 @@ def _():
         assert "error" in unknown or unknown.get("result", {}).get("isError"), unknown
     finally:
         proc.kill()
+
+
+@check("review: client-authority write flagged")
+def _():
+    from rbforge import review
+    with tempdir() as d:
+        open(os.path.join(d, "evil.client.lua"), "w").write(
+            "local ls = Instance.new('Folder') ls.Name = 'leaderstats'\n")
+        out = review.security(d)
+        assert any(f["severity"] == "high" for f in out["findings"]), out["findings"]
+
+@check("review: guarded remote handler rates 'info', unguarded 'medium'")
+def _():
+    from rbforge import review
+    with tempdir() as d:
+        open(os.path.join(d, "guarded.server.lua"), "w").write(
+            "r.OnServerEvent:Connect(function(p, amt) if typeof(amt) ~= 'number' then return end end)")
+        open(os.path.join(d, "unguarded.server.lua"), "w").write(
+            "r.OnServerEvent:Connect(function(p, amt) give(p, amt) end)")
+        out = review.security(d)
+        sev = {f["file"]: f["severity"] for f in out["findings"]}
+        assert sev.get("guarded.server.lua") == "info", sev
+        assert sev.get("unguarded.server.lua") == "medium", sev
+
+@check("scaffold: writes layout, refuses non-empty target")
+def _():
+    from rbforge import scaffold
+    with tempdir() as base:
+        target = os.path.join(base, "game")
+        r = scaffold.scaffold(target, "simulator")
+        assert os.path.isfile(os.path.join(target, "src", "server", "Main.server.lua"))
+        cfg = open(os.path.join(target, "src", "shared", "Config.lua")).read()
+        assert '"simulator"' in cfg
+        try:
+            scaffold.scaffold(target, "simulator")
+            raise AssertionError("should have raised")
+        except err_mod.ForgeError as e:
+            assert e.code == "RBF-ARG-002"
+
+
+# ---------------------------------------------------------------- studio (offline paths)
+
+@check("studio: snapshot fields independent even with no probe")
+def _():
+    from rbforge import studio
+    snap = studio.snapshot(probe=False)
+    for key in ("studio_installed", "mcp_launcher_found", "mcp_enabled_setting",
+                "studio_process"):
+        assert key in snap
+    assert snap["mcp_probe"]["responding"] is None
+
+
+# ---------------------------------------------------------------- capabilities
+
+@check("capabilities: statuses derived, optional absence calm")
+def _():
+    from rbforge import capabilities
+    m = capabilities.compute(probe=False)
+    assert m["official_studio_mcp"]["status"] in (
+        "verified", "unavailable", "runtime_required", "manual_step")
+    for t in ("rojo", "stylua", "selene"):
+        assert m[t]["status"] in ("installed", "optional")
+
+
+# ---------------------------------------------------------------- skills installer
+
+@check("skills: install/remove roundtrip into a sandbox root")
+def _():
+    from rbforge import skills
+    with tempdir() as root:
+        skills._ROOTS["sandbox"] = ("RBFORGE_SANDBOX_SKILLS", (root,))
+        try:
+            res = skills.install(["sandbox"])
+            assert "installed" in res["sandbox"], res
+            st = skills.status()
+            assert all(v == "current" for v in st["sandbox"]["skills"].values())
+            assert os.path.isdir(os.path.join(root, "roblox-game-development"))
+            skills.remove(["sandbox"])
+            assert not os.path.isdir(os.path.join(root, "roblox-game-development"))
+        finally:
+            del skills._ROOTS["sandbox"]
+
+@check("skills: foreign skill dir blocks overwrite")
+def _():
+    from rbforge import skills
+    with tempdir() as root:
+        foreign = os.path.join(root, "roblox-docs")
+        os.makedirs(foreign)
+        open(os.path.join(foreign, "SKILL.md"), "w").write("---\nname: roblox-docs\nnot ours\n")
+        skills._ROOTS["sbx2"] = ("RBFORGE_SBX2_SKILLS", (root,))
+        try:
+            res = skills.install(["sbx2"])
+            assert "blocked" in res["sbx2"], res
+        finally:
+            del skills._ROOTS["sbx2"]
+
+@check("agents: TOML block parses and removes cleanly (codex/grok)")
+def _():
+    from rbforge import agents
+    argv = ["C:\\Users\\x y\\py 3.11.exe", "C:\\repo\\mcp_server\\server.py"]  # worst case
+    block = agents._toml_block("robloxforge", argv)
+    import tomllib
+    doc = tomllib.loads("[mcp_servers.other]\ncommand = \"keep.exe\"\n" + block +
+                        "[mcp_servers.Roblox_Studio]\ncommand = \"official.exe\"\n")
+    assert doc["mcp_servers"]["other"]["command"] == "keep.exe"
+    assert doc["mcp_servers"]["robloxforge"]["enabled"] is False
+    assert doc["mcp_servers"]["Roblox_Studio"]["command"] == "official.exe"
+    cleaned = agents._toml_remove(
+        "[mcp_servers.other]\ncommand = \"keep.exe\"\n" + block +
+        "[mcp_servers.Roblox_Studio]\ncommand = \"official.exe\"\n", "robloxforge")
+    reparsed = tomllib.loads(cleaned)
+    assert "robloxforge" not in reparsed["mcp_servers"]
+    assert reparsed["mcp_servers"]["other"]["command"] == "keep.exe"
+    assert reparsed["mcp_servers"]["Roblox_Studio"]["command"] == "official.exe"
+
+@check("mcp server: notifications silent, junk JSON survives")
+def _():
+    import subprocess
+    p = subprocess.Popen([sys.executable, "mcp_server/server.py"],
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True,
+                         cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    out, err = p.communicate(
+        '{"jsonrpc":"2.0","method":"notifications/cancelled"}\n'
+        '[1]\n'
+        '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n', timeout=60)
+    lines = [l for l in out.splitlines() if l.strip()]
+    assert len(lines) == 2, "notification must get NO response: %r" % out
+    assert json.loads(lines[0])["error"]["code"] == -32600  # the [1]
+    assert "tools" in json.loads(lines[1])["result"]
+    assert p.returncode == 0
+
+@check("shipped skills are loadable: frontmatter closes and carries a description")
+def _():
+    """v0.1.0 shipped `roblox-docs/SKILL.md` as 214 bytes ending in the literal
+    text `...[truncated]`, with the frontmatter block never closed.
+
+    A frontmatter block that does not close is not a skill: a strict reader
+    never opens it, so the description -- the only thing an agent sees when
+    deciding whether to load the skill -- is gone. It installed cleanly into
+    every agent, occupied an index entry, and could never be selected. Nothing
+    checked, because nothing here read a SKILL.md as a skill.
+    """
+    import re
+    from rbforge import skills as skills_mod
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills")
+    for name in skills_mod.OUR_SKILLS:
+        path = os.path.join(root, name, "SKILL.md")
+        assert os.path.isfile(path), "%s: SKILL.md is missing" % name
+        raw = open(path, "rb").read()
+        assert not raw.startswith(b"\xef\xbb\xbf"), (
+            "%s: UTF-8 BOM before frontmatter -- a strict reader sees '\\ufeff---' "
+            "and never opens the block" % name)
+        text = raw.decode("utf-8")
+        m = re.match(r"(?s)^---\s*\n(.*?)\n---\s*\n", text)
+        assert m, ("%s: frontmatter block never closes -- this is not a loadable "
+                   "skill, it is a file that installs and can never be selected" % name)
+        fm = m.group(1)
+        dm = re.search(r"(?ms)^description:[ \t]*(.*?)(?=^[A-Za-z_-]+:|\Z)", fm)
+        assert dm and dm.group(1).strip(), (
+            "%s: no description -- the agent has nothing to match on" % name)
+        desc = " ".join(dm.group(1).split())
+        assert "[truncated]" not in text, (
+            "%s: contains the literal marker '[truncated]'. Authoring tooling cut "
+            "this file and it was committed that way." % name)
+        assert re.match(r"^name:\s*%s\s*$" % re.escape(name), fm, re.M), (
+            "%s: frontmatter name does not match its directory" % name)
+        assert len(text) > len(m.group(0)) + 200, (
+            "%s: frontmatter parses but there is no body worth loading" % name)
+        assert len(desc) > 40, "%s: description is too short to route on" % name
+
+
+# ---------------------------------------------------------------- check gate
+
+@check("check: no toolchain is 'incomplete', never 'pass'")
+
+
+def _():
+    """A machine without StyLua is not a machine with clean formatting. If a
+    skip could ever read as a pass, an agent would report verified work it never
+    verified -- the exact failure this gate exists to prevent."""
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        report = check_mod.run(root)
+        assert report["status"] == "incomplete", report["status"]
+        assert report["counts"]["skip"] > 0
+        assert "do NOT report this as verified" in report["gate"]
+
+@check("check: proven defects fail and name the file")
+
+
+def _():
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        os.makedirs(os.path.join(root, "src", "client"))
+        with open(os.path.join(root, "src", "client", "Main.client.luau"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("local f = loadstring('return 1')\n"
+                     "local DataStoreService = game:GetService('DataStoreService')\n")
+        report = check_mod.run(root, scope=["structure"])
+        assert report["status"] == "fail", report["status"]
+        details = " ".join(c["detail"] for r in report["rungs"] for c in r["checks"])
+        assert "loadstring" in details
+        assert "DataStoreService" in details
+        assert "Main.client.luau" in details, "a defect without a file is not actionable"
+
+@check("check: missing Rojo $path target is a failure")
+
+
+def _():
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        with open(os.path.join(root, "default.project.json"), "w", encoding="utf-8") as fh:
+            json.dump({"name": "x", "tree": {"$className": "DataModel",
+                                             "ReplicatedStorage": {"$path": "src/shared"}}}, fh)
+        report = check_mod.run(root, scope=["structure"])
+        assert report["status"] == "fail", report["status"]
+        details = " ".join(c["detail"] for r in report["rungs"] for c in r["checks"])
+        assert "src/shared" in details
+
+@check("skills: every reference on disk is routed by SKILL.md")
+
+
+def _():
+    """A reference nobody can reach is dead weight, and the router listing a
+    file that does not exist sends an agent to a 404. Both directions checked."""
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "skills", "roblox-game-development")
+    skill = open(os.path.join(root, "SKILL.md"), encoding="utf-8").read()
+    refs = sorted(n for n in os.listdir(os.path.join(root, "references")) if n.endswith(".md"))
+    for name in refs:
+        assert "references/%s" % name in skill, (
+            "%s exists but SKILL.md never routes to it" % name)
+    for token in set(__import__("re").findall(r"references/([\w-]+\.md)", skill)):
+        assert token in refs, "SKILL.md routes to missing reference %s" % token
+
+@check("doctor: renders when a studio reports no place name")
+
+
+def _():
+    from rbforge import doctor
+    report = {
+        "version": "test",
+        "studio": {"studio_installed": True, "studio_version": "version-x",
+                   "studio_process": {"running": True},
+                   "mcp_enabled_setting": {"enabled": True},
+                   "mcp_launcher_found": True,
+                   "active_places": [None, "Real Place"]},
+        "mcp_probe": {"responding": True, "tool_count": 34, "error": None},
+        "docs": {"present": False},
+        "toolchain": {},
+        "agents": {},
+        "capabilities_by_status": {},
+    }
+    text = doctor.render(report)
+    assert "Real Place" in text
+
+
+# ---------------------------------------------------------------- plugins
+
+@check("plugins: detects known tools and always names a free alternative")
+
+
+def _():
+    from rbforge import plugins
+    with tempdir() as root:
+        open(os.path.join(root, "ForgeGUI.rbxm"), "wb").close()
+        open(os.path.join(root, "MoonAnimator.rbxm"), "wb").close()
+        open(os.path.join(root, "SomeUnknownThing.rbxmx"), "wb").close()
+        os.environ["RBFORGE_PLUGIN_DIR"] = root
+        try:
+            info = plugins.status()
+        finally:
+            os.environ.pop("RBFORGE_PLUGIN_DIR", None)
+        ids = {k["id"] for k in info["known"]}
+        assert "forgegui" in ids and "moonanimator" in ids, ids
+        assert info["unknown_count"] == 1, info["unknown_count"]
+        assert all(k["free_alternative"] for k in info["known"]), (
+            "a detected paid tool without a free alternative is a paywall")
+        assert "never make them a requirement" in info["note"], info["note"]
+
+@check("plugins: no plugin folder is a calm free-path answer")
+
+
+def _():
+    from rbforge import plugins
+    os.environ["RBFORGE_PLUGIN_DIR"] = os.path.join(os.getcwd(), "does-not-exist")
+    try:
+        # force the default location to look empty for this assertion
+        info = plugins.status()
+    finally:
+        os.environ.pop("RBFORGE_PLUGIN_DIR", None)
+    assert info["free_path_is_default"] is True
+    assert "free" in info["note"].lower()
+
+@check("free-stack: search_asset filters match the live schema spelling")
+
+
+def _():
+    """`priceFilter` is lowercase and only valid with scope=creator_store.
+    A doc with `priceFilter="Free"` is not a style nit - the call is rejected."""
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "skills", "roblox-game-development", "references")
+    text = open(os.path.join(root, "free-stack.md"), encoding="utf-8").read()
+    assert 'priceFilter="Free"' not in text
+    assert 'scope="CreatorStore"' not in text
+    assert 'priceFilter="free"' in text
+    assert 'scope="creator_store"' in text
+
+
+# ---------------------------------------------------------------- new project
+
+@check("new: one command yields a gated project with a filled-in plan")
+
+
+def _():
+    """The beginner entry point. If PLAN.md ships with empty sections the user
+    gets a scaffold and no idea what to build first."""
+    from rbforge import scaffold
+    with tempdir() as root:
+        target = os.path.join(root, "g")
+        res = scaffold.new_project(target, "obby", "dodge lasers")
+        plan_path = os.path.join(target, "PLAN.md")
+        assert os.path.isfile(plan_path)
+        text = open(plan_path, encoding="utf-8").read()
+        assert "1. " in text, "build order has no numbered steps"
+        assert "- [ ] " in text, "verification list is empty"
+        assert "## Build order" in text and "## Prove it" in text
+        assert "build[]" not in text, "internal key names leaked into user copy"
+        assert "rbforge check" in text
+        assert os.path.isfile(os.path.join(target, "rokit.toml"))
+        assert any("Baseplate" in s for s in res["next_steps"])
+        assert "No purchase" in res["free"]
+
+@check("scripts: no PowerShell helper declares the automatic $Args")
+def _():
+    """`param(... $Args)` is shadowed by PowerShell's automatic $args, so
+    `@Args` splats nothing: Install.ps1 printed usage and installed no skills."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name in sorted(os.listdir(root)):
+        if name.endswith(".ps1"):
+            text = open(os.path.join(root, name), encoding="utf-8-sig").read()
+            assert not re.search(r"\[string\[\]\]\$Args\b", text, re.I), name
+            assert "@Args" not in text, name
+
+
+# ---------------------------------------------------------------- probes + traps
+
+@check("probes: every probe renders with defaults and leaves no placeholder")
+def _():
+    from rbforge import probes
+    cat = probes.catalog()
+    names = {p["name"] for p in cat}
+    for need in ("console", "gui-overflow", "ray-all", "box-scan", "hide", "restore", "camera-pin", "ui-audit"):
+        assert need in names, need
+    for p in cat:
+        r = probes.render(p["name"])
+        assert "{{" not in r["code"], p["name"]
+        assert r["datamodel"] in ("any", "Edit", "Client", "Server"), p["name"]
+        assert "execute_luau" in r["run"] and r["purpose"], p["name"]
+        assert "return" in r["code"], p["name"] + " returns nothing for execute_luau to show"
+
+@check("probes: overrides land, unknown names and params are refused")
+def _():
+    from rbforge import probes
+    r = probes.render("whereis", probes.parse_sets(['pattern="ExitDoor"', "limit=5"]))
+    assert '"ExitDoor"' in r["code"] and ", 5" in r["code"]
+    for bad in (lambda: probes.render("nope"), lambda: probes.render("whereis", {"nope": "1"}),
+                lambda: probes.render("whereis", {"pattern": "a\nb"}), lambda: probes.render("../x")):
+        try:
+            bad()
+            raise AssertionError("accepted bad input")
+        except err_mod.ForgeError:
+            pass
+
+@check("traps: each rule fires on its pattern and stays quiet on the fix")
+def _():
+    from rbforge import traps
+
+    def ids(rel, text):
+        return {f["id"] for f in traps.scan_text(rel, text)}
+    assert "T003" in ids("a.luau", 'local g = Instance.new("SurfaceGui")')
+    assert "T003" not in ids("a.luau", 'local g = Instance.new("SurfaceGui")\ng.ClipsDescendants = true')
+    assert "T005" in ids("x.server.luau", "local p = game.Players.LocalPlayer")
+    assert "T005" not in ids("x.client.luau", "local p = game.Players.LocalPlayer")
+    assert "T007" in ids("src/client/a.luau", 'Instance.new("RemoteEvent")')
+    assert "T011" in ids("a.server.luau", "local v = store:GetAsync(key)")
+    assert "T011" not in ids("a.server.luau", "local ok, v = pcall(function()\n return store:GetAsync(key)\nend)")
+    assert "T001" in ids("a.luau", "wait(1)") and "T001" not in ids("a.luau", "task.wait(1)")
+    assert "T013" in ids("a.server.luau", "RunService.Heartbeat:Connect(function() r:FireAllClients(1) end)")
+    assert not ids("a.luau", "-- wait(1) in a comment")
+    # viewmodel clone keeping its character joints, and a saved transparency restored
+    bugh = 'local m = weapon:Clone()\nlocal cam = workspace.CurrentCamera\nm.Parent = cam'
+    assert "T022" in ids("src/client/vm.luau", bugh)
+    assert "T022" not in ids("src/client/vm.luau", bugh + '\nfor _, d in ipairs(m:GetDescendants()) do\n if d:IsA("JointInstance") then d:Destroy() end\nend')
+    assert "T023" in ids("src/client/vm.luau", "part.LocalTransparencyModifier = saved")
+    assert "T023" not in ids("src/client/vm.luau", "part.LocalTransparencyModifier = 0")
+    trig = 'local on = player:GetAttribute("DebugFirstPerson")'
+    assert "T024" in ids("src/client/move.luau", trig)
+    assert "T024" not in ids("src/client/move.luau", "local on = RunService:IsStudio() and player:GetAttribute(\"DebugFirstPerson\")")
+    deco = 'w.rod("Tendril", a, b, 1, flesh, M.Slate, true)'
+    assert "T025" in ids("src/server/t.server.luau", deco)
+    assert "T025" not in ids("src/server/t.server.luau", 'w.rod("Tendril", a, b, 1, flesh, M.Slate, false)')
+
+@check("traps: review skips snapshot folders")
+def _():
+    from rbforge import traps
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        os.makedirs(os.path.join(d, "artifacts", "recovery"))
+        open(os.path.join(d, "default.project.json"), "w").write("{}")
+        open(os.path.join(d, "src", "a.server.luau"), "w").write("wait(1)\n")
+        open(os.path.join(d, "artifacts", "recovery", "b.server.luau"), "w").write("wait(1)\n")
+        res = traps.review(d)
+        files = {f["file"] for f in res["findings"]}
+        assert files == {"src/a.server.luau"}, files
+        assert res["files_skipped"] == 1
+
+@check("skills: router links the debugging playbook and the probes")
+def _():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    ref = os.path.join(root, "skills", "roblox-game-development")
+    skill = open(os.path.join(ref, "SKILL.md"), encoding="utf-8").read()
+    assert "references/debugging-playbook.md" in skill and "rb_studio_probe" in skill
+    assert os.path.isfile(os.path.join(ref, "references", "debugging-playbook.md"))
+
+@check("mcp: probe and traps tools are registered")
+def _():
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location("rbf_server", os.path.join(root, "mcp_server", "server.py"))
+    text = open(spec.origin, encoding="utf-8").read()
+    assert '"rb_studio_probe"' in text and '"rb_traps_review"' in text
+
+
+# ---------------------------------------------------------------- helpers (moved above)
+
+
+# ------------------------------------------------- regression: audit 2026-11-06
+
+@check("check: typechecker exit status decides, never a word search")
+def _():
+    from rbforge import check
+    orig_run, orig_which = check._run, check.shutil.which
+    with tempdir() as d:
+        defs = os.path.join(d, "globalTypes.d.luau")
+        open(defs, "w").write("-- definitions\n")
+        os.environ["RBFORGE_LUAU_DEFINITIONS"] = defs
+
+        def fake(argv, cwd, timeout=180):
+            return (0, "ok") if argv[0] != "luau-lsp" else fake.answer
+
+        try:
+            check.shutil.which = lambda name: "/fake/" + name
+            check._run = fake
+            cases = [
+                ((None, "could not run 'luau-lsp': boom"), "skip"),
+                ((127, "process terminated unexpectedly"), "fail"),
+                ((0, "0 errors, 0 warnings"), "pass"),
+                ((0, "src/a.luau:12:5: TypeError: bad"), "fail"),
+                ((1, "src/a.luau:3:1: Unknown global 'x'"), "fail"),
+            ]
+            for answer, want in cases:
+                fake.answer = answer
+                rung = check.rung_static(d)
+                got = [c for c in rung["checks"] if c["id"] == "luau-lsp"][0]
+                assert got["status"] == want, (answer, want, got)
+        finally:
+            check._run, check.shutil.which = orig_run, orig_which
+            os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
+
+@check("check: malformed project JSON fails the project-map check")
+def _():
+    from rbforge import check
+    with tempdir() as d:
+        open(os.path.join(d, "default.project.json"), "w").write("{ not json")
+        rung = check.rung_structure(d)
+        got = [c for c in rung["checks"] if c["id"] == "project-map"][0]
+        assert got["status"] == "fail", got
+        assert "malformed" in got["detail"].lower(), got["detail"]
+
+@check("live: rojo init.* files map the directory to a script")
+def _():
+    from rbforge import live
+    with tempdir() as d:
+        base = os.path.join(d, "src", "ServerScriptService")
+        os.makedirs(os.path.join(base, "Systems"))
+        json.dump({"tree": {"$className": "DataModel",
+                            "ServerScriptService": {"$path": "src/ServerScriptService"}}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        for name in ("init.server.luau", "Systems/init.luau", "Systems/A.luau"):
+            open(os.path.join(base, name), "w").write("-- \n")
+        targets = live.rojo_targets(os.path.join(d, "default.project.json"))
+        names = sorted(v for v in targets.values())
+        assert ("", "ServerScriptService", "Script") in names, names
+        assert ("ServerScriptService", "Systems", "ModuleScript") in names, names
+        assert ("ServerScriptService.Systems", "A", "ModuleScript") in names, names
+
+
+def _fake_session(out):
+    class Fake:
+        answer = out
+
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def luau(self, code, dm="Edit"):
+            return Fake.answer
+    return Fake
+
+@check("live: server test result parsing is exact")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with tempdir() as d:
+        path = os.path.join(d, "t.luau")
+        open(path, "w").write("return 1\n")
+        try:
+            for text, want in [("PASS 30 routes", "pass"), ("FAIL 2 routes", "fail"),
+                               ("NOT_PASS 30", "fail"), ("TIMEOUT", "fail"),
+                               ("", "unknown"), ("garbage output", "unknown"),
+                               ("PASS", "pass")]:
+                live.Session = _fake_session(text)
+                got = live.server_test(path, "Attr", timeout=1)
+                assert got["outcome"] == want, (text, got)
+                assert got["passed"] is (want == "pass")
+        finally:
+            live.Session = orig
+
+@check("live: push reports synced, mismatch and unverified separately")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        json.dump({"tree": {"$className": "DataModel",
+                            "ServerScriptService": {"$path": "src"}}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        src = os.path.join(d, "src", "A.luau")
+        open(src, "w").write("return 1\n")
+        want = live.adler("return 1\n")
+        try:
+            for answer, state in [("SYNCED " + want, "synced"),
+                                  ("MISMATCH " + want, "mismatch"),
+                                  ("UNVERIFIED", "unverified")]:
+                live.Session = _fake_session(answer)
+                r = live.push(["ALL"], os.path.join(d, "default.project.json"))
+                assert r["results"][0]["state"] == state, (answer, r["results"][0])
+                assert r["pushed"] == (1 if state == "synced" else 0), r
+        finally:
+            live.Session = orig
+
+@check("check: luau compound assignment is not a parse error")
+def _():
+    from rbforge import check
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        open(os.path.join(d, "src", "a.luau"), "w").write(
+            "--!strict\nlocal speed = 1\nspeed += 2\nreturn speed\n")
+        rung = check.rung_static(d)
+        got = [c for c in rung["checks"] if c["id"] == "selene"][0]
+        assert "parse_error" not in got["detail"], got["detail"]
+
+
+@check("verification: unknown and expired observations are rejected")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        unknown = verification.receipt("unknown", observation_id="obs-0000000000000000",
+                                       playtest_performed=True, save=False)
+        assert unknown["verification_level"] != "verified_playtest", unknown["verification_level"]
+        obs = _collect()["observation_id"]
+        # Age the stored record: the default six-hour window must reject it.
+        store_path = verification._observations_path()
+        store = json.load(open(store_path, encoding="utf-8"))
+        store[obs]["recorded_at"] = store[obs]["recorded_at"] - 7 * 3600
+        json.dump(store, open(store_path, "w", encoding="utf-8"))
+        assert verification.load_observation(obs) is None, "an expired observation survived"
+        expired = verification.receipt("expired", observation_id=obs, project="demo",
+                                       scenario="smoke", playtest_performed=True, save=False)
+        assert expired["verification_level"] != "verified_playtest", expired["verification_level"]
+
+
+@check("verification: a missing screenshot or console caps the level at partial")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        no_shot = _collect(capture=None)["observation_id"]
+        r = verification.receipt("no shot", observation_id=no_shot, project="demo", scenario="smoke",
+                                 playtest_performed=True, save=False)
+        assert r["verification_level"] == "playtest_observed_partial", r["verification_level"]
+        assert r["screenshot_inspected_by_vision"] is False
+        assert r["checks"]["screenshot_captured"] is False
+
+
+@check("check: a Rojo project without a name fails validation")
+def _():
+    from rbforge import check
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        json.dump({"tree": {"ServerScriptService": {"$path": "src"}}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        got = [c for c in check.rung_structure(d)["checks"] if c["id"] == "project-map"][0]
+        assert got["status"] == "fail" and "name" in got["detail"].lower(), got
+
+
+@check("check: changed-only honours an explicit base ref")
+def _():
+    import shutil as _shutil
+    import subprocess as _sub
+    from rbforge import check
+    if not _shutil.which("git"):
+        raise AssertionError("git unavailable")
+    with tempdir() as d:
+        _sub.run(["git", "init", "-q"], cwd=d, check=True)
+        _sub.run(["git", "config", "user.email", "t@t"], cwd=d, check=True)
+        _sub.run(["git", "config", "user.name", "t"], cwd=d, check=True)
+        os.makedirs(os.path.join(d, "src"))
+        open(os.path.join(d, "src", "a.luau"), "w").write("return 1\n")
+        _sub.run(["git", "add", "."], cwd=d, check=True)
+        _sub.run(["git", "commit", "-qm", "one"], cwd=d, check=True)
+        base = _sub.run(["git", "rev-parse", "HEAD"], cwd=d, capture_output=True, text=True).stdout.strip()
+        open(os.path.join(d, "src", "b.luau"), "w").write("return 2\n")
+        _sub.run(["git", "add", "."], cwd=d, check=True)
+        _sub.run(["git", "commit", "-qm", "two"], cwd=d, check=True)
+        assert check.changed_files(d) == [], "a clean tree should show no working-tree changes"
+        against = check.changed_files(d, base_ref=base)
+        assert any(p.endswith("b.luau") for p in against), against
+
+
+@check("live: a project that declares servePlaceIds refuses the wrong place")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        json.dump({"name": "t", "servePlaceIds": [1234],
+                   "tree": {"ServerScriptService": {"$path": "src"}}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        open(os.path.join(d, "src", "A.luau"), "w").write("return 1\n")
+        try:
+            live.Session = _fake_session("9999")
+            try:
+                live.push(["ALL"], os.path.join(d, "default.project.json"))
+                raise AssertionError("push accepted the wrong place")
+            except err_mod.ForgeError as exc:
+                assert exc.code == "RBF-STUDIO-003", exc.code
+        finally:
+            live.Session = orig
 
 
 if __name__ == "__main__":
