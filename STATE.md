@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.13.6 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.13.7 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -23,7 +23,8 @@ claim checkable.
 | Live Studio: hierarchy + `servePlaceIds` | `HIERARCHY … is Folder, expects Model`; `RBF-STUDIO-003`; `RBF-ARG-002` |
 | Live Studio: class-change backup | original preserved as `Swap_rbforge_<ms>` in `ServerStorage.rbforge_backups` |
 | Live Studio: `init.luau` nesting | `Nested` ModuleScript with `Child` beneath it |
-| Live Studio: server tests | PASS, FAIL, malformed and TIMEOUT all classified correctly |
+| Live Studio: server tests | PASS, FAIL, malformed and TIMEOUT all classified correctly; a test that never reports is refused as `INVALID` in 0.00 s |
+| Live Studio: full trust ladder | one observation produced `verified_playtest` (real PASS + clean console + inspected 250 KB JPEG); wrong `revision` and omitted `scenario` both degraded to `unverified` |
 | Live Studio: console + screenshot | `get_console_output` read; a real 240 KB `image/jpeg` captured and hashed |
 | Live Studio: rollback | engine refused a 210 KB `Source`; existing-script, new-script and class-change pushes all `rolled_back` with the previous state verified afterwards |
 | Unit-only | `ROLLBACK_FAILED` (a restore that itself fails) — not reachable through the documented API |

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.7 - 2026-11-06
+
+Proven end to end in a live Studio session, and one dead end removed.
+
+### Added
+- `server_test` refuses a test file that never writes its result attribute. The contract is
+  `workspace:SetAttribute(attr, "PASS ..." | "FAIL ...")`; a file that only returns a value used to sit
+  for the full 120 s timeout and report `TIMEOUT`, which hid the mistake. It now returns
+  `INVALID: the test never sets workspace:<attr>` in 0.00 s with the fix in the message.
+
+### Verified live (sandbox place, not a game)
+- Evidence cycle: console read clean, a 250 KB JPEG returned by Studio with a sha256, and a real
+  `PASS 1 player(s)` server test produced `verified_playtest`.
+- Binding holds both ways: the same observation with a wrong `revision` returns `unverified` and names
+  the mismatch; omitting `scenario` does not verify either.
+
 ## 0.13.6 - 2026-11-06
 
 Adopted the EL4CTEO Roblox skill pack, so this repository owns the Roblox skill
