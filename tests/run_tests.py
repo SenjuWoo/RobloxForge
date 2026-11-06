@@ -1719,6 +1719,20 @@ def _():
         assert r["evidence"]["visual_inspection"]["by"] == "agent"
 
 
+@check("scaffold: a new project passes its own offline gate")
+def _():
+    import shutil as _shutil
+    from rbforge import check, scaffold
+    if not _shutil.which("stylua"):
+        raise AssertionError("stylua is required to prove the scaffold is formatted")
+    with tempdir() as d:
+        target = os.path.join(d, "proj")
+        scaffold.scaffold(target, genre="obby")
+        report = check.run(target, scope=["static", "structure"])
+        fails = [c for r in report["rungs"] for c in r["checks"] if c["status"] == "fail"]
+        assert not fails, [(c["id"], c["detail"][:120]) for c in fails]
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, exc in FAIL:

@@ -26,6 +26,9 @@ Corrective pass on the evidence boundary, console truth, batch safety and agent 
 - **`STATE.md` was four releases stale** (it still said 0.13.1 and "live MCP unverified"). Rewritten into
   proven-offline / proven-live / unit-only / unverified, and a test now fails if the package version, the
   CHANGELOG's top section and STATE's version line disagree.
+- **A brand-new scaffold failed its own gate.** The generator wrote CRLF files, so stylua reported
+  `Config.lua` as unformatted the moment a user ran `rbforge check`. Files are written with LF now, and a
+  test scaffolds a project and requires zero failures.
 - **Installed skills could not resolve vendored knowledge.** `rbforge skills install` now writes
   `KNOWLEDGE-PATH.txt` beside the skill with the absolute path, and the skill documents the fallback.
 

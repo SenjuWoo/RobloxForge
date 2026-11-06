@@ -116,7 +116,7 @@ def scaffold(path, genre="generic"):
     for d in dirs:
         os.makedirs(d, exist_ok=True)
     for f, content in files.items():
-        with open(f, "w", encoding="utf-8") as fh:
+        with open(f, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(content.replace("{genre}", genre))
     return {"path": os.path.abspath(path), "genre": genre,
             "files": sorted(os.path.relpath(f, path).replace(os.sep, "/") for f in files),
@@ -167,7 +167,7 @@ def new_project(path, genre="generic", premise=""):
     ]
 
     plan_path = os.path.join(path, "PLAN.md")
-    with open(plan_path, "w", encoding="utf-8") as fh:
+    with open(plan_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(lines))
 
     return {
