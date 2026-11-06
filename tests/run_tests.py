@@ -7,6 +7,7 @@ import base64
 import io
 import json
 import os
+import shutil
 import traceback
 import re
 import sys
@@ -2447,6 +2448,105 @@ def _():
             del skills._ROOTS["sandbox"]
     assert backups, "the skill was replaced in place instead of backed up"
     assert saved, "the user's directory is not in the backup"
+
+
+def _old_schema_install(skills, root, src, name="roblox-docs", version="0.13.10"):
+    """Write a skill the way 0.13.10 did: a stamp, a manifest with files only, no dirs."""
+    dst = os.path.join(root, name)
+    shutil.copytree(os.path.join(src, name), dst)
+    skills._write_knowledge_pointer(dst, src)
+    files = {rel: skills._sha(os.path.join(dst, rel.replace("/", os.sep)))
+             for rel in skills._manifest_files(dst)}
+    with open(os.path.join(dst, skills.MANIFEST), "w", encoding="utf-8") as fh:
+        json.dump({"version": version, "files": files}, fh)
+    with open(os.path.join(dst, skills.STAMP), "w", encoding="utf-8") as fh:
+        fh.write(version)
+    return dst
+
+
+def _prepared_old_tree(extra=None):
+    from rbforge import skills
+    src = tempfile.mkdtemp(prefix="rbf-src-")
+    root = tempfile.mkdtemp(prefix="rbf-root-")
+    for name in skills.OUR_SKILLS:
+        os.makedirs(os.path.join(src, name))
+        open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+    dst = _old_schema_install(skills, root, src)
+    made = extra(dst) if extra else None
+    return src, root, dst, made
+
+
+@check("skills: a 0.13.10 manifest with no dirs still backs up a user directory on upgrade")
+def _():
+    from rbforge import skills
+    src, root, dst, made = _prepared_old_tree(
+        lambda d: (os.makedirs(os.path.join(d, "mine")), os.path.join(d, "mine"))[1])
+    orig = (skills.paths.skills_source_dir, skills.roots_for)
+    skills.paths.skills_source_dir = lambda: src
+    skills.roots_for = lambda agent: [root]
+    _sandbox_agent(skills, root, "sbx-old")
+    try:
+        result = skills.install(["sbx-old"])
+        backups = [n for n in os.listdir(root) if "roblox-docs.rbforge-backup" in n]
+        saved = os.path.isdir(os.path.join(root, backups[0], "mine")) if backups else False
+    finally:
+        skills.paths.skills_source_dir, skills.roots_for = orig
+        del skills._ROOTS["sbx-old"]
+        import shutil as _sh
+        _sh.rmtree(root, ignore_errors=True); _sh.rmtree(src, ignore_errors=True)
+    assert backups, "the old-schema install was replaced without a backup: %s" % result
+    assert saved, "the user's directory was not preserved in the backup"
+
+
+@check("skills: the same migration preserves a link and never touches its target")
+def _():
+    from rbforge import skills
+    target = tempfile.mkdtemp(prefix="rbf-target-")
+    open(os.path.join(target, "precious.txt"), "w").write("outside")
+    kind = {"v": None}
+
+    def add_link(d):
+        kind["v"] = _make_link(os.path.join(d, "outside"), target)
+        return os.path.join(d, "outside")
+
+    src, root, dst, link = _prepared_old_tree(add_link)
+    orig = (skills.paths.skills_source_dir, skills.roots_for)
+    skills.paths.skills_source_dir = lambda: src
+    skills.roots_for = lambda agent: [root]
+    _sandbox_agent(skills, root, "sbx-oldlink")
+    try:
+        skills.install(["sbx-oldlink"])
+        backups = [n for n in os.listdir(root) if "roblox-docs.rbforge-backup" in n]
+        saved = os.path.lexists(os.path.join(root, backups[0], "outside")) if backups else False
+        target_alive = os.path.isfile(os.path.join(target, "precious.txt"))
+    finally:
+        skills.paths.skills_source_dir, skills.roots_for = orig
+        del skills._ROOTS["sbx-oldlink"]
+        import shutil as _sh
+        _sh.rmtree(root, ignore_errors=True); _sh.rmtree(src, ignore_errors=True)
+        _sh.rmtree(target, ignore_errors=True)
+    assert kind["v"], "no link could be created on this host"
+    assert backups, "the link was dropped without a backup"
+    assert saved, "the link is not in the backup"
+    assert target_alive, "the link target was modified"
+
+
+@check("skills: adjacent directory links are all inventoried")
+def _():
+    from rbforge import skills
+    with tempdir() as d, tempdir() as targets:
+        skill = os.path.join(d, "roblox-docs")
+        os.makedirs(skill)
+        open(os.path.join(skill, "SKILL.md"), "w").write("# x")
+        made = []
+        for i in range(3):
+            t = os.path.join(targets, "t%d" % i)
+            os.makedirs(t)
+            made.append(_make_link(os.path.join(skill, "link%d" % i), t))
+        if not all(made):
+            raise AssertionError("links unavailable on this host: %s" % made)
+        listed = skills._manifest_dirs(skill)
+    assert sorted(listed) == ["link0", "link1", "link2"], listed
 
 
 if __name__ == "__main__":

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.13.12 - 2026-11-06
+
+Two migration defects, found by upgrading a real 0.13.10 install rather than a fresh one.
+
+### Fixed
+- **Upgrading a 0.13.10 install deleted user content.** Those manifests carry `files` but no `dirs`,
+  and the stale branch of `_plan()` chose `replace` without checking the tree - so a folder or link the
+  user had added vanished, with no backup. Ownership is now decided only by `_matches_source()`, which
+  compares files **and** directories against the shipped copy; anything else takes
+  `backup-and-replace`. A missing `dirs` field is never read as proof of ownership.
+- **Adjacent directory links could be missed.** `_manifest_dirs()` called `dirs.remove()` while
+  iterating that same list, so pruning one link skipped the next entry. It now iterates a copy and
+  prunes traversal afterwards, which matters for three or more adjacent links.
+
+### Tests
+118 total (was 115). The migration tests build a real 0.13.10-style manifest (stamp + `files`, no
+`dirs`), add a user directory or link, run the upgrade, and require both a backup and the preserved
+entry inside it; a third case proves three adjacent links are all inventoried.
+
 ## 0.13.11 - 2026-11-06
 
 The inventory now sees everything the user can put inside a skill, not just files.

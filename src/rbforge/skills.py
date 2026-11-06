@@ -217,12 +217,15 @@ def _manifest_dirs(skill_dir):
     """
     out = []
     for base, dirs, _names in os.walk(skill_dir, followlinks=False):
-        for name in dirs:
+        prune = []
+        for name in list(dirs):  # a stable copy: removing while iterating skips the next entry
             path = os.path.join(base, name)
             rel = os.path.relpath(path, skill_dir).replace("\\", "/")
             out.append(rel)
             if _is_link(path):
-                dirs.remove(name)  # never descend: the target is not ours
+                prune.append(name)  # never descend: the target is not ours
+        for name in prune:
+            dirs.remove(name)
     return sorted(out)
 
 
@@ -381,16 +384,13 @@ def _plan(agent):
                 per_skill[name] = "blocked: %s exists and is not RobloxForge's (%s)" % (name, root)
             elif state == "current" and _installed_version(dst) == __version__:
                 per_skill[name] = "current"
-            elif state.startswith("legacy") or state == "stale (unstamped)":
-                # A pre-manifest install: keep a copy unless every byte is provably ours.
+            else:
+                # Replace in place only when the whole tree - files AND directories - is provably
+                # the shipped copy. A manifest written before 0.13.11 has no `dirs`, so its word
+                # alone cannot prove that a folder or a link the user added is ours.
                 src_dir = os.path.join(src_root, name)
                 per_skill[name] = ("replace" if _matches_source(dst, src_dir)
                                    else "backup-and-replace")
-            elif state.startswith(("modified", "partial")):
-                # Content we cannot prove is ours gets preserved, not deleted.
-                per_skill[name] = "backup-and-replace"
-            else:
-                per_skill[name] = "replace"
         plan[root] = per_skill
     return roots, plan
 
