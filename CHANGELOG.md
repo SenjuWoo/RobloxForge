@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.13.2 - 2026-11-06
+
+Final corrective pass: verification and push now fail closed, and the docs match the code.
+
+### Fixed
+- **Screenshot trust bypass.** `collect_evidence(screenshots=..., screenshots_inspected=True)` let a
+  caller-supplied path satisfy the screenshot requirement. A path is now recorded as a *claim*
+  (`claimed_screenshots`); only image bytes returned by `screen_capture` become captures, stored under
+  `receipts/shots/` with mime, size, and SHA-256. `screenshots_inspected` is only an attestation that
+  references a captured digest, and `verified_playtest` additionally requires `console_status == "ok"`.
+  Text-only capture responses are kept but marked `verified_image: False`.
+- **MCP image blocks were discarded.** `Session.call()` flattened text and dropped images, so a screenshot
+  could never be proven. New `Session.call_content()` returns every block; `_save_capture()` decodes
+  base64 with size/type limits and rejects malformed data.
+- **Console classification.** Substring matching turned "No error was found" into a failure and empty
+  output into "clean". Lines must *start* like a failure (`Script error:`, `stack begin`, `attempt to`,
+  `fatal:`); output that supports neither conclusion is `unknown`, which can never be verified clean.
+- **Incomplete rollback.** `rolled_back` was reported on a successful `pcall`. A restore is now verified by
+  reading the source back (or moving the backed-up instance home and re-checking name and parent) before
+  `ROLLED_BACK` is returned; otherwise it is `ROLLBACK_FAILED` and the backup stays in
+  `ServerStorage.rbforge_backups`. Write and readback are both protected.
+- **Folder exemption.** A project declaring `Folder` skipped the class check, so an existing `Model` was
+  accepted. Every declared class is compared.
+- **`servePlaceIds` failed open.** `["invalid"]` collapsed to an empty list and disabled the guard. Invalid
+  entries, non-list values and booleans now raise `RBF-ARG-002` before anything is written; an explicit
+  empty list still means "unconstrained" (documented).
+- **Rojo validation vs Rojo.** Tested against rojo 7.7.1: `name` is optional (Rojo falls back to the folder
+  name) while an empty `tree` is rejected and `{"$className": "DataModel"}` builds. The validator now
+  matches that and no longer demands a `name`.
+- **CLI/MCP parity.** `--base-ref` was implemented in the core but not exposed; `rb_check`,
+  `rb_collect_evidence` and `rb_verify_receipt` schemas now advertise the arguments they accept
+  (`changed_only`, `base_ref`, `project`, `scenario`, `revision`, `capture_screenshot`, `studio_id`).
+
+### Added
+- Optional third-party packs vendored under `knowledge/vendor/` (MIT `roblox-skills`, 23 skills, plus 23
+  Roblox-Assistant briefs) with a routing index. Not installed by `rbforge skills install`.
+- Skill guidance: verification levels, screenshot-is-not-inspection, and how to read `push` states.
+- Ten regression tests (74 total): claimed screenshot, image-block handling, uninspected capture, console
+  classification, Folder enforcement, `servePlaceIds` table, MCP schema/implementation parity.
+
+### Known gaps
+- No live Studio: `push`, `collect_evidence`, `screen_capture` and `get_console_output` are proven against
+  fake sessions and a real Luau parser only. The live matrix in `STATE.md` is still owed.
+- `verify_chain()` cannot detect truncation of the final receipt (documented in the test).
+- Weak-model E2E benchmark still not run; 1.0.0 stays gated on it.
+
 ## 0.13.1 - 2026-11-06
 
 Hotfix: the push path generated invalid Luau, and several verification shortcuts were still open.

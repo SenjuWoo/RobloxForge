@@ -336,14 +336,17 @@ def _validate_project(project_file, root):
     if not isinstance(data, dict):
         return None, ["root is %s, expected an object" % type(data).__name__]
 
+    # Checked against Rojo 7.7.1: `name` is optional (Rojo falls back to the folder name), while an
+    # empty tree is rejected and a tree holding only `$className` builds fine. Only diverge from
+    # Rojo where a real build showed the difference.
     name = data.get("name")
-    if not isinstance(name, str) or not name.strip():
-        return None, ["missing a 'name' string - Rojo requires it at the project root"]
+    if name is not None and not isinstance(name, str):
+        return None, ["'name' must be a string when present"]
     tree = data.get("tree")
     if not isinstance(tree, dict):
         return None, ["missing a 'tree' object - Rojo has nothing to build"]
-    if not any(not k.startswith("$") for k in tree):
-        return None, ["'tree' declares no child instances - Rojo would build nothing"]
+    if not tree:
+        return None, ["'tree' is empty - Rojo rejects a project with no root instances"]
 
     missing, errors = [], []
     seen = {}

@@ -5,3 +5,6 @@ __pycache__/
 *.egg-info/
 tmp/
 tmp_e2e/
+
+# Local intake folder for third-party packs; the curated subset lives in knowledge/vendor.
+zToreviewandintergrateordocument/

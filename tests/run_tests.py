@@ -3,6 +3,7 @@
 Run: python tests/run_tests.py
 Fixture-based; exercises every core module against synthetic state.
 """
+import base64
 import io
 import json
 import os
@@ -196,10 +197,20 @@ def _fake_studio(console="", place="Deadzome Haven", capture="C:/shots/smoke.png
                     raise RuntimeError("screen_capture is not available")
                 return capture
             raise KeyError(tool)
+
+        def call_content(self, tool, args):
+            if tool == "screen_capture":
+                if capture is None:
+                    raise RuntimeError("screen_capture is not available")
+                return ([{"type": "image", "mimeType": "image/png",
+                          "data": base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 64).decode()}],
+                        False, "")
+            raise KeyError(tool)
     return FakeSession
 
 
-def _collect(project="demo", scenario="smoke", inspected=True, test_result=None, **over):
+def _collect(project="demo", scenario="smoke", inspected=True, test_result=None,
+             capture_screenshot_off=False, **over):
     """Run collect_evidence against the double; returns the recorded observation payload."""
     from rbforge import live, verification
     orig = live.server_test
@@ -210,7 +221,8 @@ def _collect(project="demo", scenario="smoke", inspected=True, test_result=None,
     try:
         return verification.collect_evidence(
             session_factory=_fake_studio(**over), project=project, scenario=scenario,
-            screenshots_inspected=inspected, capture_screenshot=True, test_path=path)
+            screenshots_inspected=inspected,
+            capture_screenshot=not capture_screenshot_off, test_path=path)
     finally:
         live.server_test = orig
 
@@ -404,12 +416,11 @@ def _generated_push_code(**over):
 def _():
     import shutil as _shutil
     import subprocess as _sub
-    from rbforge import live
-    if not _shutil.which("selene"):
-        raise AssertionError("selene is required to parse generated Luau")
+    if not (_shutil.which("stylua") or _shutil.which("selene")):
+        raise AssertionError("a Luau parser (stylua or selene) is required for this test")
     with tempdir() as d:
         cfg = os.path.join(d, "selene.toml")
-        open(cfg, "w").write('std = "roblox"\n')
+        open(cfg, "w").write('std = "lua51"\n')  # syntax only: no Roblox std, no network
         cases = [
             _generated_push_code(),
             _generated_push_code(parent_classes={"ServerScriptService": "Folder",
@@ -417,21 +428,26 @@ def _():
             _generated_push_code(name='Wei"rd\u00e9 name', parent="Workspace.Thing",
                                  text="-- ]=] ]] ]==] \u00e9 \\ backslash ' quote\n"),
             _generated_push_code(klass="ModuleScript", text="return 1\n"),
+            _generated_push_code(parent_classes={"ServerScriptService.Systems": "Configuration"}),
         ]
         for i, code in enumerate(cases):
             path = os.path.join(d, "gen%d.luau" % i)
             open(path, "w", encoding="utf-8").write(code)
-            out = _sub.run(["selene", "--config", cfg, path], capture_output=True, text=True)
-            blob = (out.stdout or "") + (out.stderr or "")
-            assert "parse errors" in blob or "Results" in blob, blob[:300]
-            assert "0 parse errors" in blob, "generated Luau does not parse:\n%s" % blob[:600]
-
-
+            if _shutil.which("stylua"):
+                # stylua is a Luau parser: it reports a parse failure, formatting is irrelevant here.
+                out = _sub.run(["stylua", "--check", path], capture_output=True, text=True)
+                blob = (out.stdout or "") + (out.stderr or "")
+                assert "parse" not in blob.lower() or "error parsing" not in blob.lower(), blob[:400]
+            else:
+                out = _sub.run(["selene", "--config", cfg, path], capture_output=True, text=True)
+                blob = (out.stdout or "") + (out.stderr or "")
+                assert "parse errors" in blob and "0 parse errors" in blob, blob[:400]
 @check("live: generated push code refuses a wrong existing class and can roll back")
 def _():
     code = _generated_push_code()
     assert "HIERARCHY" in code and "the project expects" in code, "no existing-class check"
-    assert "ROLLED_BACK" in code and "inst.Source = prev" in code, "no rollback path"
+    assert "ROLLED_BACK" in code and "target.Source = prev" in code, "no rollback path"
+    assert "backup.Parent = node" in code, "a moved original is never put back"
     assert "JSONDecode" in code, "class map must be decoded, not pasted as a table"
 
 
@@ -1260,15 +1276,23 @@ def _():
         assert r["checks"]["screenshot_captured"] is False
 
 
-@check("check: a Rojo project without a name fails validation")
+@check("check: Rojo project validation matches a real rojo build")
 def _():
     from rbforge import check
     with tempdir() as d:
         os.makedirs(os.path.join(d, "src"))
+        # name is optional in Rojo 7.7.1; an empty tree is not.
         json.dump({"tree": {"ServerScriptService": {"$path": "src"}}},
                   open(os.path.join(d, "default.project.json"), "w"))
         got = [c for c in check.rung_structure(d)["checks"] if c["id"] == "project-map"][0]
-        assert got["status"] == "fail" and "name" in got["detail"].lower(), got
+        assert got["status"] == "pass", got
+        json.dump({"name": "t", "tree": {}}, open(os.path.join(d, "default.project.json"), "w"))
+        got = [c for c in check.rung_structure(d)["checks"] if c["id"] == "project-map"][0]
+        assert got["status"] == "fail" and "empty" in got["detail"].lower(), got
+        json.dump({"name": "t", "tree": {"$className": "DataModel"}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        got = [c for c in check.rung_structure(d)["checks"] if c["id"] == "project-map"][0]
+        assert got["status"] == "pass", got
 
 
 @check("check: changed-only honours an explicit base ref")
@@ -1314,6 +1338,125 @@ def _():
                 assert exc.code == "RBF-STUDIO-003", exc.code
         finally:
             live.Session = orig
+
+
+@check("verification: a screenshot path and a caller flag cannot verify anything")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        obs = _collect(capture_screenshot_off=True)["observation_id"]
+        r = verification.receipt("claimed shot", observation_id=obs, project="demo",
+                                 scenario="smoke",
+                                 evidence={"screenshots": ["C:/does/not/exist.png"],
+                                           "screenshots_inspected": True},
+                                 screenshot_captured=True, screenshot_inspected=True,
+                                 playtest_performed=True, save=False)
+        assert r["verification_level"] == "playtest_observed_partial", r["verification_level"]
+        assert r["checks"]["screenshot_captured"] is False, "a claimed path filled an observed field"
+
+
+@check("verification: an image MCP block becomes a hashed artifact, junk is ignored")
+def _():
+    import base64 as b64
+    from rbforge import verification
+    with _isolated_home():
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+        good = [{"type": "image", "mimeType": "image/png", "data": b64.b64encode(png).decode()}]
+        records = verification._save_capture(good, "")
+        assert records and records[0]["verified_image"] is True, records
+        assert records[0]["bytes"] == len(png) and len(records[0]["sha256"]) == 64
+        assert os.path.isfile(records[0]["artifact"])
+
+        bad = [
+            [{"type": "image", "mimeType": "application/pdf", "data": "AAAA"}],
+            [{"type": "image", "mimeType": "image/png", "data": "not base64 at all"}],
+            [{"type": "image", "mimeType": "image/png"}],
+            [],
+        ]
+        for blocks in bad:
+            got = verification._save_capture(blocks, "")
+            assert got == [], (blocks, got)
+        # A text-only answer is recorded, but it is not an image.
+        text_records = verification._save_capture([], "C:/shots/whatever.png")
+        assert text_records and text_records[0]["verified_image"] is False
+
+
+@check("verification: captured but uninspected stays partial")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        obs = _collect(inspected=False)["observation_id"]
+        r = verification.receipt("captured", observation_id=obs, project="demo", scenario="smoke",
+                                 playtest_performed=True, save=False)
+        assert r["verification_level"] == "playtest_observed_partial", r["verification_level"]
+        assert r["checks"]["screenshot_captured"] is True
+
+
+@check("verification: console classification separates clean, errors and unknown")
+def _():
+    from rbforge import verification
+    cases = [
+        ("[Server] all good", "ok", 0),
+        ("Script error: attempt to index nil", "errors", 1),
+        ("stack begin\nScript error: boom", "errors", 2),
+        ("No error was found here", "ok", 0),
+        ("", "unknown", 0),
+        (None, "unknown", 0),
+        ("arbitrary informational output", "ok", 0),
+    ]
+    for text, status, errors in cases:
+        got, count, _warn = verification.classify_console(text)
+        assert got == status and count == errors, (text, got, count)
+
+
+@check("live: declared Folder is enforced but never converted")
+def _():
+    code = _generated_push_code(parent_classes={"Workspace": "Folder"})
+    assert "want ~= 'Folder'" not in code, "Folder was exempted from the class check"
+
+
+@check("live: servePlaceIds fails closed on bad configuration")
+def _():
+    from rbforge import live
+    with tempdir() as d:
+        proj = os.path.join(d, "default.project.json")
+
+        def ids(payload):
+            json.dump(payload, open(proj, "w"))
+            return live._project_place_ids(proj)
+
+        assert ids({"name": "t"}) is None, "absent field must mean unconstrained"
+        assert ids({"name": "t", "servePlaceIds": []}) == []
+        assert ids({"name": "t", "servePlaceIds": [1234]}) == [1234]
+        assert ids({"name": "t", "servePlaceIds": ["1234"]}) == [1234]
+        for bad in (["invalid"], [True], [None], {"a": 1}, "1234"):
+            try:
+                ids({"name": "t", "servePlaceIds": bad})
+                raise AssertionError("accepted %r" % (bad,))
+            except err_mod.ForgeError as exc:
+                assert exc.code == "RBF-ARG-002", exc.code
+
+
+@check("mcp: schemas advertise the arguments the implementation accepts")
+def _():
+    import inspect
+    from rbforge import check, live, verification
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.join(root, "mcp_server"))
+    import server
+
+    def props(name):
+        return set(server.TOOLS[name][1]["properties"])
+
+    assert {"changed_only", "base_ref"} <= props("rb_check"), props("rb_check")
+    assert {"project", "scenario", "revision", "capture_screenshot"} <= props("rb_collect_evidence")
+    assert {"project", "scenario", "studio_id"} <= props("rb_verify_receipt")
+
+    accepted = set(inspect.signature(check.run).parameters)
+    advertised = props("rb_check") | {"path", "scope"}
+    assert advertised <= accepted | {"path"}, advertised - accepted
+    for option in ("changed_only", "base_ref"):
+        assert option in accepted, option
 
 
 if __name__ == "__main__":

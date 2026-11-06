@@ -136,10 +136,15 @@ def _sec_review(a):
 
 @tool("rb_collect_evidence", {"type": "object", "properties": {
     "studio_id": {"type": "string"},
+    "project": {"type": "string", "description": "project identity this evidence belongs to"},
+    "scenario": {"type": "string", "description": "test/scenario identifier; receipts must match it"},
+    "revision": {"type": "string", "description": "source revision or snapshot id, for the record"},
     "test_path": {"type": "string", "description": "test file to run as a server Script in Play"},
     "test_attr": {"type": "string", "default": "RbforgeTest"},
-    "screenshots": {"type": "array", "items": {"type": "string"}},
-    "screenshots_inspected": {"type": "boolean"},
+    "capture_screenshot": {"type": "boolean", "default": True,
+                           "description": "ask Studio for an image; only returned image bytes count"},
+    "screenshots_inspected": {"type": "boolean", "default": False,
+                              "description": "attestation that the captured image was looked at"},
     "untested": {"type": ["string", "array"], "items": {"type": "string"}}}},
       "Ask Studio for the observations a receipt needs and record them. Returns an opaque "
       "observation_id; only ids this tool recorded can produce a verified_playtest receipt.")
@@ -158,6 +163,9 @@ def _collect_evidence(a):
                  "extra context; recorded as the caller's word and can never verify"},
     "provenance": {"type": "string", "enum": ["tool", "agent"], "default": "agent",
                    "description": "ignored for trust - only observation_id verifies"},
+    "project": {"type": "string", "description": "must match the observation's project"},
+    "scenario": {"type": "string", "description": "must match the observation's scenario"},
+    "studio_id": {"type": "string", "description": "must match the observing Studio"},
     "console_errors": {"type": "integer", "default": 0},
     "playtest_performed": {"type": "boolean"},
     "screenshot_captured": {"type": "boolean"},
@@ -181,14 +189,19 @@ def _toolchain(a):
 @tool("rb_check", {"type": "object", "properties": {
     "path": {"type": "string", "description": "project root; omit for cwd"},
     "scope": {"type": "array", "items": {"type": "string",
-              "enum": ["static", "unit", "structure"]}}}},
+              "enum": ["static", "unit", "structure"]}},
+    "changed_only": {"type": "boolean", "default": False,
+                     "description": "limit lint/format to files changed since base_ref"},
+    "base_ref": {"type": "string", "default": "HEAD",
+                 "description": "with changed_only: commit to diff against"}}},
       "Offline verification gate: format, lint, typecheck, pure-Luau unit tests "
       "and structural audit. RUN THIS AFTER EVERY EDIT BATCH and BEFORE any "
       "Studio playtest. Clean is 'pass'; a proven defect is 'fail'; missing "
       "tooling is 'incomplete' and must never be reported as verified.")
 def _check(a):
     from rbforge import check
-    return check.run(a.get("path") or os.getcwd(), scope=a.get("scope"))
+    return check.run(a.get("path") or os.getcwd(), scope=a.get("scope"),
+                     changed_only=bool(a.get("changed_only")), base_ref=a.get("base_ref") or "HEAD")
 
 
 @tool("rb_plugins", {"type": "object", "properties": {}},

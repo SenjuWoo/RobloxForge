@@ -9,6 +9,36 @@ You are working on a Roblox game through the **official Roblox Studio MCP**
 (live engine) plus RobloxForge (knowledge + verification). Non-negotiables
 first; references carry the detail.
 
+## What counts as proof
+
+| Level | Evidence behind it |
+|---|---|
+| `unverified` | nothing |
+| `static_only` | `rbforge check` passed; no runtime evidence |
+| `playtest_claimed` | you say you tested; RobloxForge observed nothing |
+| `playtest_observed_partial` | a real run, but a test, console read, image or inspection is missing |
+| `playtested_with_errors` | an observed run reported errors |
+| `verified_playtest` | a test passed, the console was read clean, and Studio returned an image you inspected |
+
+- A successful tool call is not proof of gameplay. Read the console; look at the image.
+- **Screenshot captured is not screenshot inspected.** If you did not look, it is partial.
+- Unknown evidence (no console output, no image) means partial or unverified - never "clean".
+- `rb_collect_evidence` is the only way to record a real observation; `rb_verify_receipt` needs its
+  `observation_id` and refuses a receipt for another project or scenario.
+- Deep engine detail beyond this skill: `knowledge/vendor/roblox-skills/<topic>/SKILL.md` (MIT,
+  third-party, not installed automatically).
+
+## Safe push
+
+`rbforge push` writes studio sources and reads them back:
+
+- `synced` - bytes match what Studio stored.
+- `hierarchy` - the project declares a class the place does not have; fix it, never force it.
+- `rolled_back` / `rollback_failed` - the write failed and the previous source was (or was not) restored.
+  A `rollback_failed` means **stop**: the original may sit in `ServerStorage.rbforge_backups`.
+- A per-file result is not a transaction: a batch can be partly applied. Push, then verify the ones
+  that failed before touching anything else.
+
 ## The loop (never skip steps)
 
 ```

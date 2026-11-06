@@ -50,6 +50,8 @@ def main(argv=None):
                          help="limit which rungs run")
     p_check.add_argument("--changed-only", action="store_true",
                          help="limit format/lint to files changed in git (never claims the project is clean)")
+    p_check.add_argument("--base-ref", default="HEAD",
+                         help="with --changed-only: diff against this commit (default HEAD = working tree)")
     p_check.add_argument("--json", action="store_true", help="machine-readable report")
 
     p_agents = sub.add_parser("agent", help="agent MCP wiring + skills")
@@ -160,7 +162,8 @@ def _dispatch(args):
 
     if args.cmd == "check":
         from rbforge import check as check_mod
-        report = check_mod.run(args.root, scope=args.scope, changed_only=args.changed_only)
+        report = check_mod.run(args.root, scope=args.scope, changed_only=args.changed_only,
+                               base_ref=args.base_ref)
         if args.json:
             _emit(report)
         else:

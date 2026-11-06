@@ -26,12 +26,20 @@ claim checkable.
    `collect_evidence`, but an agent that can run that tool can also run a throwaway test; the guard is the
    expiry, the Studio/place binding and the honest levels, not cryptography. An agent with full write access
    to the receipts directory can still forge files.
-5. **Historical note (0.12.x).** `collect_evidence()` is the only path that sets
-   `provenance="tool"`, and agent evidence caps at `playtest_claimed` - but a caller can still pass
-   `provenance="tool"` by hand. Real tamper-resistance needs the tool to sign its observations.
+5. **Screenshots are only trusted when Studio returned image bytes.** A caller-supplied path, or
+   `screenshots_inspected=True` on its own, records a *claim*: the receipt stays
+   `playtest_observed_partial`. `visual_inspection` is an attestation, labelled as such, and it must
+   reference the captured artifact's digest. Nothing here is cryptographic protection against an agent
+   that can rewrite the receipts directory.
 
 ## Done (verified)
 
+- 0.13.2: push is transaction-like (preflight, backup, verified restore, `ROLLED_BACK` only after a
+  readback), declared Folder/Model class is enforced on existing parents, `servePlaceIds` fails closed,
+  screenshots are trusted only as Studio-returned image bytes with a digest, console output has an explicit
+  `unknown` state, `--base-ref` and the MCP schemas match the implementation, Rojo validation was tested
+  against rojo 7.7.1 (name optional, empty tree rejected), and the optional third-party skill packs are
+  vendored under `knowledge/vendor`. 74 tests.
 - 0.13.1: `_push_code` emits valid Luau (class map travels as a JSON string, decoded with
   `HttpService:JSONDecode`; every string uses `long_string`), existing parents are checked against the declared
   class, an overwrite restores the previous `Source` on a failed readback (`ROLLED_BACK`/`ROLLBACK_FAILED`),

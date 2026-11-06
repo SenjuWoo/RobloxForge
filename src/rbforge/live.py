@@ -75,6 +75,17 @@ class Session:
             raise ForgeError("RBF-MCP-004", "%s failed: %s" % (method, json.dumps(msg["error"])))
         return msg.get("result") or {}
 
+    def call_content(self, tool, args):
+        """Every MCP content block, unflattened: (blocks, is_error, text).
+
+        `call` concatenates text and drops image blocks, which is why a screenshot could never be
+        proven to exist. Callers that need an image use this.
+        """
+        res = self.request("tools/call", {"name": tool, "arguments": args})
+        blocks = [c for c in (res.get("content") or []) if isinstance(c, dict)]
+        text = "".join(b.get("text", "") for b in blocks if b.get("type", "text") == "text")
+        return blocks, bool(res.get("isError")), text
+
     def call(self, tool, args):
         res = self.request("tools/call", {"name": tool, "arguments": args})
         text = "".join(c.get("text", "") for c in res.get("content", []) if isinstance(c, dict))
@@ -174,18 +185,34 @@ def rojo_parent_classes(project_file):
 
 
 def _project_place_ids(project_file):
-    """`servePlaceIds` from the project, as ints. Empty means the project does not constrain it."""
+    """`servePlaceIds` as ints, or None when the project does not constrain the place.
+
+    Fails closed: a malformed list raises instead of collapsing to "no restriction", because a
+    typo in `servePlaceIds` used to silently disable the wrong-place guard. An explicitly empty
+    list means "no restriction" and is returned as an empty list.
+    """
     try:
         with open(project_file, encoding="utf-8") as fh:
-            ids = json.load(fh).get("servePlaceIds") or []
+            data = json.load(fh)
     except (OSError, ValueError):
-        return []
+        return None
+    if "servePlaceIds" not in data:
+        return None
+    raw = data["servePlaceIds"]
+    if not isinstance(raw, list):
+        raise ForgeError("RBF-ARG-002", "servePlaceIds must be a list, found %s"
+                         % type(raw).__name__,
+                         hint="use e.g. \"servePlaceIds\": [1234] or remove the field")
     out = []
-    for value in ids:
-        try:
-            out.append(int(value))
-        except (TypeError, ValueError):
-            continue
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, int):
+            if isinstance(value, str) and value.strip().isdigit():
+                out.append(int(value.strip()))
+                continue
+            raise ForgeError("RBF-ARG-002",
+                             "servePlaceIds contains %r; place ids must be integers" % (value,),
+                             hint="remove the entry or use the numeric place id")
+        out.append(value)
     return out
 
 
@@ -207,74 +234,83 @@ def _init_file(files):
 
 
 def _push_code(parent, name, klass, text, parent_classes=None):
-    """Luau that writes one script and reports SYNCED / MISMATCH / HIERARCHY / ROLLED_BACK.
+    """Luau that applies one script and reports what actually happened.
 
-    Every string is embedded with `long_string`, never `json.dumps`: JSON escapes (`"a\u00e9"`) are
-    not Luau escapes, and the class map used to be pasted as JSON (`{"a": "Model"}`) which is not a
-    Luau table literal at all. The map travels as a JSON *string* and is decoded at runtime.
+    States: SYNCED, HIERARCHY, ROLLED_BACK, ROLLBACK_FAILED, MISMATCH, UNVERIFIED.
+
+    Every string is embedded with `long_string` (JSON escapes are not Luau escapes, and the class
+    map used to be pasted as JSON, which is not a table literal). A rollback is only reported as
+    ROLLED_BACK after the previous source, or the previous instance, has been read back and
+    compared - a successful `pcall` is not proof of restoration.
     """
     classes_json = json.dumps(parent_classes or {}, ensure_ascii=False)
-    # The script classes come from our own map (ModuleScript/Script/LocalScript); inlining them keeps
-    # Instance.new() a literal call, which is what selene's Roblox std expects.
-    inline_klass = klass if klass in ("ModuleScript", "Script", "LocalScript") else None
+    instantiate = ("Instance.new('%s')" % klass if klass in ("ModuleScript", "Script", "LocalScript")
+                   else "Instance.new(%s)" % long_string(klass))
     return (
         "local Http = game:GetService('HttpService')\n"
         + "local parts = string.split(%s, '.')\n" % long_string(parent)
         + "local classes = Http:JSONDecode(%s)\n" % long_string(classes_json)
         + "local function stamp(s) local a,b=1,0 for i=1,#s do a=(a+string.byte(s,i))%%65521 "
         "b=(b+a)%%65521 end return #s..':'..(b*65536+a) end\n"
-        "local function say(class, msg) return class .. ' ' .. msg end\n"
         "local node = game:GetService(parts[1])\n"
         "for i = 2, #parts do\n"
         "  local key = table.concat(parts, '.', 1, i)\n"
         "  local want = classes[key]\n"
         "  local nxt = node:FindFirstChild(parts[i])\n"
         "  if nxt then\n"
-        "    -- An existing parent of the wrong class is a hierarchy error, not something to convert.\n"
-        "    if want and want ~= 'Folder' and nxt.ClassName ~= want then\n"
-        "      return say('HIERARCHY', key .. ' is ' .. nxt.ClassName .. ', the project expects ' .. want)\n"
+        "    -- Compare every declared class, including Folder: an existing Model must not satisfy a\n"
+        "    -- project that declares a Folder, and nothing is converted silently.\n"
+        "    if want and nxt.ClassName ~= want then\n"
+        "      return 'HIERARCHY ' .. key .. ' is ' .. nxt.ClassName .. ', the project expects ' .. want\n"
         "    end\n"
         "  else\n"
         "    local cls = want or 'Folder'\n"
         "    if cls ~= 'Folder' and cls ~= 'Model' and cls ~= 'Configuration' then\n"
-        "      return say('HIERARCHY', key .. ' must be a ' .. cls .. '; create it or fix the project')\n"
+        "      return 'HIERARCHY ' .. key .. ' must be a ' .. cls .. '; create it or fix the project'\n"
         "    end\n"
         "    nxt = Instance.new(cls) nxt.Name = parts[i] nxt.Parent = node\n"
         "  end\n"
         "  node = nxt\n"
         "end\n"
-        "local inst = node:FindFirstChild(%s)\n" % long_string(name)
-        + "if inst and inst.ClassName ~= %s then\n" % long_string(klass)
+        "local target = node:FindFirstChild(%s)\n" % long_string(name)
+        + "local backup, backupName, created = nil, nil, nil\n"
+        "if target and target.ClassName ~= %s then\n" % long_string(klass)
         + "  local store = game:GetService('ServerStorage')\n"
         "  local backups = store:FindFirstChild('rbforge_backups')\n"
         "  if not backups then backups = Instance.new('Folder') backups.Name = 'rbforge_backups' backups.Parent = store end\n"
-        "  inst.Name = inst.Name .. '_backup_' .. tostring(os.time())\n"
-        "  inst.Parent = backups\n"
-        "  inst = nil\n"
+        "  backup, backupName = target, target.Name\n"
+        "  target.Name = backupName .. '_rbforge_' .. tostring(os.time() * 1000)\n"
+        "  target.Parent = backups\n"
+        "  target = nil\n"
         "end\n"
-        "local created = false\n"
-        + ("if not inst then inst = Instance.new('%s') inst.Name = %s inst.Parent = node created = true end\n"
-           % (klass, long_string(name)) if inline_klass else
-           "if not inst then inst = Instance.new(%s) inst.Name = %s inst.Parent = node created = true end\n"
-           % (long_string(klass), long_string(name)))
-        + "local okPrev, prev = pcall(function() return inst.Source end)\n"
+        "if not target then target = %s target.Name = %s target.Parent = node created = target end\n"
+        % (instantiate, long_string(name))
+        + "local okPrev, prev = pcall(function() return target.Source end)\n"
         "if not okPrev or type(prev) ~= 'string' then prev = nil end\n"
-        "local src = %s\n" % long_string(text)
-        + "inst.Source = src\n"
-        "-- Read back what Studio actually stored: hashing the string we just sent proves nothing.\n"
-        "local ok, got = pcall(function() return inst.Source end)\n"
-        "if not ok or type(got) ~= 'string' then return say('UNVERIFIED', 'source is not readable') end\n"
-        "if got ~= src then\n"
-        "  -- Put the previous body back rather than leaving a half-applied edit behind.\n"
-        "  if prev then\n"
-        "    local okRestore = pcall(function() inst.Source = prev end)\n"
-        "    if okRestore then return say('ROLLED_BACK', stamp(got)) end\n"
-        "    return say('ROLLBACK_FAILED', stamp(got))\n"
+        "local function restore(reason)\n"
+        "  if created then pcall(function() created:Destroy() end) end\n"
+        "  if backup then\n"
+        "    local moved = pcall(function() backup.Name = backupName backup.Parent = node end)\n"
+        "    if moved and backup.Parent == node and backup.Name == backupName then\n"
+        "      return 'ROLLED_BACK ' .. reason\n"
+        "    end\n"
+        "    return 'ROLLBACK_FAILED ' .. reason .. ' (original kept in ServerStorage.rbforge_backups)'\n"
         "  end\n"
-        "  if created then pcall(function() inst:Destroy() end) return say('ROLLED_BACK', 'removed new script') end\n"
-        "  return say('MISMATCH', stamp(got))\n"
+        "  if prev ~= nil then\n"
+        "    local set = pcall(function() target.Source = prev end)\n"
+        "    local same = set and target.Source == prev\n"
+        "    if same then return 'ROLLED_BACK ' .. reason end\n"
+        "    return 'ROLLBACK_FAILED ' .. reason .. ' (previous source could not be restored)'\n"
+        "  end\n"
+        "  return 'ROLLBACK_FAILED ' .. reason .. ' (nothing to restore)'\n"
         "end\n"
-        "return say('SYNCED', stamp(got))"
+        "local src = %s\n" % long_string(text)
+        + "local wrote = pcall(function() target.Source = src end)\n"
+        "if not wrote then return restore('write failed') end\n"
+        "local ok, got = pcall(function() return target.Source end)\n"
+        "if not ok or type(got) ~= 'string' then return restore('source unreadable') end\n"
+        "if got ~= src then return restore('readback mismatch ' .. stamp(got)) end\n"
+        "return 'SYNCED ' .. stamp(got)"
     )
 
 

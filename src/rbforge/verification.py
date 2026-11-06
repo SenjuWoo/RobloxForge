@@ -14,6 +14,8 @@ expire, so a stale or fabricated reference cannot be reused later.
 This is tamper-*resistant against a careless agent*, not against one with full write access to
 the receipts directory. Claiming more than that would be dishonest.
 """
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -181,7 +183,66 @@ def load_observation(obs_id, max_age=OBSERVATION_MAX_AGE):
     return record
 
 
-CONSOLE_ERROR = re.compile(r"\b(error|stack begin|stack trace|attempt to)\b", re.I)
+# Console classification: only lines that START like a runtime failure count. Substring matching
+# turned "No error was found" into a failure, and empty output into "clean" when the tool never ran.
+CONSOLE_ERROR = re.compile(
+    r"^\s*(?:\[?error\]?[:\s]|stack begin|attempt to |fatal[:\s]|script error[:\s])", re.I)
+CONSOLE_WARNING = re.compile(r"^\s*(?:\[?warn(?:ing)?\]?[:\s])", re.I)
+
+
+def classify_console(text):
+    """(status, errors, warnings) where status is ok | errors | unknown.
+
+    `unknown` means the output cannot support a clean claim: no text at all, or text that neither
+    looks like a failure nor like normal output. It is never treated as "no errors".
+    """
+    if text is None:
+        return "unknown", 0, 0
+    lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
+    if not lines:
+        return "unknown", 0, 0
+    errors = sum(1 for ln in lines if CONSOLE_ERROR.search(ln))
+    warnings = sum(1 for ln in lines if CONSOLE_WARNING.search(ln))
+    return ("errors" if errors else "ok"), errors, warnings
+
+
+SHOT_MAX_BYTES = 8 * 1024 * 1024
+SHOT_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+
+
+def _save_capture(blocks, text):
+    """Turn an MCP screen_capture response into small, checkable records.
+
+    Image blocks are decoded and stored under the receipts directory with a digest; text-only
+    responses are recorded as an unverified reference, because a path proves nothing about pixels.
+    """
+    records = []
+    for block in blocks:
+        if block.get("type") != "image":
+            continue
+        mime = str(block.get("mimeType") or "").lower()
+        data = block.get("data")
+        if mime not in SHOT_TYPES or not isinstance(data, str):
+            continue
+        try:
+            raw = base64.b64decode(data, validate=True)
+        except (ValueError, binascii.Error):
+            continue
+        if not raw or len(raw) > SHOT_MAX_BYTES:
+            continue
+        digest = hashlib.sha256(raw).hexdigest()
+        folder = os.path.join(_receipts_dir(), "shots")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, "%s.%s" % (digest[:16], SHOT_TYPES[mime]))
+        if not os.path.exists(path):
+            with open(path, "wb") as fh:
+                fh.write(raw)
+        records.append({"artifact": path, "sha256": digest, "mime": mime, "bytes": len(raw),
+                        "captured_at": time.time(), "verified_image": True})
+    if not records and isinstance(text, str) and text.strip():
+        records.append({"artifact": text.strip()[:400], "sha256": None, "mime": None, "bytes": None,
+                        "captured_at": time.time(), "verified_image": False})
+    return records
 
 
 def collect_evidence(studio_id=None, test_path=None, test_attr="RbforgeTest",
@@ -215,23 +276,33 @@ def collect_evidence(studio_id=None, test_path=None, test_attr="RbforgeTest",
             "passed": result["passed"],
         })
 
-    console_text, console_logged = "", False
+    console_text, console_logged, console_status = "", False, "unknown"
     try:
         with factory() as session:
             console_text = session.call("get_console_output", {"studio_id": sid}) or ""
         console_logged = True
+        console_status, console_errors, console_warnings = classify_console(console_text)
     except Exception:  # noqa: BLE001 - the tool may not exist in this Studio build
-        console_logged = False
-    console_errors = len(CONSOLE_ERROR.findall(console_text)) if console_logged else 0
+        console_logged, console_status = False, "unknown"
+        console_errors = console_warnings = 0
 
-    shots = _as_list(screenshots)
-    if capture_screenshot and not shots:
+    # A caller-supplied path is a claim. Only image bytes that Studio returned, or a text reference
+    # the tool itself produced, are recorded as captures - and only images can be inspected.
+    claimed_shots = _as_list(screenshots)
+    shots = []
+    if capture_screenshot:
         try:
             with factory() as session:
-                captured = session.call("screen_capture", {"studio_id": sid}) or ""
-            shots = [captured.strip()[:400]] if captured.strip() else []
-        except Exception:  # noqa: BLE001 - capture is best effort, not a claim
+                blocks, is_error, text = session.call_content("screen_capture", {"studio_id": sid})
+            if not is_error:
+                shots = _save_capture(blocks, text)
+        except Exception:  # noqa: BLE001 - capture is best effort, never a claim
             shots = []
+
+    inspection = None
+    if screenshots_inspected and shots:
+        # An attestation, not a tool observation: recorded with what it refers to.
+        inspection = {"performed": True, "by": "agent", "artifact_sha256": shots[0].get("sha256")}
 
     payload = {
         "studio_id": sid,
@@ -242,10 +313,15 @@ def collect_evidence(studio_id=None, test_path=None, test_attr="RbforgeTest",
         "revision": revision,
         "tests": tests,
         "console_logged": console_logged,
+        "console_status": console_status,
         "console_errors": console_errors,
+        "console_warnings": console_warnings,
         "console_digest": hashlib.sha256(console_text.encode("utf-8")).hexdigest()[:16] if console_logged else None,
         "screenshots": shots,
-        "screenshots_inspected": bool(screenshots_inspected and shots),
+        "claimed_screenshots": claimed_shots,
+        "visual_inspection": inspection,
+        "screenshots_inspected": bool(inspection),
+        "screenshot_requested": bool(capture_screenshot or claimed_shots),
         "untested": _as_list(untested),
     }
     payload["observation_id"] = _record_observation(payload)
@@ -300,8 +376,15 @@ def _level(trusted, observation, agent_tests, agent_claim, console_errors):
         failed = [t for t in tests if t.get("passed") is not True]
         if failed or int(observation.get("console_errors") or 0) > 0 or console_errors > 0:
             return "playtested_with_errors"
-        complete = (bool(tests) and observation.get("console_logged") is True
-                    and observation.get("screenshots") and observation.get("screenshots_inspected"))
+        # A caller-supplied claim (or a bare path) cannot satisfy the screenshot requirement: only
+        # image bytes Studio returned, plus a recorded inspection attestation, count.
+        images = [s for s in (observation.get("screenshots") or []) if isinstance(s, dict)
+                  and s.get("verified_image")]
+        inspection = observation.get("visual_inspection") or {}
+        inspected = bool(inspection.get("performed")) and any(
+            inspection.get("artifact_sha256") == s.get("sha256") for s in images)
+        complete = (bool(tests) and observation.get("console_status") == "ok"
+                    and images and inspected)
         return "verified_playtest" if complete else "playtest_observed_partial"
     if agent_claim and agent_tests:
         return "playtest_claimed"
@@ -347,10 +430,13 @@ def receipt(task, checks=None, evidence=None, observation_id=None, provenance=No
         state["place_inspected_before_edit"] = bool(obs.get("place"))
         state["console_checked"] = obs.get("console_logged") is True
         state["no_fatal_runtime_errors"] = (
-            state["console_checked"] and int(obs.get("console_errors") or 0) == 0)
+            state["console_checked"] and obs.get("console_status") == "ok"
+            and int(obs.get("console_errors") or 0) == 0)
         state["gameplay_path_exercised"] = bool(obs.get("tests"))
-        state["screenshot_captured"] = bool(obs.get("screenshots"))
-        state["screenshot_inspected"] = bool(obs.get("screenshots_inspected"))
+        images = [s for s in (obs.get("screenshots") or []) if isinstance(s, dict)
+                  and s.get("verified_image")]
+        state["screenshot_captured"] = bool(images)
+        state["screenshot_inspected"] = bool((obs.get("visual_inspection") or {}).get("performed"))
         for name in GAMEPLAY_CHECKS:
             if (obs.get("checks") or {}).get(name) is True:
                 state[name] = True
@@ -361,11 +447,9 @@ def receipt(task, checks=None, evidence=None, observation_id=None, provenance=No
 
     level = _level(trusted, obs, agent_tests, bool(playtest_performed), errors_now)
 
-    screenshots = _as_list(obs.get("screenshots"))
-    if not screenshots and screenshot_captured:
-        screenshots = ["captured"]
-    inspected = bool(obs.get("screenshots_inspected") or
-                     (screenshot_inspected and screenshot_captured))
+    # Observed fields come from the observation; caller booleans stay claims and never fill them.
+    screenshots = [s for s in (obs.get("screenshots") or []) if isinstance(s, dict)]
+    inspected = bool((obs.get("visual_inspection") or {}).get("performed")) and bool(screenshots)
     # A verified receipt never carries a field that contradicts it.
     if level == "verified_playtest" and not (screenshots and inspected):
         level = "playtest_observed_partial"
@@ -383,7 +467,12 @@ def receipt(task, checks=None, evidence=None, observation_id=None, provenance=No
             "place": obs.get("place"),
             "datamodel": obs.get("datamodel"),
             "console_logged": obs.get("console_logged") is True,
-            "screenshots": screenshots,
+            "screenshots": [
+                {"artifact": s.get("artifact"), "sha256": s.get("sha256"), "mime": s.get("mime"),
+                 "bytes": s.get("bytes"), "verified_image": bool(s.get("verified_image"))}
+                for s in screenshots],
+            "visual_inspection": obs.get("visual_inspection"),
+            "claimed_screenshots": _as_list(claimed_evidence.get("screenshots")),
             "tests": obs_tests or agent_tests,
             "untested": _as_list(obs.get("untested")) or
                         _as_list(claimed_evidence.get("untested")),
