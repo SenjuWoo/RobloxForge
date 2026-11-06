@@ -134,23 +134,38 @@ def _sec_review(a):
     return review.security(path=a.get("path"), live=a.get("live", False))
 
 
+@tool("rb_collect_evidence", {"type": "object", "properties": {
+    "studio_id": {"type": "string"},
+    "test_path": {"type": "string", "description": "test file to run as a server Script in Play"},
+    "test_attr": {"type": "string", "default": "RbforgeTest"},
+    "screenshots": {"type": "array", "items": {"type": "string"}},
+    "screenshots_inspected": {"type": "boolean"},
+    "untested": {"type": ["string", "array"], "items": {"type": "string"}}}},
+      "Ask Studio for the observations a receipt needs and record them. Returns an opaque "
+      "observation_id; only ids this tool recorded can produce a verified_playtest receipt.")
+def _collect_evidence(a):
+    from rbforge import verification
+    return verification.collect_evidence(**a)
+
+
 @tool("rb_verify_receipt", {"type": "object", "properties": {
     "task": {"type": "string"},
     "checks": {"type": "array", "items": {"type": "string"},
                "description": "the agent's claims; recorded, never treated as evidence"},
+    "observation_id": {"type": "string", "description":
+                       "id returned by rb_collect_evidence; the only thing that can verify"},
     "evidence": {"type": "object", "description":
-                 "observations, e.g. from collect_evidence(); include provenance='tool' only if "
-                 "RobloxForge produced them"},
+                 "extra context; recorded as the caller's word and can never verify"},
     "provenance": {"type": "string", "enum": ["tool", "agent"], "default": "agent",
-                   "description": "who produced the evidence; agent-supplied caps the receipt at "
-                                  "playtest_claimed"},
+                   "description": "ignored for trust - only observation_id verifies"},
     "console_errors": {"type": "integer", "default": 0},
     "playtest_performed": {"type": "boolean"},
     "screenshot_captured": {"type": "boolean"},
     "screenshot_inspected": {"type": "boolean"},
     "limitations": {"type": ["string", "array"], "items": {"type": "string"}}}},
-      "Record a verification receipt for completed work. Claims alone are UNVERIFIED; only "
-      "tool-produced evidence (collect_evidence) can reach verified_playtest.")
+      "Record a verification receipt for completed work. Claims alone are UNVERIFIED; a receipt "
+      "reaches verified_playtest only by referencing an observation_id recorded by "
+      "rb_collect_evidence.")
 def _verify_receipt(a):
     from rbforge import verification
     return verification.receipt(**a)

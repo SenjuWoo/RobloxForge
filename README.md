@@ -49,6 +49,22 @@ receipts.
 **What it is NOT:** another Studio MCP. The official one (built into Roblox
 Studio) owns the live engine. RobloxForge never duplicates it.
 
+### Verification levels
+
+A receipt says how much was actually observed, and only one level means "it works":
+
+| Level | Means |
+|---|---|
+| `unverified` | nothing usable |
+| `static_only` | static checks passed, no runtime evidence |
+| `playtest_claimed` | the agent says it tested; RobloxForge observed nothing |
+| `playtest_observed_partial` | tooling observed a run, but a test, console read or inspected screenshot is missing |
+| `playtested_with_errors` | an observed run reported errors |
+| `verified_playtest` | a scenario ran and its observations were recorded by RobloxForge |
+
+`verified_playtest` needs an `observation_id` from `rb_collect_evidence`; a receipt that merely
+claims `provenance="tool"` is downgraded to the caller's word.
+
 ## Quickstart
 
 ```
@@ -90,7 +106,7 @@ plugins` reports what each paid tool would change and what replaces it for $0.
 
 ## Connecting agents (installed OFF by default — token discipline)
 
-The 13 `rb_*` MCP tools are useful during Roblox work but waste context in
+The 17 `rb_*` MCP tools are useful during Roblox work but waste context in
 every other session. `rbforge agent connect` therefore wires the forge's
 MCP server **disabled** into each agent, and installs the two skills
 (always-on; they cost nothing until a Roblox prompt triggers them):

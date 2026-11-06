@@ -152,6 +152,35 @@ def rojo_targets(project_file):
     return out
 
 
+def rojo_parent_classes(project_file):
+    """Dotted path -> $className for every node that declares one (game excluded)."""
+    root = os.path.dirname(os.path.abspath(project_file))
+    with open(project_file, encoding="utf-8") as fh:
+        tree = json.load(fh).get("tree") or {}
+    classes = {}
+
+    def walk(node, path):
+        if not isinstance(node, dict):
+            return
+        cls = node.get("$className")
+        if isinstance(cls, str) and path:
+            classes[".".join(path)] = cls
+        for key, value in node.items():
+            if not key.startswith("$"):
+                walk(value, path + [key])
+
+    walk(tree, [])
+    return classes
+
+
+def _rel(path, root):
+    """Path relative to `root`, falling back to the absolute path across Windows drives."""
+    try:
+        return os.path.relpath(path, root)
+    except ValueError:
+        return os.path.abspath(path)
+
+
 def _init_file(files):
     """The init script Rojo accepts for a directory, in its precedence order, or None."""
     for candidate in ("init.luau", "init.lua", "init.server.luau", "init.server.lua",
@@ -161,13 +190,23 @@ def _init_file(files):
     return None
 
 
-def _push_code(parent, name, klass, text):
+def _push_code(parent, name, klass, text, parent_classes=None):
+    """Luau that writes one script and reports SYNCED / MISMATCH / HIERARCHY / UNVERIFIED."""
     return (
         "local parts = string.split(%s, '.')\n" % json.dumps(parent)
+        + "local classes = %s\n" % json.dumps(parent_classes or {})
         + "local node = game:GetService(parts[1])\n"
         "for i = 2, #parts do\n"
         "  local nxt = node:FindFirstChild(parts[i])\n"
-        "  if not nxt then nxt = Instance.new('Folder') nxt.Name = parts[i] nxt.Parent = node end\n"
+        "  if not nxt then\n"
+        "    local want = classes[table.concat(parts, '.', 1, i)] or 'Folder'\n"
+        "    -- Only containers can be created to hold a script; anything else means the project\n"
+        "    -- declares a hierarchy we cannot rebuild safely, so say so instead of guessing.\n"
+        "    if want ~= 'Folder' and want ~= 'Model' and want ~= 'Configuration' then\n"
+        "      return 'HIERARCHY ' .. table.concat(parts, '.', 1, i) .. ' must be a ' .. want\n"
+        "    end\n"
+        "    nxt = Instance.new(want) nxt.Name = parts[i] nxt.Parent = node\n"
+        "  end\n"
         "  node = nxt\n"
         "end\n"
         "local inst = node:FindFirstChild(%s)\n" % json.dumps(name)
@@ -202,6 +241,7 @@ def push(paths, project_file="default.project.json", studio_id=None):
                          hint="run from the project root or pass --project")
     targets = rojo_targets(project_file)
     project_root = os.path.dirname(os.path.abspath(project_file))
+    parent_classes = rojo_parent_classes(project_file)
     files = list(targets) if paths == ["ALL"] else [os.path.normcase(os.path.abspath(p)) for p in paths]
     results = []
     with Session(studio_id) as s:
@@ -209,7 +249,7 @@ def push(paths, project_file="default.project.json", studio_id=None):
             if f not in targets:
                 # Every result carries the same keys: an unmapped path used to produce a row without
                 # "state", and the aggregation below then raised KeyError on a mixed batch.
-                results.append({"file": os.path.relpath(f, project_root), "target": None,
+                results.append({"file": _rel(f, project_root), "target": None,
                                 "state": "unmapped", "ok": False, "got": None, "want": None,
                                 "why": "not mapped by %s" % project_file})
                 continue
@@ -218,20 +258,25 @@ def push(paths, project_file="default.project.json", studio_id=None):
                 with open(f, encoding="utf-8") as fh:
                     text = fh.read().replace("\r\n", "\n")
             except OSError as exc:
-                results.append({"file": os.path.relpath(f, project_root), "target": None,
+                results.append({"file": _rel(f, project_root), "target": None,
                                 "state": "unreadable", "ok": False, "got": None, "want": None,
                                 "why": str(exc)})
                 continue
             want = adler(text)
-            got = s.luau(_push_code(parent, name, klass, text)).strip()
+            got = s.luau(_push_code(parent, name, klass, text, parent_classes)).strip()
             state = ("synced" if got.startswith("SYNCED") and got.endswith(want) else
-                     "mismatch" if got.startswith("MISMATCH") else "unverified")
-            results.append({"file": os.path.relpath(f, project_root), "target": "%s.%s" % (parent, name),
-                            "state": state, "ok": state == "synced", "got": got, "want": want})
+                     "mismatch" if got.startswith("MISMATCH") else
+                     "hierarchy" if got.startswith("HIERARCHY") else "unverified")
+            results.append({"file": _rel(f, project_root), "target": "%s.%s" % (parent, name),
+                            "state": state, "ok": state == "synced", "got": got, "want": want,
+                            "why": got if state == "hierarchy" else None})
     synced = [r for r in results if r["state"] == "synced"]
     return {"pushed": len(synced), "failed": len(results) - len(synced),
             "mismatched": [r for r in results if r["state"] == "mismatch"],
             "unverified": [r for r in results if r["state"] == "unverified"],
+            "unmapped": [r for r in results if r["state"] == "unmapped"],
+            "unreadable": [r for r in results if r["state"] == "unreadable"],
+            "hierarchy": [r for r in results if r["state"] == "hierarchy"],
             "results": results,
             "note": "Edit-mode sources changed; stop/start Play to run them, and the owner saves the place"}
 

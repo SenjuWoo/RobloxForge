@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI = os.path.join(ROOT, "src", "rbforge_cli.py")
@@ -51,10 +52,26 @@ def main():
                             stdout=subprocess.PIPE, text=True)
     assert proc.stdin is not None and proc.stdout is not None
     try:
-        def rpc(message):
+        def rpc(message, timeout=30.0):
+            # A blocked readline would hang the release workflow forever; bound every answer.
+            result = {}
+
+            def read():
+                try:
+                    result["line"] = proc.stdout.readline()
+                except Exception as exc:  # noqa: BLE001 - reported below
+                    result["error"] = exc
+
+            thread = threading.Thread(target=read, daemon=True)
+            thread.start()
             proc.stdin.write(json.dumps(message) + "\n")
             proc.stdin.flush()
-            line = proc.stdout.readline()
+            thread.join(timeout)
+            if thread.is_alive():
+                fail("MCP server did not answer within %.0fs" % timeout)
+            if "error" in result:
+                fail("MCP read failed: %s" % result["error"])
+            line = result.get("line") or ""
             if not line:
                 fail("MCP server closed the pipe")
             return json.loads(line)

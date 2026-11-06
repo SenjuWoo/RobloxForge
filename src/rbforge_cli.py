@@ -48,6 +48,8 @@ def main(argv=None):
     p_check.add_argument("--root", default=".", help="project directory to check")
     p_check.add_argument("--scope", nargs="+", choices=["static", "unit", "structure"],
                          help="limit which rungs run")
+    p_check.add_argument("--changed-only", action="store_true",
+                         help="limit format/lint to files changed in git (never claims the project is clean)")
     p_check.add_argument("--json", action="store_true", help="machine-readable report")
 
     p_agents = sub.add_parser("agent", help="agent MCP wiring + skills")
@@ -158,7 +160,7 @@ def _dispatch(args):
 
     if args.cmd == "check":
         from rbforge import check as check_mod
-        report = check_mod.run(args.root, scope=args.scope)
+        report = check_mod.run(args.root, scope=args.scope, changed_only=args.changed_only)
         if args.json:
             _emit(report)
         else:

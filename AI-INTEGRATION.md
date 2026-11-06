@@ -62,3 +62,14 @@ if stale, `rb_docs_update` first (offline keeps the cache and says so).
 | "Fix the game" | rewrite everything | inspect first (search_game_tree, script_read), one hypothesis, one change |
 | "The game looks ugly" | "looks good now!" | capture viewport, inspect pixels or say you couldn't |
 | "Add DataStore saving" (in Studio) | write to production store | test keyspace or gate on IsStudio; live player data is a hazard |
+
+
+## Verification receipts (current contract)
+
+1. Call `rb_collect_evidence` with the Studio id and, optionally, a server test path. It returns
+   `observation_id`; RobloxForge recorded that observation itself.
+2. Call `rb_verify_receipt` with the same `observation_id`.
+3. Claims (`checks`, an `evidence` dict, `provenance`) are recorded as the caller's word and can
+   never exceed `playtest_claimed`. `verified_playtest` also needs a logged console, zero console
+   errors and an inspected screenshot, all recorded in the observation.
+4. `verify_chain` (library) checks receipt history: unique sequence, intact digests, unbroken links.

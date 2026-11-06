@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.13.0 - 2026-11-06
+
+Final reliability audit. Verified status now depends on an observation RobloxForge recorded, not on
+anything the caller can assert.
+
+### Fixed
+- **Forged provenance.** `provenance="tool"` was an argument, so an agent could manufacture
+  `verified_playtest` with invented checks, a fake screenshot path and made-up tests. Trust now comes
+  only from `observation_id`, an opaque id returned by `collect_evidence` / `rb_collect_evidence`,
+  which runs the Studio queries itself. Observations are bound to Studio id, place, execution context
+  and time, expire after 6 hours, and are rejected when unknown, stale or from another Studio. The
+  `provenance` argument is recorded but ignored for trust.
+- **Contradictory receipts.** A verified receipt could say `screenshot_inspected_by_vision=False` and
+  `no_fatal_runtime_errors=False`. One function now decides the level, the observed checks come only
+  from the observation, and a verified receipt is downgraded to `playtest_observed_partial` when a
+  required observation is missing. New level `playtest_observed_partial`; `playtested_with_errors` is
+  reserved for an observed failure, so a missing screenshot is no longer called an error.
+- **Forked receipt history.** Two writers could both see `prev_digest=None`. Sequence allocation,
+  previous-digest lookup, digest calculation and persistence now run inside one cross-process file
+  lock (msvcrt / flock), records carry a monotonic `sequence`, writes go through a temp file, and
+  `verify_chain()` checks unique sequence, unbroken links and payload digests.
+- **Rojo projects without a tree passed.** `{"name": "has no tree"}` produced a green `project-map`.
+  Validation now requires a `tree` object, string `$path`/`$className`, existing targets, no duplicate
+  mappings, and script/model/directory targets.
+- **Wrong parent classes on push.** A missing parent was always created as `Folder`, so a project
+  declaring `Model` got the wrong hierarchy. Declared `$className` values are honoured for
+  Folder/Model/Configuration and anything else is refused with a `hierarchy` result instead of a guess.
+- **Cross-drive crash.** `os.path.relpath` raised `ValueError` when a source lived on another drive;
+  `_rel()` falls back to the absolute path.
+- **Release smoke could hang.** `scripts/smoke_artifact.py` bounded every MCP read with a thread
+  timeout and a clear failure instead of a blocking `readline()`.
+
+### Added
+- `--changed-only` for `rbforge check`: format/lint scoped to changed files, with an explicit note
+  that it is not a whole-project audit and skips when nothing changed.
+- Real MCP contract test: spawns the server, checks `initialize`/`tools/list`, asserts
+  `rb_collect_evidence` exists and `rb_verify_receipt` advertises `observation_id`, replays the forged
+  provenance call and requires a non-verified result, and checks that an unknown tool errors.
+- Tests for concurrency (six writers, one chain), tampering, deletion, stale/mismatched observations,
+  Rojo tree validation, hierarchy refusal, cross-drive paths and changed-only scoping. 58/58.
+
+### Known gaps
+- No live Studio in this pass: `collect_evidence`, push readback and server-test parsing are proven
+  against fake sessions. Live integration remains open.
+- The weak-model E2E benchmark has still not been run; 1.0.0 stays gated on it.
+
 ## 0.12.2 - 2026-11-06
 
 Second audit pass: the gate can no longer be satisfied by a tool that did not run, and verification

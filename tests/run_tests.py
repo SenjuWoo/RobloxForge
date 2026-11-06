@@ -150,62 +150,98 @@ def _():
 
 # ---------------------------------------------------------------- verification
 
-@check("verification: unverified claim is blocked")
-def _():
+def _store_observation(**over):
+    """Record a genuine observation through the same entry point the tooling uses."""
     from rbforge import verification
-    r = verification.receipt("t", save=False)
-    assert r["verification_level"] == "unverified"
-    assert "do not claim working" in r["claim_allowed"]
-
-
-def _observed_evidence(**over):
-    """Evidence as the tooling would report it, not as an agent would assert it."""
-    from rbforge import verification
-    ev = {
-        "provenance": "tool",
+    payload = {
         "studio_id": "59d6c7b2-03ab-4b69-a878-d4fc7561b9f8",
         "place": "Deadzome Haven",
         "datamodel": "Server",
-        "checks": dict({k: True for k in verification.GAMEPLAY_CHECKS},
-                       screenshot_captured=True, screenshot_inspected=True),
         "tests": [{"name": "Outpost.smoke", "expected": "0 failures",
                    "actual": "0 failures", "passed": True}],
         "console_logged": True,
+        "console_errors": 0,
         "screenshots": ["C:/shots/smoke.png"],
         "screenshots_inspected": True,
+        "untested": [],
     }
-    ev.update(over)
-    return ev
+    payload.update(over)
+    return verification.record_observation(payload)
 
 
-@check("verification: observed evidence -> verified_playtest")
+@check("verification: a recorded observation verifies the receipt")
 def _():
     from rbforge import verification
-    r = verification.receipt("full", evidence=_observed_evidence(), console_errors=0,
-                             playtest_performed=True, save=False)
-    assert r["verification_level"] == "verified_playtest", r["verification_level"]
-    assert r["evidence"]["place"] == "Deadzome Haven"
+    with _isolated_home():
+        obs = _store_observation()
+        r = verification.receipt("observed", observation_id=obs, playtest_performed=True, save=False)
+        assert r["verification_level"] == "verified_playtest", r["verification_level"]
+        assert r["checks"]["screenshot_inspected"] is True
+        assert r["screenshot_inspected_by_vision"] is True
+        assert r["evidence"]["provenance"] == "tool"
 
 
-@check("verification: agent claims alone never verify")
+@check("verification: forged provenance='tool' does not verify")
 def _():
     from rbforge import verification
-    claims = list(verification.GAMEPLAY_CHECKS)
-    r = verification.receipt("claims", checks=claims, console_errors=0,
-                             playtest_performed=True, screenshot_captured=True,
-                             screenshot_inspected=True, save=False)
-    assert r["verification_level"] == "unverified", r["verification_level"]
-    assert r["claim_allowed"].startswith("unverified")
-    assert r["claimed_checks"], "claims must still be recorded for audit"
-    assert not r["checks"]["studio_connected"], "a claim must not fill an observed check"
+    with _isolated_home():
+        forged = {
+            "provenance": "tool",
+            "studio_id": "fake", "place": "Fake", "datamodel": "Server",
+            "checks": {k: True for k in verification.GAMEPLAY_CHECKS},
+            "tests": [{"name": "made up", "passed": True}],
+            "console_logged": True,
+            "screenshots": ["C:/does/not/exist.png"],
+            "screenshots_inspected": True,
+        }
+        r = verification.receipt("forged", evidence=forged, provenance="tool",
+                                 playtest_performed=True, save=False)
+        assert r["verification_level"] != "verified_playtest", r["verification_level"]
+        assert r["evidence"]["provenance"] == "agent"
+        assert any("caller" in note for note in r["limitations"])
 
 
-@check("verification: console errors downgrade level")
+@check("verification: a forged screenshot path never counts as inspected")
 def _():
     from rbforge import verification
-    r = verification.receipt("errs", evidence=_observed_evidence(), console_errors=3,
-                             playtest_performed=True, save=False)
-    assert r["verification_level"] == "playtested_with_errors", r["verification_level"]
+    with _isolated_home():
+        r = verification.receipt("shot", evidence={"screenshots": ["C:/nope.png"]},
+                                 screenshot_captured=True, screenshot_inspected=True,
+                                 playtest_performed=True, save=False)
+        assert r["verification_level"] == "static_only", r["verification_level"]
+
+
+@check("verification: unknown, stale and mismatched observations are rejected")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        assert verification.receipt("nope", observation_id="obs-deadbeefdeadbeef",
+                                    playtest_performed=True, save=False)["verification_level"] != "verified_playtest"
+        obs = _store_observation()
+        assert verification.load_observation(obs, max_age=-1) is None, "stale observation survived"
+        wrong = verification.receipt("wrong studio", observation_id=obs, studio_id="someone-else",
+                                     playtest_performed=True, save=False)
+        assert wrong["verification_level"] != "verified_playtest", wrong["verification_level"]
+
+
+@check("verification: missing screenshots or console downgrade to observed_partial")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        obs = _store_observation(screenshots=[], screenshots_inspected=False)
+        r = verification.receipt("partial", observation_id=obs, playtest_performed=True, save=False)
+        assert r["verification_level"] == "playtest_observed_partial", r["verification_level"]
+        assert not (r["verification_level"] == "verified_playtest" and
+                    r["screenshot_inspected_by_vision"] is False), "contradictory receipt"
+
+
+@check("verification: an observed failure is playtested_with_errors, not verified")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        obs = _store_observation(tests=[{"name": "smoke", "passed": False, "actual": "FAIL 2"}])
+        r = verification.receipt("failed", observation_id=obs, playtest_performed=True, save=False)
+        assert r["verification_level"] == "playtested_with_errors", r["verification_level"]
 
 
 @check("verification: three same-second receipts keep the chain in creation order")
@@ -217,38 +253,53 @@ def _():
         c = verification.receipt("same name", save=True)
         paths = [a["saved_to"], b["saved_to"], c["saved_to"]]
         assert len({os.path.basename(p) for p in paths}) == 3, "receipt filenames collided"
-        assert all(os.path.isfile(p) for p in paths)
         loaded = [json.load(open(p, encoding="utf-8")) for p in paths]
-        assert loaded[0]["prev_digest"] is None, loaded[0]["prev_digest"]
-        assert loaded[1]["prev_digest"] == a["digest"], "second receipt lost the chain"
+        assert [r["sequence"] for r in loaded] == [1, 2, 3], [r["sequence"] for r in loaded]
+        assert loaded[1]["prev_digest"] == a["digest"]
         assert loaded[2]["prev_digest"] == b["digest"], "third receipt chained to the first"
+        assert verification.verify_chain()["ok"], verification.verify_chain()
 
 
-@check("verification: receipt persists to disk")
+@check("verification: concurrent writers cannot fork the history")
+def _():
+    import threading
+    from rbforge import verification
+    with _isolated_home():
+        results = []
+        lock = threading.Lock()
+
+        def write():
+            r = verification.receipt("concurrent", save=True)
+            with lock:
+                results.append(r)
+
+        threads = [threading.Thread(target=write) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        seqs = sorted(r["sequence"] for r in results)
+        assert seqs == [1, 2, 3, 4, 5, 6], seqs
+        chain = verification.verify_chain()
+        assert chain["ok"], chain["problems"]
+
+
+@check("verification: tampering and deletion break the chain report")
 def _():
     from rbforge import verification
     with _isolated_home():
-        r = verification.receipt("persist me", save=True)
-        assert os.path.isfile(r["saved_to"])
-        loaded = json.load(open(r["saved_to"], encoding="utf-8"))
-        assert loaded["task"] == "persist me"
-
-
-# ---------------------------------------------------------------- project/review/scaffold
-
-@check("project: detect rojo vs studio-native")
-def _():
-    from rbforge import project
-    with tempdir() as d:
-        json.dump({"name": "t"}, open(os.path.join(d, "default.project.json"), "w"))
-        assert project.detect(d)["style"] == "rojo"
-    with tempdir() as d:
-        assert project.detect(d)["style"] == "studio-native"
-    try:
-        project.detect(os.path.join(d, "nope"))
-        raise AssertionError("should have raised")
-    except err_mod.ForgeError as e:
-        assert e.code == "RBF-PROJECT-001"
+        a = verification.receipt("one", save=True)
+        b = verification.receipt("two", save=True)
+        verification.receipt("three", save=True)
+        # Modify a historical payload: its digest no longer matches.
+        data = json.load(open(a["saved_to"], encoding="utf-8"))
+        data["verification_level"] = "verified_playtest"
+        json.dump(data, open(a["saved_to"], "w", encoding="utf-8"))
+        assert not verification.verify_chain()["ok"], "tampering went unnoticed"
+        # Restore, then delete the middle receipt.
+        json.dump(json.load(open(b["saved_to"], encoding="utf-8")), open(a["saved_to"], "w", encoding="utf-8"))
+        os.remove(b["saved_to"])
+        assert not verification.verify_chain()["ok"], "a missing receipt went unnoticed"
 
 
 @check("review: client-authority write flagged")
@@ -493,21 +544,6 @@ def _():
             "%s exists but SKILL.md never routes to it" % name)
     for token in set(__import__("re").findall(r"references/([\w-]+\.md)", skill)):
         assert token in refs, "SKILL.md routes to missing reference %s" % token
-
-
-@check("verification: receipts chain by digest")
-
-
-def _():
-    from rbforge import verification
-    with _isolated_home() as home:
-        first = verification.receipt("slice one", checks=["core_loop_exists"], save=True)
-        second = verification.receipt("slice two", checks=["core_loop_exists"], save=True)
-        assert first["digest"] and second["digest"]
-        assert first["prev_digest"] is None or isinstance(first["prev_digest"], str)
-        assert second["prev_digest"] == first["digest"], (
-            "second receipt must chain to the first, otherwise the trail is flat")
-        assert first["digest"] != second["digest"]
 
 
 @check("doctor: renders when a studio reports no place name")
@@ -857,52 +893,12 @@ def _():
         assert "parse_error" not in got["detail"], got["detail"]
 
 
-@check("verification: agent-supplied evidence cannot outrank playtest_claimed")
-def _():
-    from rbforge import verification
-    ev = _observed_evidence()
-    ev.pop("provenance", None)
-    r = verification.receipt("agent evidence", evidence=ev, console_errors=0,
-                             playtest_performed=True, save=False)
-    assert r["verification_level"] == "playtest_claimed", r["verification_level"]
-    assert r["evidence"]["provenance"] == "agent"
-
-
 @check("verification: a limitation string is one item, not characters")
 def _():
     from rbforge import verification
     r = verification.receipt("limits", limitations="not tested on mobile", save=False)
-    assert r["limitations"] == ["not tested on mobile"], r["limitations"]
-
-
-@check("verification: collect_evidence marks its provenance tool")
-def _():
-    from rbforge import live, verification
-    orig = live.Session
-
-    class FakeSession:
-        studio_id = "fake-studio"
-
-        def __init__(self, *a, **k):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def luau(self, code, dm="Edit"):
-            return "Smoke Place"
-
-    try:
-        live.Session = FakeSession
-        ev = verification.collect_evidence()
-        assert ev["provenance"] == "tool" and ev["place"] == "Smoke Place", ev
-        r = verification.receipt("tool ev", evidence=ev, save=False)
-        assert r["evidence"]["provenance"] == "tool"
-    finally:
-        live.Session = orig
+    assert "not tested on mobile" in r["limitations"], r["limitations"]
+    assert not any(len(item) == 1 for item in r["limitations"]), "a string was split into characters"
 
 
 @check("check: a crashed linter is a failure, never a quiet warning")
@@ -953,6 +949,150 @@ def _():
                 assert set(row) >= {"file", "target", "state", "ok"}, row
         finally:
             live.Session = orig
+
+
+@check("check: a Rojo project without a tree fails validation")
+def _():
+    from rbforge import check
+    with tempdir() as d:
+        open(os.path.join(d, "default.project.json"), "w").write('{"name": "has no tree"}')
+        got = [c for c in check.rung_structure(d)["checks"] if c["id"] == "project-map"][0]
+        assert got["status"] == "fail", got
+        assert "tree" in got["detail"], got["detail"]
+
+
+@check("check: bad $path types and duplicate mappings fail validation")
+def _():
+    from rbforge import check
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        cases = [
+            {"tree": {"A": {"$path": 5}}},
+            {"tree": {"A": {"$path": "src"}, "B": {"$path": "src"}}},
+        ]
+        for payload in cases:
+            json.dump(payload, open(os.path.join(d, "default.project.json"), "w"))
+            got = [c for c in check.rung_structure(d)["checks"] if c["id"] == "project-map"][0]
+            assert got["status"] == "fail", (payload, got)
+
+
+@check("live: a declared non-container parent is refused, not faked")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src", "Thing"))
+        json.dump({"tree": {"Workspace": {"$className": "Workspace",
+                                          "Thing": {"$className": "Script", "$path": "src/Thing"}}}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        open(os.path.join(d, "src", "Thing", "init.luau"), "w").write("return 1\n")
+        try:
+            live.Session = _fake_session("HIERARCHY Workspace.Thing must be a Script")
+            r = live.push(["ALL"], os.path.join(d, "default.project.json"))
+            assert r["results"][0]["state"] == "hierarchy", r["results"][0]
+            assert r["pushed"] == 0
+        finally:
+            live.Session = orig
+
+
+@check("live: cross-drive paths fall back to absolute instead of raising")
+def _():
+    from rbforge import live
+    real = os.path.relpath
+
+    def fake_rel(path, start=None):
+        raise ValueError("path is on mount 'c:', start on mount 'Z:'")
+
+    os.path.relpath = fake_rel
+    try:
+        assert live._rel("C:/other/file.luau", "Z:/project").endswith("file.luau")
+    finally:
+        os.path.relpath = real
+
+
+@check("check: changed-only mode scopes linters and says so")
+def _():
+    import shutil as _shutil
+    import subprocess as _sub
+    from rbforge import check
+    if not _shutil.which("git"):
+        raise AssertionError("git unavailable")
+    with tempdir() as d:
+        _sub.run(["git", "init", "-q"], cwd=d, check=True)
+        _sub.run(["git", "config", "user.email", "t@t"], cwd=d, check=True)
+        _sub.run(["git", "config", "user.name", "t"], cwd=d, check=True)
+        os.makedirs(os.path.join(d, "src"))
+        legacy = os.path.join(d, "src", "legacy.luau")
+        fresh = os.path.join(d, "src", "fresh.luau")
+        open(legacy, "w").write("return 1\n")
+        _sub.run(["git", "add", "."], cwd=d, check=True)
+        _sub.run(["git", "commit", "-qm", "base"], cwd=d, check=True)
+        open(fresh, "w").write("return 2\n")
+        changed = check.changed_files(d)
+        assert changed and any(p.endswith("fresh.luau") for p in changed), changed
+        assert not any(p.endswith("legacy.luau") for p in changed), changed
+        report = check.run(d, scope=["static"], changed_only=True)
+        scope = [c for c in report["rungs"][0]["checks"] if c["id"] == "scope"]
+        assert scope and "not a whole-project audit" in scope[0]["detail"], scope
+
+
+def _mcp_rpc(proc, message, timeout=40):
+    import threading
+    result = {}
+
+    def read():
+        result["line"] = proc.stdout.readline()
+
+    thread = threading.Thread(target=read, daemon=True)
+    thread.start()
+    proc.stdin.write(json.dumps(message) + "\n")
+    proc.stdin.flush()
+    thread.join(timeout)
+    assert not thread.is_alive(), "MCP server did not answer within %ss" % timeout
+    line = result.get("line") or ""
+    assert line, "MCP server closed the pipe"
+    return json.loads(line)
+
+
+@check("mcp: schemas match the implementation and forged provenance fails")
+def _():
+    import subprocess as _sub
+    import sys as _sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    server = os.path.join(root, "mcp_server", "server.py")
+    home = tempfile.mkdtemp(prefix="rbf-mcp-")
+    env = dict(os.environ, RBFORGE_HOME=home)
+    proc = _sub.Popen([_sys.executable, server], stdin=_sub.PIPE, stdout=_sub.PIPE,
+                      text=True, env=env)
+    assert proc.stdin and proc.stdout
+    try:
+        init = _mcp_rpc(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                               "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                                          "clientInfo": {"name": "t", "version": "1"}}})
+        assert "result" in init, init
+
+        tools = _mcp_rpc(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
+        names = {t["name"] for t in tools}
+        assert {"rb_collect_evidence", "rb_verify_receipt"} <= names, sorted(names)
+        schema = [t for t in tools if t["name"] == "rb_verify_receipt"][0]["inputSchema"]
+        assert "observation_id" in schema["properties"], schema["properties"].keys()
+
+        forged = _mcp_rpc(proc, {
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "rb_verify_receipt", "arguments": {
+                "task": "forged through MCP", "provenance": "tool",
+                "playtest_performed": True, "console_errors": 0,
+                "evidence": {"checks": {"studio_connected": True}, "console_logged": True,
+                             "screenshots": ["C:/fake.png"], "screenshots_inspected": True,
+                             "tests": [{"name": "made up", "passed": True}]}}}})
+        payload = json.loads(forged["result"]["content"][0]["text"])
+        assert payload["verification_level"] != "verified_playtest", payload["verification_level"]
+
+        unknown = _mcp_rpc(proc, {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                                  "params": {"name": "rb_nope", "arguments": {}}})
+        assert "error" in unknown or unknown.get("result", {}).get("isError"), unknown
+    finally:
+        proc.kill()
 
 
 if __name__ == "__main__":

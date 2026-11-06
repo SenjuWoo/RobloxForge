@@ -73,21 +73,60 @@ def _rel(root, path):
 
 # ------------------------------------------------------------- rung 1: static
 
-def rung_static(root):
-    """Format, lint and typecheck. Each tool is independent; absence is a skip."""
+def changed_files(root):
+    """Luau files changed in the working tree (tracked modifications + untracked), or None."""
+    try:
+        done = subprocess.run(["git", "-C", root, "diff", "--name-only", "--diff-filter=ACMR", "HEAD"],
+                              capture_output=True, text=True, timeout=30)
+        others = subprocess.run(["git", "-C", root, "ls-files", "--others", "--exclude-standard"],
+                                capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    names = [n.strip() for n in (done.stdout + "\n" + others.stdout).splitlines() if n.strip()]
+    files = []
+    for name in names:
+        if name.endswith((".luau", ".lua")):
+            path = os.path.join(root, name)
+            if os.path.isfile(path):
+                files.append(path)
+    return sorted(set(files))
+
+
+def rung_static(root, changed=None):
+    """Format, lint and typecheck. Each tool is independent; absence is a skip.
+
+    `changed` limits stylua/selene to the files in that list: a project with legacy formatting
+    debt should not make every edit look like a regression, and passing the changed set must never
+    be reported as the whole project being clean.
+    """
     rung = {"id": "static", "name": "Rung 1 - format/lint/typecheck", "checks": []}
+    scoped = [p for p in (changed or []) if p.endswith((".luau", ".lua"))] if changed is not None else None
 
     if shutil.which("stylua"):
-        code, out = _run(["stylua", "--check", "."], root)
-        rung["checks"].append({
-            "id": "stylua", "status": "pass" if code == 0 else ("fail" if code else "skip"),
-            "detail": "formatted" if code == 0 else (out[:800] or "unknown")})
+        if scoped is not None and not scoped:
+            rung["checks"].append({"id": "stylua", "status": "skip",
+                                   "detail": "no changed Luau files in the working tree"})
+        else:
+            argv = ["stylua", "--check"] + (scoped if scoped is not None else ["."])
+            code, out = _run(argv, root)
+            rung["checks"].append({
+                "id": "stylua", "status": "pass" if code == 0 else ("fail" if code else "skip"),
+                "detail": "formatted" if code == 0 else (out[:800] or "unknown")})
     else:
         rung["checks"].append({"id": "stylua", "status": "skip",
                                "detail": STATIC_TOOLS["stylua"]})
 
     if shutil.which("selene"):
-        targets = [d for d in ("src", "ServerScriptService") if os.path.isdir(os.path.join(root, d))]
+        if scoped is not None:
+            targets = scoped
+        else:
+            targets = [d for d in ("src", "ServerScriptService") if os.path.isdir(os.path.join(root, d))]
+        if scoped is not None and not scoped:
+            rung["checks"].append({"id": "selene", "status": "skip",
+                                   "detail": "no changed Luau files in the working tree"})
+            targets = None
         cfg = os.path.join(root, "selene.toml")
         argv = ["selene"] + (targets or ["."])
         generated = None
@@ -98,6 +137,8 @@ def rung_static(root):
             # `continue`, type annotations), which reads as a project defect. Use the Roblox std.
             generated = _default_selene_config()
             argv += ["--config", generated]
+        if targets is None:
+            return rung
         try:
             code, out = _run(argv, root)
         finally:
@@ -263,17 +304,15 @@ def rung_structure(root):
 
     project = os.path.join(root, "default.project.json")
     if os.path.isfile(project):
-        missing, error = _missing_project_paths(project, root)
-        if error:
-            rung["checks"].append({
-                "id": "project-map", "status": "fail",
-                "detail": "default.project.json is unusable: " + error})
-        else:
-            rung["checks"].append({
-                "id": "project-map",
-                "status": "fail" if missing else "pass",
-                "detail": ("missing $path targets: " + ", ".join(missing)) if missing
-                          else "default.project.json targets all exist"})
+        missing, errors = _validate_project(project, root)
+        problems = list(errors or [])
+        if missing:
+            problems.append("missing $path targets: " + ", ".join(missing))
+        rung["checks"].append({
+            "id": "project-map",
+            "status": "fail" if problems else "pass",
+            "detail": "; ".join(problems[:6]) if problems
+                      else "default.project.json is well formed and every $path exists"})
 
     if files:
         # Always state coverage: "no findings" over zero files is not a pass.
@@ -282,47 +321,80 @@ def rung_structure(root):
     return rung
 
 
-def _missing_project_paths(project_file, root):
-    """Every $path in a Rojo project must exist, or `rojo build` dies later.
+def _validate_project(project_file, root):
+    """Check a Rojo project's shape, not only that its $paths exist.
 
-    Returns (missing, error). A project file that cannot be parsed is reported as an error, never
-    as "no paths missing" - an unreadable config is exactly the state that breaks the build.
+    A file like {"name": "has no tree"} used to pass: there were no $paths to miss. Rojo itself
+    rejects it, so the gate must too. Returns (missing, errors).
     """
     try:
         with open(project_file, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except OSError as exc:
-        return None, "unreadable (%s)" % exc
+        return None, ["unreadable (%s)" % exc]
     except ValueError as exc:
-        return None, "malformed JSON (%s)" % exc
+        return None, ["malformed JSON (%s)" % exc]
     if not isinstance(data, dict):
-        return None, "root is %s, expected an object" % type(data).__name__
-    missing = []
+        return None, ["root is %s, expected an object" % type(data).__name__]
 
-    def walk(node):
-        if isinstance(node, dict):
-            target = node.get("$path")
-            if isinstance(target, str) and not os.path.exists(os.path.join(root, target)):
-                missing.append(target)
-            for value in node.values():
-                walk(value)
-        elif isinstance(node, list):
-            for value in node:
-                walk(value)
+    tree = data.get("tree")
+    if not isinstance(tree, dict):
+        return None, ["missing a 'tree' object - Rojo has nothing to build"]
 
-    walk(data)
-    return sorted(set(missing)), None
+    missing, errors = [], []
+    seen = {}
+
+    def walk(node, path):
+        if not isinstance(node, dict):
+            errors.append("%s: expected an object, found %s" % (".".join(path) or "tree",
+                                                                type(node).__name__))
+            return
+        cls = node.get("$className")
+        if cls is not None and not isinstance(cls, str):
+            errors.append("%s: $className must be a string" % (".".join(path) or "tree"))
+        target = node.get("$path")
+        if target is not None:
+            if not isinstance(target, str):
+                errors.append("%s: $path must be a string" % (".".join(path) or "tree"))
+            else:
+                full = os.path.join(root, target)
+                key = os.path.normcase(os.path.abspath(full))
+                if key in seen:
+                    errors.append("$path %r is mapped twice (%s and %s)" % (target, seen[key],
+                                                                           ".".join(path) or "tree"))
+                seen[key] = ".".join(path) or "tree"
+                if not os.path.exists(full):
+                    missing.append(target)
+                elif not os.path.isdir(full) and not target.endswith((".luau", ".lua", ".rbxm",
+                                                                      ".rbxmx", ".json", ".txt")):
+                    errors.append("%s: $path %r is not a script, model or directory"
+                                  % (".".join(path) or "tree", target))
+        for key, value in node.items():
+            if key.startswith("$"):
+                continue
+            walk(value, path + [key])
+
+    walk(tree, [])
+    return sorted(set(missing)), errors
 
 
 # ----------------------------------------------------------------- aggregation
 
-def run(root=".", scope=None):
-    """Run the ladder over a project. `scope` limits which rungs execute."""
+def run(root=".", scope=None, changed_only=False):
+    """Run the ladder over a project. `scope` limits rungs; `changed_only` limits the linters."""
     root = os.path.abspath(root)
+    changed = changed_files(root) if changed_only else None
     rungs = [rung_static, rung_unit, rung_structure]
     if scope:
         rungs = [r for r in rungs if r.__name__.split("_", 1)[1] in scope]
-    results = [fn(root) for fn in rungs]
+    results = []
+    for fn in rungs:
+        results.append(fn(root, changed=changed) if fn is rung_static else fn(root))
+    if changed_only:
+        note = ("lint/format limited to %d changed file(s); this is not a whole-project audit"
+                % len(changed)) if changed is not None else \
+               "changed-only requested but git is unavailable; the full project was checked"
+        results[0]["checks"].append({"id": "scope", "status": "pass", "detail": note})
 
     statuses = [c["status"] for r in results for c in r["checks"]]
     if "fail" in statuses:
