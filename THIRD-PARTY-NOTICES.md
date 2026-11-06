@@ -21,6 +21,13 @@ Several target the archived standalone Studio MCP server
 (`Roblox/studio-rust-mcp-server`, archived 2026-04); their assumptions were
 treated as outdated and not relied upon.
 
+## Third-party skills: EL4CTEO/roblox-skills
+
+- Source: https://github.com/EL4CTEO/roblox-skills (October 2026 snapshot)
+- Licence: MIT -- full text in `skills/ROBLOX-SKILLS-LICENSE.txt`
+- Contents: 23 Roblox Agent Skills under `skills/roblox-*`, copied unmodified
+- Added: 2026-11-06, so this repository owns and versions them independently
+
 ## Trademarks
 
 "Roblox" and "Roblox Studio" are trademarks of Roblox Corporation. This

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.6 - 2026-11-06
+
+Adopted the EL4CTEO Roblox skill pack, so this repository owns the Roblox skill
+catalog instead of borrowing it from a general bundle.
+
+### Added
+- 23 Agent Skills under `skills/roblox-*` (MIT, October 2026 snapshot), copied
+  unmodified with `skills/ROBLOX-SKILLS-LICENSE.txt` and an entry in
+  `THIRD-PARTY-NOTICES.md`.
+- `OUR_SKILLS` now lists them, so install, update and doctor cover the pack.
+- A test that every shipped skill is loadable, attributed **and tracked in git**:
+  untracked skills install on this machine and vanish in a fresh clone.
+
 ## 0.13.5 - 2026-11-06
 
 Corrective pass on the evidence boundary, console truth, batch safety and agent handoff.

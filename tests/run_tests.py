@@ -1733,6 +1733,33 @@ def _():
         assert not fails, [(c["id"], c["detail"][:120]) for c in fails]
 
 
+@check("skills: every shipped skill is loadable, attributed and tracked")
+def _():
+    """A skill that exists only on the author's disk is not shipped.
+
+    The third-party pack arrived as an untracked folder once already; a fresh
+    clone had no skills and nothing failed.
+    """
+    import subprocess
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills")
+    names = sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d)))
+    assert len(names) >= 25, names
+    for name in names:
+        path = os.path.join(root, name, "SKILL.md")
+        assert os.path.isfile(path), "%s: SKILL.md is missing" % name
+        text = open(path, encoding="utf-8").read()
+        assert text.lstrip().startswith("---"), "%s: no frontmatter" % name
+        assert "[truncated]" not in text, "%s: truncated at commit time" % name
+    assert os.path.isfile(os.path.join(root, "ROBLOX-SKILLS-LICENSE.txt")), \
+        "the third-party licence must ship beside the skills it covers"
+    listed = subprocess.run(["git", "-C", os.path.dirname(root), "ls-files", "skills"],
+                            capture_output=True, text=True)
+    if listed.returncode == 0:
+        tracked = listed.stdout.splitlines()
+        missing = [n for n in names if not any(t.startswith("skills/%s/" % n) for t in tracked)]
+        assert not missing, "untracked skill(s): %s" % missing
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, exc in FAIL:

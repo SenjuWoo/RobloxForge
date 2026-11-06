@@ -11,7 +11,31 @@ import shutil
 from . import paths
 from .errors import ForgeError
 
-OUR_SKILLS = ("roblox-game-development", "roblox-docs")
+OUR_SKILLS = ("roblox-game-development", "roblox-docs") + (
+    "roblox-analytics-liveops",
+    "roblox-architecture",
+    "roblox-audio",
+    "roblox-characters-animation",
+    "roblox-code-review",
+    "roblox-data-stores",
+    "roblox-game-systems",
+    "roblox-input",
+    "roblox-luau",
+    "roblox-monetization",
+    "roblox-networking",
+    "roblox-npc-ai",
+    "roblox-open-cloud",
+    "roblox-performance",
+    "roblox-physics",
+    "roblox-security",
+    "roblox-studio-mcp",
+    "roblox-teleport-matchmaking",
+    "roblox-testing",
+    "roblox-text-chat",
+    "roblox-tooling",
+    "roblox-ui",
+    "roblox-world-building",
+)
 STAMP = ".rbforge-version"
 
 # Discovered skill roots on this machine class. Env override wins.
