@@ -10,12 +10,29 @@ claim checkable.
 
 ## Version
 
-0.11.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.12.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+
+## Gaps to close (next session)
+
+1. **Live MCP integration is unverified for 0.12.x.** Studio was closed when the audit landed, so `push` readback,
+   `server_test` parsing and `init.*` mapping are proven by unit tests with a fake session only. Re-run one real
+   `rbforge push` and one `rbforge servertest` against an open place before trusting them.
+2. **E2E weak-model benchmark** (`tests/agent-benchmarks`) has not been run - it is the 1.0.0 gate.
+3. **`luau-lsp` skip** is still the normal case: no `globalTypes.d.luau` on this machine, so the type rung never runs
+   here. Install definitions (or set `RBFORGE_LUAU_DEFINITIONS`) to exercise the exit-status fix against a real tool.
+4. **Receipt evidence is a contract, not an enforcement**: an agent can still pass a fabricated `evidence` dict. The
+   guard today is that claims alone do not verify and every field is recorded for audit.
 
 ## Done (verified)
 
-- 0.11.0: probes (14, engine-query-safe), trap lint (17 rules) wired to CLI and MCP; `references/debugging-playbook.md`;
-  one shared Studio session for push/exec/probe/servertest. 40/40 tests.
+- 0.12.1 / 0.12.0: corrective audit. Typechecker judged by exit status (a crashed tool is never a pass); receipts
+  separate agent claims from observed evidence and never collide; `push` reads Source back out of Studio and returns
+  synced/mismatch/unverified; server-test PASS parsed exactly (NOT_PASS no longer passes); Rojo `init.*` files map their
+  directory; malformed project JSON fails; selene gets a Roblox std when the project ships none and warnings stay
+  warnings; a class change backs the old script up to `ServerStorage.rbforge_backups`. 48/48 tests.
+- 0.11.0: probes (14, engine-query-safe), trap lint (17 rules) wired to CLI and MCP; `references/debugging-playbook.md`.
+  Each CLI command opens and closes its own Studio session - `push` reuses one session for all of its files, and no
+  command reuses another's. 40/40 tests.
 - 0.10.1: SurfaceGui `ClipsDescendants` is the one-sided flat-colour wall; query helpers skip `CanQuery = false`.
 - 0.10.0 / 0.9.1 / 0.9.2: sight-line diagnosis, runtime builds do not persist, match the pixels before the code.
 
