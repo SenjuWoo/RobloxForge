@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.12.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.12.2 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## Gaps to close (next session)
 
@@ -20,11 +20,16 @@ claim checkable.
 2. **E2E weak-model benchmark** (`tests/agent-benchmarks`) has not been run - it is the 1.0.0 gate.
 3. **`luau-lsp` skip** is still the normal case: no `globalTypes.d.luau` on this machine, so the type rung never runs
    here. Install definitions (or set `RBFORGE_LUAU_DEFINITIONS`) to exercise the exit-status fix against a real tool.
-4. **Receipt evidence is a contract, not an enforcement**: an agent can still pass a fabricated `evidence` dict. The
-   guard today is that claims alone do not verify and every field is recorded for audit.
+4. **Receipt provenance is a label, not a signature.** `collect_evidence()` is the only path that sets
+   `provenance="tool"`, and agent evidence caps at `playtest_claimed` - but a caller can still pass
+   `provenance="tool"` by hand. Real tamper-resistance needs the tool to sign its observations.
 
 ## Done (verified)
 
+- 0.12.2: second audit pass. A crashed linter fails instead of warning; mixed push batches report
+  `unmapped`/`unreadable` without raising; receipts reserve names atomically and chain in creation order;
+  evidence carries provenance (`tool` via `collect_evidence`, `agent` otherwise) and agent evidence caps at
+  `playtest_claimed`; the release gate now smoke-tests the real archive. 53/53 tests.
 - 0.12.1 / 0.12.0: corrective audit. Typechecker judged by exit status (a crashed tool is never a pass); receipts
   separate agent claims from observed evidence and never collide; `push` reads Source back out of Studio and returns
   synced/mismatch/unverified; server-test PASS parsed exactly (NOT_PASS no longer passes); Rojo `init.*` files map their
