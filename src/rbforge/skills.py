@@ -164,7 +164,11 @@ def _read_manifest(skill_dir, version=None):
             data = json.load(fh)
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict) or set(data) - {"version", "files"}:
+    if not isinstance(data, dict) or set(data) - {"version", "files", "dirs"}:
+        return None
+    dirs = data.get("dirs")
+    if dirs is not None and (not isinstance(dirs, list)
+                             or any(safe_rel(d, skill_dir) is None for d in dirs)):
         return None
     files = data.get("files")
     if not isinstance(files, dict) or not files:
@@ -181,6 +185,17 @@ def _read_manifest(skill_dir, version=None):
     return data
 
 
+def _is_link(path):
+    """A symlink or a Windows junction. Junctions are directories, not symlinks, to the OS."""
+    if os.path.islink(path):
+        return True
+    checker = getattr(os.path, "isjunction", None)
+    try:
+        return bool(checker and checker(path))
+    except OSError:
+        return False
+
+
 def _manifest_files(skill_dir):
     """Every file we would write for this skill, relative to its directory."""
     out = []
@@ -193,20 +208,46 @@ def _manifest_files(skill_dir):
     return sorted(out)
 
 
+def _manifest_dirs(skill_dir):
+    """Every directory inside the skill, links included and never followed.
+
+    Files alone are not an inventory: a user can add an empty folder or a junction into a skill, and
+    a file-only walk cannot see either - so `remove` would delete them and `_matches_source` would call
+    the tree ours. Links are reported as themselves, never as their target.
+    """
+    out = []
+    for base, dirs, _names in os.walk(skill_dir, followlinks=False):
+        for name in dirs:
+            path = os.path.join(base, name)
+            rel = os.path.relpath(path, skill_dir).replace("\\", "/")
+            out.append(rel)
+            if _is_link(path):
+                dirs.remove(name)  # never descend: the target is not ours
+    return sorted(out)
+
+
 def _extra_files(skill_dir, manifest):
-    """Files present on disk that this install never wrote - i.e. the user's."""
+    """Anything on disk this install never wrote - files, empty folders, symlinks, junctions."""
     if manifest is None:
         return []
     known = set(manifest.get("files") or {})
     known.update({STAMP, MANIFEST})
-    return sorted(p for p in _manifest_files(skill_dir) if p not in known)
+    extras = [p for p in _manifest_files(skill_dir) if p not in known]
+    owned_dirs = manifest.get("dirs")
+    if owned_dirs is not None:  # manifests before 0.13.11 did not record directories
+        extras += [d for d in _manifest_dirs(skill_dir) if d not in set(owned_dirs)]
+    return sorted(extras)
 
 
 def _matches_source(skill_dir, src_dir):
-    """True when every file on disk matches the shipped copy: provably ours, safe to replace."""
+    """True when every file and directory matches the shipped copy: provably ours, safe to replace."""
     ours = [rel for rel in _manifest_files(skill_dir) if rel != "KNOWLEDGE-PATH.txt"]
     theirs = [rel for rel in _manifest_files(src_dir) if rel != "KNOWLEDGE-PATH.txt"]
     if sorted(ours) != sorted(theirs):
+        return False
+    # An empty folder or a junction the user added is not in the source tree, so the copy is not
+    # provably ours and must be backed up rather than replaced in place.
+    if _manifest_dirs(skill_dir) != _manifest_dirs(src_dir):
         return False
     for rel in ours:
         try:
@@ -287,7 +328,7 @@ def status():
 
 def _write_manifest(dst, version):
     files = {rel: _sha(os.path.join(dst, rel.replace("/", os.sep))) for rel in _manifest_files(dst)}
-    payload = {"version": version, "files": files}
+    payload = {"version": version, "files": files, "dirs": _manifest_dirs(dst)}
     with open(os.path.join(dst, MANIFEST), "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=1, sort_keys=True)
     with open(os.path.join(dst, STAMP), "w", encoding="utf-8") as fh:
@@ -525,21 +566,26 @@ def remove(agents=None):
                             pass
                     else:
                         modified.append("KNOWLEDGE-PATH.txt")
-                # Empty directories only; the walk cannot delete the root it is iterating on Windows.
-                for base, _dirs, _files in os.walk(d, topdown=False):
-                    try:
-                        os.rmdir(base)
-                    except OSError:
-                        pass
-                leftovers = _manifest_files(d)
-                if leftovers:
-                    kept.append("%s (kept %s)" % (name, ", ".join(leftovers[:3])))
+                # Remove only directories the manifest recorded, deepest first, and only when empty.
+                owned_dirs = manifest.get("dirs") or []
+                for rel in sorted(owned_dirs, key=len, reverse=True):
+                    path = safe_rel(rel, d)
+                    if path:
+                        try:
+                            os.rmdir(path)
+                        except OSError:
+                            pass
+                leftovers = _extra_files(d, manifest) if os.path.isdir(d) else []
+                stray = _manifest_files(d) if os.path.isdir(d) else []
+                if leftovers or stray:
+                    kept.append("%s (kept %s)" % (name, ", ".join((leftovers + stray)[:3])))
                 else:
                     try:
-                        os.rmdir(d)
+                        os.rmdir(d)  # never rmtree: an unknown entry must stop the delete
                     except OSError:
-                        shutil.rmtree(d, ignore_errors=True)
-                    removed.append(name)
+                        kept.append("%s (directory not empty)" % name)
+                    else:
+                        removed.append(name)
         parts = []
         if removed:
             parts.append("removed %d" % len(removed))

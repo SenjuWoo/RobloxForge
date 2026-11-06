@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.13.11 - 2026-11-06
+
+The inventory now sees everything the user can put inside a skill, not just files.
+
+### Fixed
+- **A user-added empty directory was deleted by uninstall.** `_manifest_files()` walked files only, so
+  an empty folder was invisible; `remove()` then pruned every empty directory and, at the end,
+  `rmtree`d the skill. The inventory records directories (`dirs` in the manifest), uninstall removes
+  only manifest-recorded ones, and the recursive fallback is gone: an unrecognised entry now keeps the
+  directory and is reported as `kept`.
+- **A directory symlink or Windows junction was deleted with its contents unwatched.** Links are now
+  inventoried as entries and never descended into, so the target is never touched and the link itself
+  survives uninstall. Broken links behave the same.
+- **An upgrade replaced such a skill in place, silently dropping the entry.** `_matches_source()` now
+  compares directory entries as well as files, so a tree that gained a folder or a link is no longer
+  "provably ours" and gets the backup-and-replace path.
+- README line 99 no longer says "the two RobloxForge skills".
+
+### Compatibility
+- Manifests written before this version have no `dirs` key; they are still accepted and directory
+  comparison is skipped until the next install writes a full manifest.
+
 ## 0.13.10 - 2026-11-06
 
 Recovery-safety pass: four narrow defects, each reproduced with fault injection before the fix.

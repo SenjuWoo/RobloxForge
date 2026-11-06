@@ -2326,6 +2326,129 @@ def _():
     assert state.startswith("legacy"), state
 
 
+def _make_link(link, target):
+    """A directory symlink where the OS allows it, else a Windows junction. Returns the kind."""
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return "symlink"
+    except (OSError, NotImplementedError):
+        pass
+    try:
+        import subprocess as _sp
+        done = _sp.run(["cmd", "/c", "mklink", "/J", link, target],
+                       capture_output=True, text=True)
+        if done.returncode == 0:
+            return "junction"
+    except Exception:  # noqa: BLE001 - reported by the caller as unsupported
+        pass
+    return None
+
+
+@check("skills: uninstall keeps a user-added empty directory")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        orig = (skills.paths.skills_source_dir, skills.roots_for)
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        _sandbox_agent(skills, root, "sandbox")
+        try:
+            skills.install(["sandbox"])
+            mine = os.path.join(root, "roblox-docs", "my-notes")
+            os.makedirs(mine)
+            result = skills.remove(["sandbox"])
+            survived = os.path.isdir(mine)
+            skill_kept = os.path.isdir(os.path.join(root, "roblox-docs"))
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for = orig
+            del skills._ROOTS["sandbox"]
+    assert survived, "a user-added empty directory was deleted"
+    assert skill_kept, "the skill directory was removed around the user's folder"
+    assert "kept" in result["sandbox"], result
+
+
+@check("skills: uninstall keeps a user-added directory link and never deletes its target")
+def _():
+    from rbforge import skills
+    kind = None
+    with tempdir() as target, tempdir() as src, tempdir() as root:
+        open(os.path.join(target, "precious.txt"), "w").write("outside")
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        orig = (skills.paths.skills_source_dir, skills.roots_for)
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        _sandbox_agent(skills, root, "sandbox")
+        try:
+            skills.install(["sandbox"])
+            link = os.path.join(root, "roblox-docs", "outside")
+            kind = _make_link(link, target)
+            if kind:
+                skills.remove(["sandbox"])
+            link_alive = os.path.lexists(link) if kind else None
+            target_alive = os.path.isfile(os.path.join(target, "precious.txt"))
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for = orig
+            del skills._ROOTS["sandbox"]
+    assert target_alive, "the link target was deleted"
+    assert kind is not None, "no symlink or junction could be created on this host"
+    assert link_alive, "the user's directory link was deleted"
+
+
+@check("skills: a broken link is inventoried, not followed, and survives uninstall")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        orig = (skills.paths.skills_source_dir, skills.roots_for)
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        _sandbox_agent(skills, root, "sandbox")
+        try:
+            skills.install(["sandbox"])
+            broken = os.path.join(root, "roblox-docs", "gone")
+            made = _make_link(broken, os.path.join(root, "does-not-exist"))
+            if made:
+                skills.remove(["sandbox"])
+            alive = os.path.lexists(broken) if made else None
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for = orig
+            del skills._ROOTS["sandbox"]
+    assert made, "no link could be created"
+    assert alive, "a broken link was treated as ours and deleted"
+
+
+@check("skills: an upgrade backs up a skill that gained a user directory")
+def _():
+    from rbforge import skills
+    with tempdir() as src, tempdir() as root:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name))
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        orig = (skills.paths.skills_source_dir, skills.roots_for)
+        skills.paths.skills_source_dir = lambda: src
+        skills.roots_for = lambda agent: [root]
+        _sandbox_agent(skills, root, "sandbox")
+        try:
+            skills.install(["sandbox"])
+            mine = os.path.join(root, "roblox-docs", "keep-me")
+            os.makedirs(mine)
+            skills.install(["sandbox"])  # same version, but the tree is no longer provably ours
+            backups = [n for n in os.listdir(root) if "roblox-docs.rbforge-backup" in n]
+            saved = os.path.isdir(os.path.join(root, backups[0], "keep-me")) if backups else False
+        finally:
+            skills.paths.skills_source_dir, skills.roots_for = orig
+            del skills._ROOTS["sandbox"]
+    assert backups, "the skill was replaced in place instead of backed up"
+    assert saved, "the user's directory is not in the backup"
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, exc in FAIL:

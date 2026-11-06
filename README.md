@@ -96,7 +96,7 @@ rbforge plugins                     # optional plugins found + their free altern
 rbforge docs update                 # fetch official creator-docs (27 MB, git-sparse)
 rbforge docs search "ProcessReceipt"
 rbforge agent connect hermes        # wire the official Roblox MCP into an agent
-rbforge skills install all          # install the two RobloxForge skills
+rbforge skills install all          # install all 25 RobloxForge skills, every profile
 rbforge capabilities                # honest capability matrix (probed, not assumed)
 ```
 
