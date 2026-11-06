@@ -1524,6 +1524,24 @@ def _():
     assert obs["place"] == "Game" and obs["datamodel"] == "Server", obs
 
 
+@check("live: a class-change rollback restores the original before removing the stand-in")
+def _():
+    code = _generated_push_code(klass="Script")
+    backup_at = code.index("if backup then")
+    created_at = code.index("if created then")
+    assert backup_at < created_at, "the created branch runs before the backup is restored"
+    assert "backup.Name = backupName" in code and "backup.Parent = node" in code
+    assert "(original restored)" in code and "(new script removed)" in code
+
+
+@check("live: an over-limit source is reported as rolled_back, never synced")
+def _():
+    # Studio rejects Source >= 200000 chars; the generated code must treat that as a write failure.
+    code = _generated_push_code(text="x" * 10)
+    assert "local wrote = pcall(function() target.Source = src end)" in code
+    assert "if not wrote then return restore('write failed') end" in code
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
     for name, exc in FAIL:

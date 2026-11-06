@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.13.4 - 2026-11-06
+
+Rollback, proven against a real engine failure instead of a mock.
+
+### Fixed
+- **A class-change rollback left the original in the backup folder.** `restore()` checked `created`
+  before `backup`, and a class change sets both, so a failed write removed the stand-in and returned
+  "new script removed" while the original stayed orphaned in `ServerStorage.rbforge_backups`. The backup
+  branch now runs first: destroy the stand-in, move the original home, verify name and parent, and only
+  then report `ROLLED_BACK (original restored)`.
+
+### Verified live (disposable place, engine-level failure)
+
+Studio rejects `Source` at 200,000 characters — a genuine write failure, not a simulated one:
+
+| Scenario | Result | Studio state afterwards |
+|---|---|---|
+| existing script, 210 KB source | `rolled_back` — `ROLLED_BACK write failed` | `Alpha` still a ModuleScript, source byte-identical |
+| class change (ModuleScript → Script), 210 KB source | `rolled_back` — `ROLLED_BACK write failed (original restored)` | `Swap` back as ModuleScript with its exact original source; backups folder empty |
+| brand-new script, 210 KB source | `rolled_back` — `ROLLED_BACK write failed (new script removed)` | no leftover instance |
+
+Two regression tests lock the ordering and the write-failure branch. 78 tests.
+
+### Known gaps
+- `ROLLBACK_FAILED` (a restore that itself fails) is covered only in unit tests: forcing Studio to
+  refuse the *restore* of a small source is not reachable through the documented API.
+- Multiplayer, published-place path and the weak-model benchmark remain outstanding.
+
 ## 0.13.3 - 2026-11-06
 
 Live Studio pass on a disposable sandbox place (Studio `Place1`, unpublished, `PlaceId 0`). Two real
