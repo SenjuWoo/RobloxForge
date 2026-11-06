@@ -291,9 +291,13 @@ def _push_code(parent, name, klass, text, parent_classes=None):
         "  -- A class change also creates a stand-in, so the backup must win: put the original\n"
         "  -- back first, then remove whatever temporary instance this push made.\n"
         "  if backup then\n"
-        "    if created then pcall(function() created:Destroy() end) end\n"
+        "    local removed = true\n"
+        "    if created then\n"
+        "      pcall(function() created:Destroy() end)\n"
+        "      removed = created.Parent == nil\n"
+        "    end\n"
         "    local moved = pcall(function() backup.Name = backupName backup.Parent = node end)\n"
-        "    if moved and backup.Parent == node and backup.Name == backupName then\n"
+        "    if moved and backup.Parent == node and backup.Name == backupName and removed then\n"
         "      return 'ROLLED_BACK ' .. reason .. ' (original restored)'\n"
         "    end\n"
         "    return 'ROLLBACK_FAILED ' .. reason .. ' (original kept in ServerStorage.rbforge_backups)'\n"
@@ -305,8 +309,8 @@ def _push_code(parent, name, klass, text, parent_classes=None):
         "  end\n"
         "  if prev ~= nil then\n"
         "    local set = pcall(function() target.Source = prev end)\n"
-        "    local same = set and target.Source == prev\n"
-        "    if same then return 'ROLLED_BACK ' .. reason end\n"
+        "    local okRead, now = pcall(function() return target.Source end)\n"
+        "    if set and okRead and now == prev then return 'ROLLED_BACK ' .. reason end\n"
         "    return 'ROLLBACK_FAILED ' .. reason .. ' (previous source could not be restored)'\n"
         "  end\n"
         "  return 'ROLLBACK_FAILED ' .. reason .. ' (nothing to restore)'\n"
@@ -371,7 +375,22 @@ def push(paths, project_file="default.project.json", studio_id=None):
                      "rollback_failed" if got.startswith("ROLLBACK_FAILED") else "unverified")
             results.append({"file": _rel(f, project_root), "target": "%s.%s" % (parent, name),
                             "state": state, "ok": state == "synced", "got": got, "want": want,
-                            "why": got if state == "hierarchy" else None})
+                            "why": got if state in ("hierarchy", "rollback_failed") else None})
+            if state == "rollback_failed":
+                # The place may be damaged or hold an orphaned original: stop writing and say which
+                # files were never attempted instead of compounding the failure.
+                stop_reason = ("%s left unrecovered; check ServerStorage.rbforge_backups before "
+                               "pushing again" % _rel(f, project_root))
+                break
+        else:
+            stop_reason = None
+    if stop_reason:
+        attempted = {r["file"] for r in results}
+        for f in files:
+            name = _rel(f, project_root)
+            if name not in attempted:
+                results.append({"file": name, "target": None, "state": "not_attempted",
+                                "ok": False, "got": None, "want": None, "why": stop_reason})
     synced = [r for r in results if r["state"] == "synced"]
     return {"pushed": len(synced), "failed": len(results) - len(synced),
             "mismatched": [r for r in results if r["state"] == "mismatch"],
@@ -381,6 +400,7 @@ def push(paths, project_file="default.project.json", studio_id=None):
             "hierarchy": [r for r in results if r["state"] == "hierarchy"],
             "rolled_back": [r for r in results if r["state"] == "rolled_back"],
             "rollback_failed": [r for r in results if r["state"] == "rollback_failed"],
+            "not_attempted": [r for r in results if r["state"] == "not_attempted"],
             "results": results,
             "note": "Edit-mode sources changed; stop/start Play to run them, and the owner saves the place"}
 

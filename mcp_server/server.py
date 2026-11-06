@@ -150,7 +150,18 @@ def _sec_review(a):
       "observation_id; only ids this tool recorded can produce a verified_playtest receipt.")
 def _collect_evidence(a):
     from rbforge import verification
-    return verification.collect_evidence(**a)
+    args = dict(a)
+    # The schema advertises capture_screenshot=true; the Python default is False, so the default has
+    # to be applied here or the advertised behaviour silently does nothing.
+    args.setdefault("capture_screenshot", True)
+    result = verification.collect_evidence(**args)
+    shots = result.get("screenshots") or []
+    result["capture"] = {
+        "requested": bool(args.get("capture_screenshot")),
+        "images": len(shots),
+        "status": "captured" if shots else ("failed" if args.get("capture_screenshot") else "disabled"),
+    }
+    return result
 
 
 @tool("rb_verify_receipt", {"type": "object", "properties": {
@@ -164,7 +175,11 @@ def _collect_evidence(a):
     "provenance": {"type": "string", "enum": ["tool", "agent"], "default": "agent",
                    "description": "ignored for trust - only observation_id verifies"},
     "project": {"type": "string", "description": "must match the observation's project"},
-    "scenario": {"type": "string", "description": "must match the observation's scenario"},
+    "scenario": {"type": "string", "description":
+                 "must match the observation's scenario; leaving it out does NOT match a scenario-bound "
+                 "observation"},
+    "revision": {"type": "string", "description":
+                 "must match the observation's revision when one was recorded"},
     "studio_id": {"type": "string", "description": "must match the observing Studio"},
     "console_errors": {"type": "integer", "default": 0},
     "playtest_performed": {"type": "boolean"},

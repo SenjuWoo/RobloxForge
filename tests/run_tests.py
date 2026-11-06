@@ -210,7 +210,7 @@ def _fake_studio(console="", place="Deadzome Haven", capture="C:/shots/smoke.png
 
 
 def _collect(project="demo", scenario="smoke", inspected=True, test_result=None,
-             capture_screenshot_off=False, **over):
+             capture_screenshot_off=False, revision=None, **over):
     """Run collect_evidence against the double; returns the recorded observation payload."""
     from rbforge import live, verification
     orig = live.server_test
@@ -221,7 +221,7 @@ def _collect(project="demo", scenario="smoke", inspected=True, test_result=None,
     try:
         return verification.collect_evidence(
             session_factory=_fake_studio(**over), project=project, scenario=scenario,
-            screenshots_inspected=inspected,
+            revision=revision, screenshots_inspected=inspected,
             capture_screenshot=not capture_screenshot_off, test_path=path)
     finally:
         live.server_test = orig
@@ -412,12 +412,29 @@ def _generated_push_code(**over):
     return live._push_code(**args)
 
 
-@check("live: generated push code is valid Luau, even with class mappings and odd text")
-def _():
+def _parse_luau(path, cfg):
+    """(ok, detail) using a real parser. stylua: exit 2 = parse error, 1 = formatting only.
+    selene: parse errors are counted. Whichever is installed, the contract is deterministic."""
     import shutil as _shutil
     import subprocess as _sub
-    if not (_shutil.which("stylua") or _shutil.which("selene")):
-        raise AssertionError("a Luau parser (stylua or selene) is required for this test")
+    if _shutil.which("stylua"):
+        out = _sub.run(["stylua", "--check", path], capture_output=True, text=True)
+        blob = (out.stdout or "") + (out.stderr or "")
+        if out.returncode == 2:
+            return False, blob[:400]
+        if "error parsing" in blob.lower():
+            return False, blob[:400]
+        return True, ""
+    if _shutil.which("selene"):
+        out = _sub.run(["selene", "--config", cfg, path], capture_output=True, text=True)
+        blob = (out.stdout or "") + (out.stderr or "")
+        parsed_clean = "0 parse errors" in blob
+        return parsed_clean, blob[:400]
+    raise AssertionError("a Luau parser (stylua or selene) is required for this test")
+
+
+@check("live: generated push code is valid Luau, even with class mappings and odd text")
+def _():
     with tempdir() as d:
         cfg = os.path.join(d, "selene.toml")
         open(cfg, "w").write('std = "lua51"\n')  # syntax only: no Roblox std, no network
@@ -433,15 +450,16 @@ def _():
         for i, code in enumerate(cases):
             path = os.path.join(d, "gen%d.luau" % i)
             open(path, "w", encoding="utf-8").write(code)
-            if _shutil.which("stylua"):
-                # stylua is a Luau parser: it reports a parse failure, formatting is irrelevant here.
-                out = _sub.run(["stylua", "--check", path], capture_output=True, text=True)
-                blob = (out.stdout or "") + (out.stderr or "")
-                assert "parse" not in blob.lower() or "error parsing" not in blob.lower(), blob[:400]
-            else:
-                out = _sub.run(["selene", "--config", cfg, path], capture_output=True, text=True)
-                blob = (out.stdout or "") + (out.stderr or "")
-                assert "parse errors" in blob and "0 parse errors" in blob, blob[:400]
+            ok, detail = _parse_luau(path, cfg)
+            assert ok, "generated Luau does not parse:\n%s" % detail
+
+        # Negative control: the gate must reject invalid Luau, or it proves nothing.
+        bad = os.path.join(d, "broken.luau")
+        open(bad, "w", encoding="utf-8").write("local x = = 1\nfunction\n")
+        ok, _detail = _parse_luau(bad, cfg)
+        assert ok is False, "the parser accepted invalid Luau - the gate is not testing anything"
+
+
 @check("live: generated push code refuses a wrong existing class and can roll back")
 def _():
     code = _generated_push_code()
@@ -1540,6 +1558,165 @@ def _():
     code = _generated_push_code(text="x" * 10)
     assert "local wrote = pcall(function() target.Source = src end)" in code
     assert "if not wrote then return restore('write failed') end" in code
+
+
+@check("verification: omitting scenario or revision does not match a bound observation")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        obs = _collect(project="demo", scenario="smoke-old", revision="rev-live-1",
+                       console="[Server] ready")["observation_id"]
+        # Capture the revision this observation recorded, then try to reuse it.
+        stored = verification.load_observation(obs)
+        rev = stored.get("revision")
+
+        omitted = verification.receipt("unrelated feature", observation_id=obs, project="demo",
+                                       playtest_performed=True, save=False)
+        assert omitted["verification_level"] != "verified_playtest", omitted["verification_level"]
+
+        wrong_scenario = verification.receipt("x", observation_id=obs, project="demo",
+                                              scenario="new-feature", revision=rev,
+                                              playtest_performed=True, save=False)
+        assert wrong_scenario["verification_level"] != "verified_playtest"
+
+        wrong_rev = verification.receipt("x", observation_id=obs, project="demo",
+                                         scenario="smoke-old", revision="rev-other",
+                                         playtest_performed=True, save=False)
+        assert wrong_rev["verification_level"] != "verified_playtest"
+
+        good = verification.receipt("x", observation_id=obs, project="demo", scenario="smoke-old",
+                                    revision=rev, playtest_performed=True, save=False)
+        assert good["verification_level"] == "verified_playtest", good["verification_level"]
+        assert good["evidence"]["binding"]["scenario"] == "smoke-old"
+
+
+@check("verification: console fixtures cover the shapes Studio prints")
+def _():
+    from rbforge import verification
+    cases = [
+        ("[Server] Error: attempt to index nil", "errors"),
+        ("[Client] Script error: missing Foo", "errors"),
+        ("19:52:36.782  ServerScriptService.Main:4: attempt to index nil", "errors"),
+        ("stack begin", "errors"),
+        ("[Server] Warning: deprecated API", "ok"),
+        ("[Server] all good", "ok"),
+        ("No error was found", "ok"),
+        ("", "unknown"),
+    ]
+    for text, want in cases:
+        got, _errors, _warn = verification.classify_console(text)
+        assert got == want, (text, got)
+
+
+@check("live: a batch stops after an unrecovered rollback")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        json.dump({"name": "t", "tree": {"ServerScriptService": {"$path": "src"}}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        for name in ("A", "B"):
+            open(os.path.join(d, "src", "%s.luau" % name), "w").write("return %s\n" % name)
+
+        class Sequenced:
+            calls = 0
+
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def luau(self, code, dm="Edit"):
+                Sequenced.calls += 1
+                if Sequenced.calls == 1:
+                    return "ROLLBACK_FAILED write failed (original kept in ServerStorage.rbforge_backups)"
+                return "SYNCED 1:1"
+
+        try:
+            live.Session = Sequenced
+            r = live.push(["ALL"], os.path.join(d, "default.project.json"))
+            assert Sequenced.calls == 1, "the batch kept writing after an unrecovered rollback"
+            states = {row["state"] for row in r["results"]}
+            assert {"rollback_failed", "not_attempted"} <= states, states
+            assert r["pushed"] == 0
+        finally:
+            live.Session = orig
+
+
+@check("mcp: rb_collect_evidence applies its advertised capture default")
+def _():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, os.path.join(root, "mcp_server"))
+    import server
+    from rbforge import verification
+    captured = {}
+
+    def fake(**kwargs):
+        captured.update(kwargs)
+        return {"screenshots": [], "observation_id": "obs-x"}
+
+    orig = verification.collect_evidence
+    verification.collect_evidence = fake
+    try:
+        out = server.TOOLS["rb_collect_evidence"][0]({"task": "x"})
+        assert captured.get("capture_screenshot") is True, captured
+        assert out["capture"]["requested"] is True
+        assert out["capture"]["status"] == "failed", out["capture"]
+
+        captured.clear()
+        server.TOOLS["rb_collect_evidence"][0]({"capture_screenshot": False})
+        assert captured.get("capture_screenshot") is False, "explicit false must disable capture"
+    finally:
+        verification.collect_evidence = orig
+
+
+@check("live: restoration is verified with a protected readback")
+def _():
+    code = _generated_push_code()
+    assert "local okRead, now = pcall(function() return target.Source end)" in code
+    assert "removed = created.Parent == nil" in code, "temporary replacement removal is not verified"
+
+
+@check("release: version, changelog and STATE agree")
+def _():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    import rbforge
+    state = open(os.path.join(root, "STATE.md"), encoding="utf-8").read()
+    changelog = open(os.path.join(root, "CHANGELOG.md"), encoding="utf-8").read()
+    assert ("0.13.5 (pre-1.0" in state) or ("%s (pre-1.0" % rbforge.__version__ in state), state[:400]
+    assert changelog.split("\n## ")[1].startswith(rbforge.__version__ + " "), changelog[:200]
+
+
+@check("skills: an installed skill carries a pointer to vendored knowledge")
+def _():
+    from rbforge import skills
+    with tempdir() as d:
+        orig = skills.roots_for
+        skills.roots_for = lambda agent: [d]
+        try:
+            out = skills.install(agents=["hermes"])
+        finally:
+            skills.roots_for = orig
+        pointer = os.path.join(d, "roblox-game-development", "KNOWLEDGE-PATH.txt")
+        assert os.path.isfile(pointer), out
+        text = open(pointer, encoding="utf-8").read()
+        assert "knowledge/vendor is at:" in text or "was not shipped" in text, text
+
+
+@check("verification: screenshot inspection is labelled as an attestation")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        obs = _collect(console="[Server] ready", revision="r1")["observation_id"]
+        r = verification.receipt("x", observation_id=obs, project="demo", scenario="smoke",
+                                 revision="r1", playtest_performed=True, save=False)
+        assert r["screenshot_inspection_kind"] == "agent_attestation", r["screenshot_inspection_kind"]
+        assert r["evidence"]["visual_inspection"]["by"] == "agent"
 
 
 if __name__ == "__main__":

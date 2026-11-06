@@ -21,6 +21,7 @@ import json
 import os
 import re
 import time
+import uuid
 
 from . import paths
 
@@ -183,11 +184,23 @@ def load_observation(obs_id, max_age=OBSERVATION_MAX_AGE):
     return record
 
 
-# Console classification: only lines that START like a runtime failure count. Substring matching
-# turned "No error was found" into a failure, and empty output into "clean" when the tool never ran.
+# Console classification over the shapes Studio actually prints:
+#     [Server] Error: attempt to index nil
+#     19:52:36.782  ServerScriptService.Main:4: attempt to index nil
+#     stack begin
+# A timestamp, a [Tag] prefix and a `Script:line:` location are stripped first, so the marker is
+# matched at the real start of the message. "No error was found" stays clean because the word is not
+# in marker position.
+CONSOLE_PREFIX = re.compile(
+    r"^\s*(?:\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\s+)?(?:\[[^\]]{1,24}\]\s*)*"
+    r"(?:[\w./-]+:\d+:\s*)?", re.I)
 CONSOLE_ERROR = re.compile(
-    r"^\s*(?:\[?error\]?[:\s]|stack begin|attempt to |fatal[:\s]|script error[:\s])", re.I)
-CONSOLE_WARNING = re.compile(r"^\s*(?:\[?warn(?:ing)?\]?[:\s])", re.I)
+    r"^(?:script error|error|fatal|attempt to|stack begin|stack trace)\b", re.I)
+CONSOLE_WARNING = re.compile(r"^(?:warning|warn)\b", re.I)
+
+
+def _console_marker(line):
+    return CONSOLE_PREFIX.sub("", line).strip()
 
 
 def classify_console(text):
@@ -201,8 +214,8 @@ def classify_console(text):
     lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
     if not lines:
         return "unknown", 0, 0
-    errors = sum(1 for ln in lines if CONSOLE_ERROR.search(ln))
-    warnings = sum(1 for ln in lines if CONSOLE_WARNING.search(ln))
+    errors = sum(1 for ln in lines if CONSOLE_ERROR.search(_console_marker(ln)))
+    warnings = sum(1 for ln in lines if CONSOLE_WARNING.search(_console_marker(ln)))
     return ("errors" if errors else "ok"), errors, warnings
 
 
@@ -302,7 +315,8 @@ def collect_evidence(studio_id=None, test_path=None, test_attr="RbforgeTest",
                 # The real tool requires a capture_id; without it the call fails with
                 # "Missing required argument: capture_id".
                 blocks, is_error, text = session.call_content(
-                    "screen_capture", {"studio_id": sid, "capture_id": "rbforge-%d" % int(time.time())})
+                    "screen_capture", {"studio_id": sid,
+                                       "capture_id": "rbforge-%s" % uuid.uuid4().hex[:12]})
             if not is_error:
                 shots = _save_capture(blocks, text)
         except Exception:  # noqa: BLE001 - capture is best effort, never a claim
@@ -405,7 +419,7 @@ def _level(trusted, observation, agent_tests, agent_claim, console_errors):
 def receipt(task, checks=None, evidence=None, observation_id=None, provenance=None,
             console_errors=0, playtest_performed=False, screenshot_captured=False,
             screenshot_inspected=False, limitations=None, project=None, studio_id=None,
-            scenario=None, save=True):
+            scenario=None, revision=None, save=True):
     """Build (and by default persist) a verification receipt.
 
     Trust comes from `observation_id` alone - an id returned by `collect_evidence()` or
@@ -418,16 +432,20 @@ def receipt(task, checks=None, evidence=None, observation_id=None, provenance=No
 
     observation = load_observation(observation_id)
     trusted = observation is not None
-    # An observation is bound to the place, project and scenario it was collected for. A receipt
-    # that names a different project or scenario must not inherit an earlier success.
-    if trusted and studio_id and observation.get("studio_id") != studio_id:
-        trusted, observation = False, None
-    if trusted and project and observation.get("project") != project:
-        trusted, observation = False, None
-    if trusted and scenario and observation.get("scenario") != scenario:
-        trusted, observation = False, None
-    if trusted and project is None and observation.get("project") is not None:
-        trusted, observation = False, None
+    binding = []
+    # Omission is not a match. An observation recorded for project/scenario/revision X can only
+    # verify a receipt that states X - otherwise a past playtest would support an unrelated claim
+    # simply by leaving the fields out.
+    if trusted:
+        for field, given in (("project", project), ("scenario", scenario), ("revision", revision)):
+            recorded = observation.get(field)
+            if recorded is not None and given != recorded:
+                binding.append("%s recorded as %r, receipt says %r" % (field, recorded, given))
+        if studio_id and observation.get("studio_id") != studio_id:
+            binding.append("studio recorded as %r, receipt says %r"
+                           % (observation.get("studio_id"), studio_id))
+        if binding:
+            trusted, observation = False, None
 
     state = _required_checks()
     claimed = [name for name in (checks or []) if name in state]
@@ -471,6 +489,8 @@ def receipt(task, checks=None, evidence=None, observation_id=None, provenance=No
         "claimed_checks": claimed,
         "evidence": {
             "observation_id": observation_id if trusted else None,
+            "binding": {"project": project, "scenario": scenario, "revision": revision,
+                        "studio_id": studio_id, "mismatches": binding},
             "provenance": "tool" if trusted else "agent",
             "studio_id": obs.get("studio_id"),
             "place": obs.get("place"),
@@ -489,7 +509,9 @@ def receipt(task, checks=None, evidence=None, observation_id=None, provenance=No
         "console_errors_reported": errors_now,
         "playtest_performed": bool(playtest_performed),
         "screenshot_captured": bool(screenshots),
+        # An attestation, not a machine check: the tool cannot see pixels.
         "screenshot_inspected_by_vision": inspected,
+        "screenshot_inspection_kind": "agent_attestation" if inspected else None,
         "verification_level": level,
         "claim_allowed": LEVEL_CLAIM[level],
         "limitations": _as_list(limitations) + _as_list(claimed_evidence.get("untested")),
@@ -513,6 +535,7 @@ def receipt(task, checks=None, evidence=None, observation_id=None, provenance=No
                     continue
             rec["sequence"] = sequence
             rec["scenario"] = scenario
+            rec["revision"] = revision
             rec["prev_digest"] = previous
             rec["digest"] = _digest(rec)
             file_path = _next_receipt_path(out_dir, task, sequence)

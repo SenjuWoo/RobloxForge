@@ -25,8 +25,9 @@ first; references carry the detail.
 - Unknown evidence (no console output, no image) means partial or unverified - never "clean".
 - `rb_collect_evidence` is the only way to record a real observation; `rb_verify_receipt` needs its
   `observation_id` and refuses a receipt for another project or scenario.
-- Deep engine detail beyond this skill: `knowledge/vendor/roblox-skills/<topic>/SKILL.md` (MIT,
-  third-party, not installed automatically).
+- Deep engine detail beyond this skill: read `KNOWLEDGE-PATH.txt` next to this SKILL.md to find
+  `knowledge/vendor/roblox-skills/<topic>/SKILL.md` (MIT, third-party). If that file says the pack was
+  not shipped, fall back to this skill's own `references/` and the official Creator Hub docs.
 
 ## Safe push
 

@@ -10,30 +10,43 @@ claim checkable.
 
 ## Version
 
-0.13.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.13.5 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+
+## What is proven, and how
+
+| Area | Evidence |
+|---|---|
+| Offline gate (`check`, traps, probes, review) | 82 automated tests + fixture projects |
+| Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
+| Receipts / observations | unit tests, including omission, mismatch, expiry, replay and tamper cases |
+| Live Studio: push + readback | disposable place, 2026-11-06: `synced` digests matched, ModuleScript/Script classes correct |
+| Live Studio: hierarchy + `servePlaceIds` | `HIERARCHY … is Folder, expects Model`; `RBF-STUDIO-003`; `RBF-ARG-002` |
+| Live Studio: class-change backup | original preserved as `Swap_rbforge_<ms>` in `ServerStorage.rbforge_backups` |
+| Live Studio: `init.luau` nesting | `Nested` ModuleScript with `Child` beneath it |
+| Live Studio: server tests | PASS, FAIL, malformed and TIMEOUT all classified correctly |
+| Live Studio: console + screenshot | `get_console_output` read; a real 240 KB `image/jpeg` captured and hashed |
+| Live Studio: rollback | engine refused a 210 KB `Source`; existing-script, new-script and class-change pushes all `rolled_back` with the previous state verified afterwards |
+| Unit-only | `ROLLBACK_FAILED` (a restore that itself fails) — not reachable through the documented API |
+| Unverified | published-place path, multiplayer, mobile, weak-model benchmark |
 
 ## Gaps to close (next session)
 
-1. **Live MCP integration is unverified for 0.12.x.** Studio was closed when the audit landed, so `push` readback,
-   `server_test` parsing and `init.*` mapping are proven by unit tests with a fake session only. Re-run one real
-   `rbforge push` and one `rbforge servertest` against an open place before trusting them.
-2. **E2E weak-model benchmark** (`tests/agent-benchmarks`) has not been run - it is the 1.0.0 gate.
-3. **`luau-lsp` skip** is still the normal case: no `globalTypes.d.luau` on this machine, so the type rung never runs
-   here. Install definitions (or set `RBFORGE_LUAU_DEFINITIONS`) to exercise the exit-status fix against a real tool.
-4. **The test suite needs `selene`.** The generated-Luau test fails (not skips) without it, by design; both CI and
-   the release workflow install a pinned copy via `scripts/install_selene.py`.
-5. **Receipt provenance is an id, not a signature.** An observation id proves the record came from
-   `collect_evidence`, but an agent that can run that tool can also run a throwaway test; the guard is the
-   expiry, the Studio/place binding and the honest levels, not cryptography. An agent with full write access
-   to the receipts directory can still forge files.
-5. **Screenshots are only trusted when Studio returned image bytes.** A caller-supplied path, or
-   `screenshots_inspected=True` on its own, records a *claim*: the receipt stays
-   `playtest_observed_partial`. `visual_inspection` is an attestation, labelled as such, and it must
-   reference the captured artifact's digest. Nothing here is cryptographic protection against an agent
-   that can rewrite the receipts directory.
+1. **Weak-model E2E benchmark** (`tests/agent-benchmarks`) has not been run — the 1.0.0 gate.
+2. **Published-place and multiplayer paths** are untested; the live work used an unpublished disposable place.
+3. **`luau-lsp` never runs here** (no `globalTypes.d.luau`); the exit-status fix is proven against a fake tool.
+4. **The test suite needs a Luau parser** (`stylua` and/or `selene`); CI and the release install a pinned selene.
+5. **Provenance is an id, not a signature.** An observation proves RobloxForge recorded a run; an agent with write
+   access to the receipts directory can still forge files. Documented, not hidden.
+6. **`ROLLBACK_FAILED` is unit-only** — forcing Studio to reject a *restore* of a small source is not possible
+   through the documented API.
 
 ## Done (verified)
 
+- 0.13.5: receipts must state the observation's project, scenario and revision (omission no longer matches);
+  console classification handles `[Server] Error:` and timestamped/located lines; a batch stops after an
+  unrecovered `rollback_failed` and marks the rest `not_attempted`; `rb_collect_evidence` applies its advertised
+  `capture_screenshot=true`; the parser test has a real contract plus a negative control; installed skills carry
+  a `KNOWLEDGE-PATH.txt` so vendored references resolve outside the checkout.
 - 0.13.2: push is transaction-like (preflight, backup, verified restore, `ROLLED_BACK` only after a
   readback), declared Folder/Model class is enforced on existing parents, `servePlaceIds` fails closed,
   screenshots are trusted only as Studio-returned image bytes with a digest, console output has an explicit

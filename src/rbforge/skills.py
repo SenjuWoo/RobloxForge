@@ -150,6 +150,16 @@ def install(agents=None):
                 shutil.copytree(src, dst)
                 with open(os.path.join(dst, STAMP), "w", encoding="utf-8") as fh:
                     fh.write(__version__)
+                # The installed skill points at vendored knowledge by relative path, which stops
+                # working outside the checkout. Record where this install came from.
+                vendor = os.path.join(os.path.dirname(os.path.abspath(src_root)), "knowledge", "vendor")
+                with open(os.path.join(dst, "KNOWLEDGE-PATH.txt"), "w", encoding="utf-8") as fh:
+                    if os.path.isdir(vendor):
+                        fh.write("knowledge/vendor is at:\n%s\n" % vendor)
+                    else:
+                        fh.write("knowledge/vendor was not shipped with this install.\n"
+                                 "Fall back to the first-party references in this skill, or the official\n"
+                                 "Roblox Creator Hub documentation.\n")
                 copied.append(name)
             notes.append(blocked or ("installed %s" % ", ".join(copied) if copied
                                      else "nothing to do"))

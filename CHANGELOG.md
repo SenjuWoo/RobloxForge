@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.13.5 - 2026-11-06
+
+Corrective pass on the evidence boundary, console truth, batch safety and agent handoff.
+
+### Fixed
+- **Observation reuse by omission.** `receipt()` skipped a binding check when the receipt simply left
+  `scenario` (or `revision`) out, so a `smoke-old` observation verified an unrelated task. Omission is no
+  longer a match: any recorded identity field must be stated and equal, or the receipt degrades to partial.
+  `revision` is now part of the receipt and the MCP schema.
+- **Console false negatives.** Classification was anchored to the line start, so Studio's real shapes
+  (`[Server] Error: …`, `19:52:36.782  ServerScriptService.Main:4: attempt to index nil`) read as clean.
+  Timestamps, `[Tag]` prefixes and `script:line:` locations are stripped before matching; `No error was
+  found` still stays clean and unreadable output stays `unknown`.
+- **Batches continued after an unrecovered rollback.** `push` now stops on `rollback_failed` and marks the
+  remaining files `not_attempted`, naming `ServerStorage.rbforge_backups` in the reason.
+- **`rb_collect_evidence` ignored its advertised default.** The schema said `capture_screenshot: true`
+  while the library default was `False`, so omitting it silently skipped the capture. The handler applies
+  the default and reports `capture: {requested, images, status}`.
+- **Rollback edge cases.** The restore readback is now protected (`pcall`) and a class change only reports
+  `ROLLED_BACK` when the temporary replacement is verifiably gone.
+- **The generated-Luau test could not fail.** The old assertion was a tautology. The gate now uses stylua's
+  documented contract (exit 2 = parse error, 1 = formatting only) or selene's parse counter, and a
+  deliberately invalid fixture must be rejected.
+- **`STATE.md` was four releases stale** (it still said 0.13.1 and "live MCP unverified"). Rewritten into
+  proven-offline / proven-live / unit-only / unverified, and a test now fails if the package version, the
+  CHANGELOG's top section and STATE's version line disagree.
+- **Installed skills could not resolve vendored knowledge.** `rbforge skills install` now writes
+  `KNOWLEDGE-PATH.txt` beside the skill with the absolute path, and the skill documents the fallback.
+
+### Verified live (disposable place, this session)
+- Real console output containing a nil-index error is classified `errors` (2), not `ok`.
+- `rb_collect_evidence` called through the MCP handler with no capture flag returns
+  `capture.status = "captured"` and a 253 KB JPEG.
+- Push/readback, hierarchy, `servePlaceIds`, `init.luau`, class-change backup and all three rollback
+  scenarios remain as verified in 0.13.3/0.13.4.
+
+### Still unit-only / unverified
+- `ROLLBACK_FAILED` (a restore that itself fails) and the published-place/multiplayer paths.
+- The weak-model benchmark; 1.0.0 stays gated on it.
+
 ## 0.13.4 - 2026-11-06
 
 Rollback, proven against a real engine failure instead of a mock.
