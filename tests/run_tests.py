@@ -158,28 +158,64 @@ def _():
     assert "do not claim working" in r["claim_allowed"]
 
 
-@check("verification: full evidence -> verified_playtest")
+def _observed_evidence(**over):
+    """Evidence as the tooling would report it, not as an agent would assert it."""
+    from rbforge import verification
+    ev = {
+        "studio_id": "59d6c7b2-03ab-4b69-a878-d4fc7561b9f8",
+        "place": "Deadzome Haven",
+        "datamodel": "Server",
+        "checks": dict({k: True for k in verification.GAMEPLAY_CHECKS},
+                       screenshot_captured=True, screenshot_inspected=True),
+        "tests": [{"name": "Outpost.smoke", "expected": "0 failures",
+                   "actual": "0 failures", "passed": True}],
+        "console_logged": True,
+        "screenshots": ["C:/shots/smoke.png"],
+        "screenshots_inspected": True,
+    }
+    ev.update(over)
+    return ev
+
+
+@check("verification: observed evidence -> verified_playtest")
 def _():
     from rbforge import verification
-    checks = ["studio_connected", "place_inspected_before_edit", "core_loop_exists",
-              "player_spawns", "primary_action_works", "progression_works",
-              "failure_death_behavior_works", "console_checked",
-              "no_fatal_runtime_errors", "gameplay_path_exercised"]
-    r = verification.receipt("full", checks=checks, console_errors=0,
-                             playtest_performed=True,
-                             screenshot_captured=True, screenshot_inspected=True,
-                             save=False)
-    assert r["verification_level"] == "verified_playtest"
+    r = verification.receipt("full", evidence=_observed_evidence(), console_errors=0,
+                             playtest_performed=True, save=False)
+    assert r["verification_level"] == "verified_playtest", r["verification_level"]
+    assert r["evidence"]["place"] == "Deadzome Haven"
+
+
+@check("verification: agent claims alone never verify")
+def _():
+    from rbforge import verification
+    claims = list(verification.GAMEPLAY_CHECKS)
+    r = verification.receipt("claims", checks=claims, console_errors=0,
+                             playtest_performed=True, screenshot_captured=True,
+                             screenshot_inspected=True, save=False)
+    assert r["verification_level"] == "unverified", r["verification_level"]
+    assert r["claim_allowed"].startswith("unverified")
+    assert r["claimed_checks"], "claims must still be recorded for audit"
+    assert not r["checks"]["studio_connected"], "a claim must not fill an observed check"
 
 
 @check("verification: console errors downgrade level")
 def _():
     from rbforge import verification
-    checks = ["studio_connected", "core_loop_exists", "player_spawns",
-              "primary_action_works", "gameplay_path_exercised", "console_checked"]
-    r = verification.receipt("errs", checks=checks, console_errors=3,
+    r = verification.receipt("errs", evidence=_observed_evidence(), console_errors=3,
                              playtest_performed=True, save=False)
-    assert r["verification_level"] == "playtested_with_errors"
+    assert r["verification_level"] == "playtested_with_errors", r["verification_level"]
+
+
+@check("verification: same-second receipts do not overwrite each other")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        a = verification.receipt("same name", save=True)
+        b = verification.receipt("same name", save=True)
+        assert a["saved_to"] != b["saved_to"], "receipt filenames collided"
+        assert os.path.isfile(a["saved_to"]) and os.path.isfile(b["saved_to"])
+        assert json.load(open(b["saved_to"], encoding="utf-8"))["prev_digest"] == a["digest"]
 
 
 @check("verification: receipt persists to disk")
@@ -676,6 +712,144 @@ def _():
 
 
 # ---------------------------------------------------------------- helpers (moved above)
+
+
+# ------------------------------------------------- regression: audit 2026-11-06
+
+@check("check: typechecker exit status decides, never a word search")
+def _():
+    from rbforge import check
+    orig_run, orig_which = check._run, check.shutil.which
+    with tempdir() as d:
+        defs = os.path.join(d, "globalTypes.d.luau")
+        open(defs, "w").write("-- definitions\n")
+        os.environ["RBFORGE_LUAU_DEFINITIONS"] = defs
+
+        def fake(argv, cwd, timeout=180):
+            return (0, "ok") if argv[0] != "luau-lsp" else fake.answer
+
+        try:
+            check.shutil.which = lambda name: "/fake/" + name
+            check._run = fake
+            cases = [
+                ((None, "could not run 'luau-lsp': boom"), "skip"),
+                ((127, "process terminated unexpectedly"), "fail"),
+                ((0, "0 errors, 0 warnings"), "pass"),
+                ((0, "src/a.luau:12:5: TypeError: bad"), "fail"),
+                ((1, "src/a.luau:3:1: Unknown global 'x'"), "fail"),
+            ]
+            for answer, want in cases:
+                fake.answer = answer
+                rung = check.rung_static(d)
+                got = [c for c in rung["checks"] if c["id"] == "luau-lsp"][0]
+                assert got["status"] == want, (answer, want, got)
+        finally:
+            check._run, check.shutil.which = orig_run, orig_which
+            os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
+
+
+@check("check: malformed project JSON fails the project-map check")
+def _():
+    from rbforge import check
+    with tempdir() as d:
+        open(os.path.join(d, "default.project.json"), "w").write("{ not json")
+        rung = check.rung_structure(d)
+        got = [c for c in rung["checks"] if c["id"] == "project-map"][0]
+        assert got["status"] == "fail", got
+        assert "malformed" in got["detail"].lower(), got["detail"]
+
+
+@check("live: rojo init.* files map the directory to a script")
+def _():
+    from rbforge import live
+    with tempdir() as d:
+        base = os.path.join(d, "src", "ServerScriptService")
+        os.makedirs(os.path.join(base, "Systems"))
+        json.dump({"tree": {"$className": "DataModel",
+                            "ServerScriptService": {"$path": "src/ServerScriptService"}}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        for name in ("init.server.luau", "Systems/init.luau", "Systems/A.luau"):
+            open(os.path.join(base, name), "w").write("-- \n")
+        targets = live.rojo_targets(os.path.join(d, "default.project.json"))
+        names = sorted(v for v in targets.values())
+        assert ("", "ServerScriptService", "Script") in names, names
+        assert ("ServerScriptService", "Systems", "ModuleScript") in names, names
+        assert ("ServerScriptService.Systems", "A", "ModuleScript") in names, names
+
+
+def _fake_session(out):
+    class Fake:
+        answer = out
+
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def luau(self, code, dm="Edit"):
+            return Fake.answer
+    return Fake
+
+
+@check("live: server test result parsing is exact")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with tempdir() as d:
+        path = os.path.join(d, "t.luau")
+        open(path, "w").write("return 1\n")
+        try:
+            for text, want in [("PASS 30 routes", "pass"), ("FAIL 2 routes", "fail"),
+                               ("NOT_PASS 30", "fail"), ("TIMEOUT", "fail"),
+                               ("", "unknown"), ("garbage output", "unknown"),
+                               ("PASS", "pass")]:
+                live.Session = _fake_session(text)
+                got = live.server_test(path, "Attr", timeout=1)
+                assert got["outcome"] == want, (text, got)
+                assert got["passed"] is (want == "pass")
+        finally:
+            live.Session = orig
+
+
+@check("live: push reports synced, mismatch and unverified separately")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        json.dump({"tree": {"$className": "DataModel",
+                            "ServerScriptService": {"$path": "src"}}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        src = os.path.join(d, "src", "A.luau")
+        open(src, "w").write("return 1\n")
+        want = live.adler("return 1\n")
+        try:
+            for answer, state in [("SYNCED " + want, "synced"),
+                                  ("MISMATCH " + want, "mismatch"),
+                                  ("UNVERIFIED", "unverified")]:
+                live.Session = _fake_session(answer)
+                r = live.push(["ALL"], os.path.join(d, "default.project.json"))
+                assert r["results"][0]["state"] == state, (answer, r["results"][0])
+                assert r["pushed"] == (1 if state == "synced" else 0), r
+        finally:
+            live.Session = orig
+
+
+@check("check: luau compound assignment is not a parse error")
+def _():
+    from rbforge import check
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        open(os.path.join(d, "src", "a.luau"), "w").write(
+            "--!strict\nlocal speed = 1\nspeed += 2\nreturn speed\n")
+        rung = check.rung_static(d)
+        got = [c for c in rung["checks"] if c["id"] == "selene"][0]
+        assert "parse_error" not in got["detail"], got["detail"]
+
 
 if __name__ == "__main__":
     print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))

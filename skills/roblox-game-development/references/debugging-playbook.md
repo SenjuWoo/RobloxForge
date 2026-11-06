@@ -39,6 +39,45 @@ that compiles but breaks in Roblox, with the line, the fix and a reference.
 5. **Say what is not verified** (and that the owner must save the place if you
    changed it in Edit).
 
+### When the owner says "it's still there"
+
+A reported visual bug is only fixed when the same person, standing in the same
+place, in the same view, sees it gone. Compilation success, a passing unit test,
+a clean console, or a green number in a metric are not evidence about pixels.
+
+Before editing:
+
+1. **Reproduce from the affected position and view.** Camera mode matters:
+   first person hides the body, third person shows it; the same artefact can
+   exist in one and not the other. Note the game state (which plot, which phase,
+   night vs day, inside or outside).
+2. **Record a baseline.** Same pose, same settings, capture before any change.
+   Two captures with different poses prove nothing.
+3. **Name the responsible object with evidence**, not a hunch: bisect by hiding
+   candidate models (`hide` / `restore`), read pixels from the capture, or run a
+   ray from the exact camera through the artefact. If you cannot say which
+   instance produces it, you are not ready to edit.
+4. **Make the smallest change that removes it.** Deleting a system to hide a
+   symptom is not a fix.
+5. **Return to the exact reproduction pose** and capture again.
+6. **Check the neighbours**: the other plots, rooms or gates that share the
+   generator, and the second camera mode.
+7. **Revert a fix that did not work** instead of adding another layer. Two
+   speculative patches on the same artefact produce a state nobody can reason
+   about.
+8. **Classify the failure before fixing it** - visual (paint, transparency,
+   layering), collision, geometry (a hole or a wall where none should be),
+   replication (server and client disagree), or persistence (it looks fixed until
+   the place reloads). The category decides what evidence can prove it.
+9. **Verify Edit, Play and saved/published separately** where relevant. A runtime
+   build does not persist; an Edit-mode capture does not run scripts; a Play-mode
+   change is discarded when you stop.
+10. **Never claim a visual fix from an indirect signal.** "The script ran", "the
+    probe returned 0", "the test passed" are supporting facts, not a picture.
+
+If the owner sends a screenshot, treat the screenshot as the reproduction: match
+the camera, the height and the view before you touch code.
+
 ## Symptom table
 
 | Symptom | Usual cause | Prove it with |

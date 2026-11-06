@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.12.0 - 2026-11-06
+
+Corrective audit: the gate no longer reports work it did not do.
+
+### Fixed
+- **Typechecker exit status.** `luau-lsp` was judged by counting the word "error" in its output, so a crashed
+  typechecker (exit 127, no diagnostics) passed and a clean run printing "0 errors" failed. Exit status decides now;
+  non-zero with no diagnostics is a failure, a missing tool is a skip, diagnostics are matched structurally.
+- **Verification receipts.** Claims promoted themselves: `checks=[...]` plus `playtest_performed=True` produced
+  `verified_playtest` with no evidence behind it. Receipts now separate `claimed_checks` from observed `evidence`
+  (studio id, place, execution context, test scenarios with expected/actual, console read, screenshots), and only
+  evidence can reach a verified level. Two receipts written in the same second no longer overwrite each other.
+- **Push readback.** `push` hashed the string it had just sent, which proves only that Python can hash. It now reads
+  `inst.Source` back out of Studio, compares it, and returns `synced`, `mismatch` or `unverified` per file - never a
+  pass when the readback failed.
+- **Server test parsing.** `"PASS" in out` accepted `NOT_PASS` as a pass. Results parse the first line exactly; unknown,
+  malformed, `FAIL`, `NOT_PASS` and `TIMEOUT` never pass.
+- **Rojo `init.*` files.** Directory initialisation scripts were skipped, silently dropping whole module trees from
+  every push. They now map the directory itself to a Script/LocalScript/ModuleScript, with children nested under it.
+- **Malformed project JSON.** An unparseable `default.project.json` returned "no missing paths" and passed the project
+  map. It is now a failure that names the parse error.
+- **selene on Luau.** With no `selene.toml` selene parses as Lua 5.1 and rejected valid Luau (`+=`, `continue`, types),
+  and every warning was promoted to a failure. Projects without a config get the Roblox std; warnings are warnings,
+  errors are failures.
+- **Session claim.** The module docstring promised session reuse that does not exist; it now states that each CLI
+  command opens and closes its own Studio session.
+- `push` reported paths relative to the current directory, crashing when the project lived on another drive.
+
+### Added
+- Six regression tests: typechecker exit status, malformed project JSON, Rojo `init.*` mapping, exact server-test
+  parsing, push readback states, and Luau compound assignment under selene. Two existing verification tests were
+  rewritten to supply evidence; a new test asserts that claims alone never verify.
+- `debugging-playbook.md`: **"When the owner says it's still there"** - reproduce at the reported pose and camera mode,
+  baseline before editing, name the responsible object with evidence, smallest change, re-capture the same pose, check
+  neighbours, revert failed fixes, classify visual/collision/geometry/replication/persistence, verify Edit vs Play vs
+  saved separately, and never claim a visual fix from an indirect signal.
+
 ## 0.11.5 - 2026-11-05
 
 ### Added

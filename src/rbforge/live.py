@@ -2,15 +2,16 @@
 
 Why this exists: an agent that pastes a 900-line script through its own context
 into execute_luau burns tokens, mangles whitespace, and cannot prove what landed.
-`push` sets each script's Source from the file bytes and has Studio return an
-Adler-32 of what it now holds, so "synced" is a checked fact. `exec`, `probe
---run` and `servertest` reuse the same session.
+`push` sets each script's Source from the file bytes, reads it back and compares, so
+"synced" is a checked fact rather than an assumption. Each CLI command opens its own
+Studio MCP session and closes it; `push` reuses one session for all of its files.
 
 Every call names a studio; when exactly one Studio is open it is picked
 automatically, otherwise the error lists the ids.
 """
 import json
 import os
+import re
 import subprocess
 import threading
 import zlib
@@ -130,6 +131,13 @@ def rojo_targets(project_file):
                 for dirpath, _dirs, files in os.walk(full):
                     rel = os.path.relpath(dirpath, full)
                     sub = [] if rel == "." else rel.replace("\\", "/").split("/")
+                    # Rojo turns a directory containing init.* into that script and nests its
+                    # children under it; skipping init files silently dropped whole modules.
+                    init = _init_file(files)
+                    if init:
+                        node_path = path + sub
+                        out[os.path.normcase(os.path.join(dirpath, init))] = (
+                            ".".join(node_path[:-1]), node_path[-1], klass(init))
                     for f in files:
                         if f.endswith((".luau", ".lua")) and not f.startswith("init."):
                             out[os.path.normcase(os.path.join(dirpath, f))] = (
@@ -142,6 +150,15 @@ def rojo_targets(project_file):
 
     walk(tree, [])
     return out
+
+
+def _init_file(files):
+    """The init script Rojo accepts for a directory, in its precedence order, or None."""
+    for candidate in ("init.luau", "init.lua", "init.server.luau", "init.server.lua",
+                      "init.client.luau", "init.client.lua"):
+        if candidate in files:
+            return candidate
+    return None
 
 
 def _push_code(parent, name, klass, text):
@@ -158,9 +175,14 @@ def _push_code(parent, name, klass, text):
         + "if not inst then inst = Instance.new(%s) inst.Name = %s inst.Parent = node end\n" % (json.dumps(klass), json.dumps(name))
         + "local src = %s\n" % long_string(text)
         + "inst.Source = src\n"
+        "-- Read back what Studio actually stored: hashing the string we just sent proves nothing.\n"
+        "local ok, got = pcall(function() return inst.Source end)\n"
+        "if not ok or type(got) ~= 'string' then return 'UNVERIFIED' end\n"
         "local a, b = 1, 0\n"
-        "for i = 1, #src do a = (a + string.byte(src, i)) % 65521 b = (b + a) % 65521 end\n"
-        "return #src .. ':' .. (b * 65536 + a)\n"
+        "for i = 1, #got do a = (a + string.byte(got, i)) % 65521 b = (b + a) % 65521 end\n"
+        "local stamp = #got .. ':' .. (b * 65536 + a)\n"
+        "if got == src then return 'SYNCED ' .. stamp end\n"
+        "return 'MISMATCH ' .. stamp"
     )
 
 
@@ -170,6 +192,7 @@ def push(paths, project_file="default.project.json", studio_id=None):
         raise ForgeError("RBF-ARG-001", "no Rojo project file at %s" % project_file,
                          hint="run from the project root or pass --project")
     targets = rojo_targets(project_file)
+    project_root = os.path.dirname(os.path.abspath(project_file))
     files = list(targets) if paths == ["ALL"] else [os.path.normcase(os.path.abspath(p)) for p in paths]
     results = []
     with Session(studio_id) as s:
@@ -182,9 +205,14 @@ def push(paths, project_file="default.project.json", studio_id=None):
                 text = fh.read().replace("\r\n", "\n")
             want = adler(text)
             got = s.luau(_push_code(parent, name, klass, text)).strip()
-            results.append({"file": os.path.relpath(f), "target": "%s.%s" % (parent, name),
-                            "ok": got.endswith(want), "got": got, "want": want})
-    return {"pushed": sum(r["ok"] for r in results), "failed": sum(not r["ok"] for r in results),
+            state = ("synced" if got.startswith("SYNCED") and got.endswith(want) else
+                     "mismatch" if got.startswith("MISMATCH") else "unverified")
+            results.append({"file": os.path.relpath(f, project_root), "target": "%s.%s" % (parent, name),
+                            "state": state, "ok": state == "synced", "got": got, "want": want})
+    synced = [r for r in results if r["state"] == "synced"]
+    return {"pushed": len(synced), "failed": len(results) - len(synced),
+            "mismatched": [r for r in results if r["state"] == "mismatch"],
+            "unverified": [r for r in results if r["state"] == "unverified"],
             "results": results,
             "note": "Edit-mode sources changed; stop/start Play to run them, and the owner saves the place"}
 
@@ -222,5 +250,9 @@ def server_test(path, attr, timeout=120, studio_id=None):
     )
     with Session(studio_id, timeout=timeout + 30) as s:
         out = s.luau(code, "Server")
-    return {"test": path, "result": out, "passed": "PASS" in out and "FAIL" not in out and "TIMEOUT" not in out}
+    # The test writes "PASS ..." or "FAIL ..."; a substring test let NOT_PASS through as a pass.
+    first = next((line.strip() for line in (out or "").splitlines() if line.strip()), "")
+    outcome = "pass" if re.match(r"^PASS\b", first) else (
+        "fail" if re.match(r"^(FAIL|NOT_PASS|TIMEOUT)\b", first) else "unknown")
+    return {"test": path, "result": first, "outcome": outcome, "passed": outcome == "pass"}
 

@@ -1,8 +1,13 @@
 """Verification receipts: evidence records, not claims.
 
-A receipt says what was and was not proven. Claims without playtest
-evidence are recorded as UNVERIFIED - the receipt is honest even when the
-agent writing it is optimistic.
+A receipt separates two things that used to be mixed together:
+
+  claimed   what the agent says it did
+  observed  what the tooling actually saw (Studio id, place, execution context,
+            test results, console output, screenshots)
+
+Only `observed` promotes a receipt to a verified level. Claims are recorded on the
+receipt so a reader can see the gap, but a claim alone never becomes evidence.
 """
 import hashlib
 import json
@@ -10,6 +15,11 @@ import os
 import time
 
 from . import paths
+
+GAMEPLAY_CHECKS = (
+    "studio_connected", "core_loop_exists", "player_spawns", "primary_action_works",
+    "gameplay_path_exercised", "console_checked",
+)
 
 
 def _previous_digest(out_dir):
@@ -55,29 +65,58 @@ def _required_checks():
     }
 
 
-def receipt(task, checks=None, console_errors=0, playtest_performed=False,
+def _unique_path(out_dir, stamp, safe):
+    """A receipt never overwrites another, even inside the same second."""
+    base = os.path.join(out_dir, "%s-%s" % (stamp, safe or "receipt"))
+    path = base + ".json"
+    n = 2
+    while os.path.exists(path):
+        path = "%s-%d.json" % (base, n)
+        n += 1
+    return path
+
+
+def receipt(task, checks=None, evidence=None, console_errors=0, playtest_performed=False,
             screenshot_captured=False, screenshot_inspected=False,
             limitations=None, project=None, save=True):
     """Build (and by default persist) a verification receipt.
 
-    `checks` may name any of the standard check ids as done. Everything else
-    stays explicitly false - absence of evidence is recorded as such.
+    `checks` are the agent's claims and are recorded as such. `evidence` is what the
+    tooling observed:
+
+        studio_id, place, datamodel      identity of the session the work happened in
+        checks {name: bool}              checks observed by tooling, not asserted
+        tests [{name, expected, actual, passed}]
+        console_logged                   console was actually read
+        screenshots [paths], screenshots_inspected
+        untested [str]                   scenarios deliberately not covered
     """
+    evidence = evidence if isinstance(evidence, dict) else {}
     state = _required_checks()
-    for name in (checks or []):
-        if name in state:
+
+    claimed = [name for name in (checks or []) if name in state]
+    raw_checks = evidence.get("checks")
+    observed_in = raw_checks if isinstance(raw_checks, dict) else {}
+    for name in state:
+        if observed_in.get(name) is True:
             state[name] = True
 
-    gameplay_evidence = all(state[k] for k in (
-        "studio_connected", "core_loop_exists", "player_spawns",
-        "primary_action_works", "gameplay_path_exercised", "console_checked"))
-    visual_evidence = bool(screenshot_captured and screenshot_inspected)
+    tests = [t for t in (evidence.get("tests") or []) if isinstance(t, dict)]
+    tests_ok = bool(tests) and all(t.get("passed") is True for t in tests)
+    console_logged = evidence.get("console_logged") is True
+    errors_now = int(console_errors or 0)
+    shots = evidence.get("screenshots") or []
+    visual = bool((shots and evidence.get("screenshots_inspected")) or
+                  (screenshot_captured and screenshot_inspected))
 
-    if gameplay_evidence and playtest_performed and console_errors == 0:
-        level = "verified_playtest"
-    elif gameplay_evidence and playtest_performed:
-        level = "playtested_with_errors"
-    elif gameplay_evidence:
+    gameplay_evidence = all(state[k] for k in GAMEPLAY_CHECKS)
+
+    if gameplay_evidence and tests_ok and playtest_performed:
+        if console_logged and errors_now == 0 and visual:
+            level = "verified_playtest"
+        else:
+            level = "playtested_with_errors"
+    elif gameplay_evidence or tests:
         level = "static_only"
     else:
         level = "unverified"
@@ -87,7 +126,17 @@ def receipt(task, checks=None, console_errors=0, playtest_performed=False,
         "project": project,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "checks": state,
-        "console_errors_reported": int(console_errors or 0),
+        "claimed_checks": claimed,
+        "evidence": {
+            "studio_id": evidence.get("studio_id"),
+            "place": evidence.get("place"),
+            "datamodel": evidence.get("datamodel"),
+            "console_logged": console_logged,
+            "screenshots": shots,
+            "tests": tests,
+            "untested": evidence.get("untested") or [],
+        },
+        "console_errors_reported": errors_now,
         "playtest_performed": bool(playtest_performed),
         "screenshot_captured": bool(screenshot_captured),
         "screenshot_inspected_by_vision": bool(screenshot_inspected),
@@ -98,7 +147,7 @@ def receipt(task, checks=None, console_errors=0, playtest_performed=False,
             "static_only": "exists; NOT runtime-proven",
             "unverified": "unverified - do not claim working",
         }[level],
-        "limitations": limitations or [],
+        "limitations": list(limitations or []) + list(evidence.get("untested") or []),
     }
     if save:
         out_dir = paths.receipts_dir()
@@ -106,7 +155,7 @@ def receipt(task, checks=None, console_errors=0, playtest_performed=False,
         rec["digest"] = _digest(rec)
         stamp = time.strftime("%Y%m%d-%H%M%S")
         safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in task)[:60]
-        file_path = os.path.join(out_dir, "%s-%s.json" % (stamp, safe or "receipt"))
+        file_path = _unique_path(out_dir, stamp, safe)
         with open(file_path, "w", encoding="utf-8") as fh:
             json.dump(rec, fh, indent=2)
         rec["saved_to"] = file_path

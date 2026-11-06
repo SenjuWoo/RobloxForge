@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 
 # Rung 1 tools: each absent one lowers coverage instead of failing the run.
 STATIC_TOOLS = {
@@ -89,11 +90,25 @@ def rung_static(root):
         targets = [d for d in ("src", "ServerScriptService") if os.path.isdir(os.path.join(root, d))]
         cfg = os.path.join(root, "selene.toml")
         argv = ["selene"] + (targets or ["."])
+        generated = None
         if os.path.isfile(cfg):
             argv += ["--config", cfg]
-        code, out = _run(argv, root)
+        else:
+            # With no config selene parses as Lua 5.1 and rejects valid Luau (compound assignment,
+            # `continue`, type annotations), which reads as a project defect. Use the Roblox std.
+            generated = _default_selene_config()
+            argv += ["--config", generated]
+        try:
+            code, out = _run(argv, root)
+        finally:
+            if generated:
+                try:
+                    os.remove(generated)
+                except OSError:
+                    pass
         rung["checks"].append({
-            "id": "selene", "status": "pass" if code == 0 else ("fail" if code else "skip"),
+            "id": "selene",
+            "status": "pass" if code == 0 else ("fail" if ("error[" in out or "error:" in out) else "warn"),
             "detail": "clean" if code == 0 else (out[:800] or "unknown")})
     else:
         rung["checks"].append({"id": "selene", "status": "skip",
@@ -117,13 +132,30 @@ def rung_static(root):
             argv.append("--sourcemap=%s" % sourcemap)
         if os.path.isfile(os.path.join(root, ".luaurc")):
             argv.append("--base-luaurc=%s" % os.path.join(root, ".luaurc"))
-        _, out = _run(argv + [root], root)
-        # luau-lsp exits non-zero only on diagnostics; parse the count.
-        errors = len(re.findall(r"error", out, re.I))
-        rung["checks"].append({
-            "id": "luau-lsp", "status": "fail" if errors else "pass",
-            "detail": out[:800] if errors else "no type errors"})
+        code, out = _run(argv + [root], root)
+        # Exit status decides, never a word search: "0 errors" contains "error", and a crashed
+        # typechecker (127, "terminated unexpectedly") prints no diagnostics at all. Diagnostics look
+        # like `src/a.luau:12:5: TypeError: ...`, so their absence is checked structurally.
+        diagnostics = re.findall(r"^[^\s:][^:]*\.lua?u?:\d+:\d+", out, re.M)
+        if code is None:
+            status, detail = "skip", "typechecker could not run: " + out[:600]
+        elif code == 0 and not diagnostics:
+            status, detail = "pass", "no type errors"
+        elif diagnostics:
+            status, detail = "fail", out[:800]
+        else:
+            # Non-zero with no diagnostics is a tool failure (crash, bad flag, killed process).
+            status, detail = "fail", "luau-lsp exited %s without diagnostics: %s" % (code, out[:600])
+        rung["checks"].append({"id": "luau-lsp", "status": status, "detail": detail})
     return rung
+
+
+def _default_selene_config():
+    """A minimal Roblox selene config for projects that ship none."""
+    fd, path = tempfile.mkstemp(prefix="rbforge-selene-", suffix=".toml")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write('std = "roblox"\nexclude = ["Packages/**"]\n')
+    return path
 
 
 def _find_definitions(root):
@@ -215,12 +247,17 @@ def rung_structure(root):
 
     project = os.path.join(root, "default.project.json")
     if os.path.isfile(project):
-        missing = _missing_project_paths(project, root)
-        rung["checks"].append({
-            "id": "project-map",
-            "status": "fail" if missing else "pass",
-            "detail": ("missing $path targets: " + ", ".join(missing)) if missing
-                      else "default.project.json targets all exist"})
+        missing, error = _missing_project_paths(project, root)
+        if error:
+            rung["checks"].append({
+                "id": "project-map", "status": "fail",
+                "detail": "default.project.json is unusable: " + error})
+        else:
+            rung["checks"].append({
+                "id": "project-map",
+                "status": "fail" if missing else "pass",
+                "detail": ("missing $path targets: " + ", ".join(missing)) if missing
+                          else "default.project.json targets all exist"})
 
     if files:
         # Always state coverage: "no findings" over zero files is not a pass.
@@ -230,12 +267,20 @@ def rung_structure(root):
 
 
 def _missing_project_paths(project_file, root):
-    """Every $path in a Rojo project must exist, or `rojo build` dies later."""
+    """Every $path in a Rojo project must exist, or `rojo build` dies later.
+
+    Returns (missing, error). A project file that cannot be parsed is reported as an error, never
+    as "no paths missing" - an unreadable config is exactly the state that breaks the build.
+    """
     try:
         with open(project_file, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except (OSError, ValueError):
-        return []
+    except OSError as exc:
+        return None, "unreadable (%s)" % exc
+    except ValueError as exc:
+        return None, "malformed JSON (%s)" % exc
+    if not isinstance(data, dict):
+        return None, "root is %s, expected an object" % type(data).__name__
     missing = []
 
     def walk(node):
@@ -250,7 +295,7 @@ def _missing_project_paths(project_file, root):
                 walk(value)
 
     walk(data)
-    return sorted(set(missing))
+    return sorted(set(missing)), None
 
 
 # ----------------------------------------------------------------- aggregation
