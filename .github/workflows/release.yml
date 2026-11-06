@@ -24,8 +24,10 @@ jobs:
 
       # The suite parses generated Luau with selene; without it that gate fails rather than
       # skipping, which is what caught the invalid push script.
-      - name: Install selene (Luau parser for the generated-code tests)
-        run: python scripts/install_selene.py
+      - name: Install the pinned Luau toolchain (parser + formatter)
+        run: |
+          python scripts/install_selene.py
+          python scripts/install_stylua.py
 
       - name: Gate the tag (never publish a tree that fails its own tests)
         run: python tests/run_tests.py

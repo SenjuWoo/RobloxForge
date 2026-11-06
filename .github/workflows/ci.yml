@@ -26,8 +26,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install selene (the Luau parser the generated-code tests need)
-        run: python scripts/install_selene.py
+      - name: Install the pinned Luau toolchain (parser + formatter)
+        run: |
+          python scripts/install_selene.py
+          python scripts/install_stylua.py
 
       - name: Byte-compile every module (catches syntax errors before tests)
         run: python -m compileall -q src mcp_server tests
