@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.12.2 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.13.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## Gaps to close (next session)
 
@@ -20,12 +20,21 @@ claim checkable.
 2. **E2E weak-model benchmark** (`tests/agent-benchmarks`) has not been run - it is the 1.0.0 gate.
 3. **`luau-lsp` skip** is still the normal case: no `globalTypes.d.luau` on this machine, so the type rung never runs
    here. Install definitions (or set `RBFORGE_LUAU_DEFINITIONS`) to exercise the exit-status fix against a real tool.
-4. **Receipt provenance is a label, not a signature.** `collect_evidence()` is the only path that sets
+4. **Receipt provenance is an id, not a signature.** An observation id proves the record came from
+   `collect_evidence`, but an agent that can run that tool can also run a throwaway test; the guard is the
+   expiry, the Studio/place binding and the honest levels, not cryptography. An agent with full write access
+   to the receipts directory can still forge files.
+5. **Historical note (0.12.x).** `collect_evidence()` is the only path that sets
    `provenance="tool"`, and agent evidence caps at `playtest_claimed` - but a caller can still pass
    `provenance="tool"` by hand. Real tamper-resistance needs the tool to sign its observations.
 
 ## Done (verified)
 
+- 0.13.0: verified status requires an observation recorded by RobloxForge (`rb_collect_evidence` ->
+  `observation_id`), not a caller-asserted provenance; one function decides the level so receipts cannot
+  contradict themselves; new `playtest_observed_partial`; receipts are serialized under a file lock with a
+  monotonic sequence and `verify_chain()`; Rojo projects without a `tree` fail; push honours declared parent
+  classes and refuses ambiguous hierarchy; `--changed-only` linting. 58/58 tests.
 - 0.12.2: second audit pass. A crashed linter fails instead of warning; mixed push batches report
   `unmapped`/`unreadable` without raising; receipts reserve names atomically and chain in creation order;
   evidence carries provenance (`tool` via `collect_evidence`, `agent` otherwise) and agent evidence caps at
