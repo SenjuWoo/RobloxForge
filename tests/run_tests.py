@@ -2157,36 +2157,55 @@ def _():
     assert unique != base and not os.path.exists(unique), unique
 
 
-def _prepared_root():
-    """(src, root) with one installed skill whose roblox-docs copy the user then edited.
+@contextlib.contextmanager
+def installed_tree(old_schema=False, extra=None):
+    """A throwaway skill source, root and home with the installer's globals patched.
 
-    One stable home per test, restored in _cleanup with the other patched globals: a lambda that makes
-    a new directory per call leaks into later tests and leaves temp dirs behind.
+    One context manager for every installer test: it patches `skills.paths.skills_source_dir`,
+    `skills.roots_for` and `skills.paths.home`, yields (src, root, home), and on the way out restores
+    every one of them and deletes the three temporary directories. Tests must not invent their own
+    cleanup, or a leaked lambda keeps making directories long after the test ends.
     """
     from rbforge import skills
+
     src = tempfile.mkdtemp(prefix="rbf-src-")
     root = tempfile.mkdtemp(prefix="rbf-root-")
     home = tempfile.mkdtemp(prefix="rbf-home-")
-    orig = (skills.paths.skills_source_dir, skills.roots_for, skills.paths.home)
-    skills.paths.home = lambda: home
-    for name in skills.OUR_SKILLS:
-        os.makedirs(os.path.join(src, name))
-        open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+    original = (skills.paths.skills_source_dir, skills.roots_for, skills.paths.home)
+    added = []
+
+    def sandbox_agent(name="sbx-tmp"):
+        skills._ROOTS[name] = ("RBFORGE_%s_SKILLS" % name.upper().replace("-", ""), (root,))
+        added.append(name)
+        return name
+
     skills.paths.skills_source_dir = lambda: src
     skills.roots_for = lambda agent: [root]
-    _sandbox_agent(skills, root, "sbx-prep")
-    skills.install(["sbx-prep"])
-    edited = os.path.join(root, "roblox-docs", "SKILL.md")
-    open(edited, "w").write("# user edit that must survive")
-    return src, root, edited, orig
-
-
-def _cleanup(skills, root, src, orig):
-    skills.paths.skills_source_dir, skills.roots_for, skills.paths.home = orig
-    skills._ROOTS.pop("sbx-prep", None)
-    import shutil as _sh
-    _sh.rmtree(root, ignore_errors=True)
-    _sh.rmtree(src, ignore_errors=True)
+    skills.paths.home = lambda: home
+    try:
+        for name in skills.OUR_SKILLS:
+            os.makedirs(os.path.join(src, name), exist_ok=True)
+            open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
+        if old_schema:
+            dst = os.path.join(root, "roblox-docs")
+            shutil.copytree(os.path.join(src, "roblox-docs"), dst)
+            skills._write_knowledge_pointer(dst, src)
+            files = {rel: skills._sha(os.path.join(dst, rel.replace("/", os.sep)))
+                     for rel in skills._manifest_files(dst)}
+            with open(os.path.join(dst, skills.MANIFEST), "w", encoding="utf-8") as fh:
+                json.dump({"version": "0.13.10", "files": files}, fh)
+            with open(os.path.join(dst, skills.STAMP), "w", encoding="utf-8") as fh:
+                fh.write("0.13.10")
+        agent = sandbox_agent()
+        if extra:
+            extra(root)
+        yield src, root, home, agent
+    finally:
+        for name in added:
+            skills._ROOTS.pop(name, None)
+        skills.paths.skills_source_dir, skills.roots_for, skills.paths.home = original
+        for path in (root, src, home):
+            shutil.rmtree(path, ignore_errors=True)
 
 
 @check("skills: a copy that dies after creating its stage leaves no debris")
@@ -2265,9 +2284,12 @@ def _():
 @check("skills: an activation failure restores the skill that was in flight")
 def _():
     from rbforge import skills
-    src, root, edited, orig = _prepared_root()
-    real_replace = skills.os.replace
-    try:
+    with installed_tree() as (src, root, home, agent):
+        skills.install([agent])
+        edited = os.path.join(root, "roblox-docs", "SKILL.md")
+        open(edited, "w").write("# user edit that must survive")
+        real_replace = skills.os.replace
+
         def fails_on_activation(a, b):
             if ".rbforge-stage" in str(a) and str(b).endswith("roblox-docs"):
                 raise OSError("activation blocked")
@@ -2275,26 +2297,26 @@ def _():
 
         skills.os.replace = fails_on_activation
         try:
-            skills.install(["sbx-prep"])
             raised = False
-        except Exception:  # noqa: BLE001
-            raised = True
+            try:
+                skills.install([agent])
+            except Exception:  # noqa: BLE001
+                raised = True
         finally:
             skills.os.replace = real_replace
         restored = os.path.isfile(edited) and open(edited).read() == "# user edit that must survive"
-    finally:
-        _cleanup(skills, root, src, orig)
     assert raised, "a failed activation was reported as success"
     assert restored, "the in-flight skill was left in its backup"
-
 
 @check("skills: a restore that also fails reports ROLLBACK_FAILED and keeps the backup")
 def _():
     from rbforge import skills
-    src, root, edited, orig = _prepared_root()
-    home, orig_home = _home_for(skills)
-    real_replace = skills.os.replace
-    try:
+    with installed_tree() as (src, root, home, agent):
+        skills.install([agent])
+        edited = os.path.join(root, "roblox-docs", "SKILL.md")
+        open(edited, "w").write("# edited")
+        real_replace = skills.os.replace
+
         def fails_both_ways(a, b):
             if ".rbforge-stage" in str(a) and str(b).endswith("roblox-docs"):
                 raise OSError("activation blocked")
@@ -2306,21 +2328,17 @@ def _():
         try:
             error = None
             try:
-                skills.install(["sbx-prep"])
+                skills.install([agent])
             except Exception as exc:  # noqa: BLE001
                 error = exc
         finally:
             skills.os.replace = real_replace
         code = getattr(error, "code", None)
         backups = _backups_in(home, "roblox-docs")
-    finally:
-        _cleanup(skills, root, src, orig)
-        skills.paths.home = orig_home
     assert error is not None, "no error was raised"
     assert code == "RBF-SKILL-005", code
     assert "ROLLBACK_FAILED" in str(error), error
     assert backups, "the previous copy was not preserved"
-
 
 @check("skills: an edited KNOWLEDGE-PATH.txt survives uninstall")
 def _():
@@ -2501,79 +2519,43 @@ def _old_schema_install(skills, root, src, name="roblox-docs", version="0.13.10"
     return dst
 
 
-def _prepared_old_tree(extra=None):
-    from rbforge import skills
-    src = tempfile.mkdtemp(prefix="rbf-src-")
-    root = tempfile.mkdtemp(prefix="rbf-root-")
-    home = tempfile.mkdtemp(prefix="rbf-home-")
-    skills.paths.home = lambda: home
-    for name in skills.OUR_SKILLS:
-        os.makedirs(os.path.join(src, name))
-        open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
-    dst = _old_schema_install(skills, root, src)
-    made = extra(dst) if extra else None
-    return src, root, dst, made
-
-
 @check("skills: a 0.13.10 manifest with no dirs still backs up a user directory on upgrade")
 def _():
     from rbforge import skills
-    src, root, dst, made = _prepared_old_tree(
-        lambda d: (os.makedirs(os.path.join(d, "mine")), os.path.join(d, "mine"))[1])
-    orig = (skills.paths.skills_source_dir, skills.roots_for)
-    home, orig_home = _home_for(skills)
-    skills.paths.skills_source_dir = lambda: src
-    skills.roots_for = lambda agent: [root]
-    _sandbox_agent(skills, root, "sbx-old")
-    try:
-        result = skills.install(["sbx-old"])
+
+    def add_dir(_root):
+        pass
+
+    with installed_tree(old_schema=True) as (src, root, home, agent):
+        os.makedirs(os.path.join(root, "roblox-docs", "mine"))
+        result = skills.install([agent])
         backups = _backups_in(home, "roblox-docs")
         saved = os.path.isdir(os.path.join(backups[0], "mine")) if backups else False
-    finally:
-        skills.paths.skills_source_dir, skills.roots_for = orig
-        skills.paths.home = orig_home
-        del skills._ROOTS["sbx-old"]
-        import shutil as _sh
-        _sh.rmtree(root, ignore_errors=True); _sh.rmtree(src, ignore_errors=True)
-        _sh.rmtree(home, ignore_errors=True)
     assert backups, "the old-schema install was replaced without a backup: %s" % result
     assert saved, "the user's directory was not preserved in the backup"
-
 
 @check("skills: the same migration preserves a link and never touches its target")
 def _():
     from rbforge import skills
     target = tempfile.mkdtemp(prefix="rbf-target-")
     open(os.path.join(target, "precious.txt"), "w").write("outside")
-    kind = {"v": None}
-
-    def add_link(d):
-        kind["v"] = _make_link(os.path.join(d, "outside"), target)
-        return os.path.join(d, "outside")
-
-    src, root, dst, link = _prepared_old_tree(add_link)
-    orig = (skills.paths.skills_source_dir, skills.roots_for)
-    home, orig_home = _home_for(skills)
-    skills.paths.skills_source_dir = lambda: src
-    skills.roots_for = lambda agent: [root]
-    _sandbox_agent(skills, root, "sbx-oldlink")
+    made = {"v": None}
     try:
-        skills.install(["sbx-oldlink"])
-        backups = _backups_in(home, "roblox-docs")
-        saved = os.path.lexists(os.path.join(backups[0], "outside")) if backups else False
-        target_alive = os.path.isfile(os.path.join(target, "precious.txt"))
+        with installed_tree(old_schema=True) as (src, root, home, agent):
+            made["v"] = _make_link(os.path.join(root, "roblox-docs", "outside"), target)
+            if not made["v"]:
+                raise AssertionError("no link could be created on this host")
+            skills.install([agent])
+            backups = _backups_in(home, "roblox-docs")
+            saved = os.path.lexists(os.path.join(backups[0], "outside")) if backups else False
+            target_alive = os.path.isfile(os.path.join(target, "precious.txt"))
     finally:
-        skills.paths.skills_source_dir, skills.roots_for = orig
-        skills.paths.home = orig_home
-        del skills._ROOTS["sbx-oldlink"]
         import shutil as _sh
-        _sh.rmtree(root, ignore_errors=True); _sh.rmtree(src, ignore_errors=True)
-        _sh.rmtree(target, ignore_errors=True); _sh.rmtree(home, ignore_errors=True)
-    assert kind["v"], "no link could be created on this host"
+        _sh.rmtree(target, ignore_errors=True)
+    assert made["v"], "no link could be created on this host"
     assert backups, "the link was dropped without a backup"
     assert saved, "the link is not in the backup"
     assert target_alive, "the link target was modified"
-
 
 @check("skills: adjacent directory links are all inventoried")
 def _():
@@ -2628,32 +2610,19 @@ def _():
 @check("skills: an edited pointer survives a cross-version upgrade in a backup")
 def _():
     from rbforge import skills
-    src, root, dst, _made = _prepared_old_tree(None)
-    pointer = os.path.join(dst, "KNOWLEDGE-PATH.txt")
-    open(pointer, "w").write("edited before the upgrade")
-    orig = (skills.paths.skills_source_dir, skills.roots_for)
-    home, orig_home = _home_for(skills)
-    skills.paths.skills_source_dir = lambda: src
-    skills.roots_for = lambda agent: [root]
-    _sandbox_agent(skills, root, "sbx-ptr")
-    try:
-        state = skills.state_of(dst)
-        skills.install(["sbx-ptr"])
+    with installed_tree(old_schema=True) as (src, root, home, agent):
+        pointer = os.path.join(root, "roblox-docs", "KNOWLEDGE-PATH.txt")
+        open(pointer, "w").write("edited before the upgrade")
+        state = skills.state_of(os.path.join(root, "roblox-docs"))
+        skills.install([agent])
         backups = _backups_in(home, "roblox-docs")
         saved = None
         if backups:
             cand = os.path.join(backups[0], "KNOWLEDGE-PATH.txt")
             saved = open(cand).read() if os.path.isfile(cand) else None
-    finally:
-        skills.paths.skills_source_dir, skills.roots_for = orig
-        skills.paths.home = orig_home
-        del skills._ROOTS["sbx-ptr"]
-        import shutil as _sh
-        _sh.rmtree(root, ignore_errors=True); _sh.rmtree(src, ignore_errors=True)
     assert state != "current", state
     assert backups, "the upgrade dropped the edited pointer without a backup"
     assert saved == "edited before the upgrade", saved
-
 
 @check("types: project definitions win, then the cache, then a clear reason")
 def _():
@@ -2937,6 +2906,45 @@ def _():
     except ForgeError as exc:
         error = exc
     assert error is not None and error.code == "RBF-ARG-001", error
+
+
+@check("skills: a migration that fails is surfaced by install, not swallowed")
+def _():
+    from rbforge import skills
+    with installed_tree() as (src, root, home, agent):
+        stale = os.path.join(root, "roblox-docs.rbforge-backup-20260101-000000-abcd")
+        os.makedirs(stale)
+        open(os.path.join(stale, "SKILL.md"), "w").write("# old copy")
+        real_replace = skills.os.replace
+
+        def refuses_moves(a, b):
+            if ".rbforge-backup-" in str(a) and os.sep + "backups" + os.sep in str(b):
+                raise OSError("access denied")
+            return real_replace(a, b)
+
+        skills.os.replace = refuses_moves
+        try:
+            result = skills.install([agent])
+        finally:
+            skills.os.replace = real_replace
+        still_there = os.path.isdir(stale)
+    assert "MIGRATION FAILED" in result[agent], result
+    assert "access denied" in result[agent], result
+    assert still_there, "the test did not actually leave the backup in place"
+
+
+@check("tests: installed_tree restores every patched global and removes its temp dirs")
+def _():
+    from rbforge import paths, skills
+    before = (skills.paths.skills_source_dir, skills.roots_for, skills.paths.home)
+    with installed_tree() as (src, root, home, agent):
+        inside = (skills.paths.skills_source_dir, skills.roots_for, skills.paths.home)
+        dirs = (src, root, home)
+    after = (skills.paths.skills_source_dir, skills.roots_for, skills.paths.home)
+    assert inside != before, "the context manager did not patch anything"
+    assert after == before, (after, before)
+    assert not [d for d in dirs if os.path.isdir(d)], dirs
+    assert "sbx-tmp" not in skills._ROOTS, sorted(skills._ROOTS)
 
 
 if __name__ == "__main__":

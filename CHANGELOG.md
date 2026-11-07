@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.14.3 - 2026-11-06
+
+Maintenance pass: two reports that were being dropped, and test scaffolding that leaked.
+
+### Fixed
+- **A failed backup migration vanished.** `install()` called `migrate_backups()` and discarded the
+  report, so a backup that could not be moved out of a skill root stayed where agents load it as a
+  skill, with no word to the caller. `migrate_backups()` now returns per-agent results and `install()`
+  appends `migrated N backup(s) ...` or `MIGRATION FAILED: ...` to that agent's line - including the
+  skipped and blocked paths.
+- **Test scaffolding leaked.** `_prepared_root()` patched `paths.home` with a lambda that created a
+  fresh temporary directory on every call and was restored by a separate `_cleanup()` helper that some
+  tests bypassed. Both helpers are replaced by one `installed_tree()` context manager: it patches the
+  three globals, yields `(src, root, home, agent)`, and restores all of them and deletes the temp
+  directories on the way out.
+
+### Tests
+138 total (was 136): a migration that raises is surfaced by `install()` with the OSError text while the
+backup stays in place, and the context manager restores every patched global and removes its directories.
+
 ## 0.14.2 - 2026-11-06
 
 Routing that reads a project instead of a string, and a migration that only touches its own folders.

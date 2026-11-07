@@ -369,12 +369,15 @@ def migrate_backups(agents=None):
             raise ForgeError("RBF-ARG-001", "unknown agent %r" % agent,
                              hint="one of: %s" % ", ".join(_ROOTS))
     moved, failed = [], []
+    by_agent = {agent: {"moved": [], "failed": []} for agent in targets}
     for agent in targets:
         for root in roots_for(agent):
             try:
                 names = os.listdir(root)
             except OSError as exc:
-                failed.append("%s: %s" % (root, exc))
+                message = "%s: %s" % (root, exc)
+                failed.append(message)
+                by_agent[agent]["failed"].append(message)
                 continue
             for name in names:
                 if not any(name.startswith(skill + ".rbforge-backup-") for skill in OUR_SKILLS):
@@ -387,9 +390,12 @@ def migrate_backups(agents=None):
                     target = _unique(os.path.join(backup_root(), name))
                     os.replace(source, target)  # a rename: every byte inside moves with it
                     moved.append(target)
+                    by_agent[agent]["moved"].append(target)
                 except OSError as exc:
-                    failed.append("%s: %s" % (source, exc))
-    return {"moved": moved, "failed": failed}
+                    message = "%s: %s" % (source, exc)
+                    failed.append(message)
+                    by_agent[agent]["failed"].append(message)
+    return {"moved": moved, "failed": failed, "by_agent": by_agent}
 
 
 def _unique(path):
@@ -441,6 +447,17 @@ def _plan(agent):
     return roots, plan
 
 
+def _migration_note(migration, agent):
+    """What migration did for this agent, or "" - failures must reach the caller, not vanish."""
+    report = (migration.get("by_agent") or {}).get(agent) or {}
+    parts = []
+    if report.get("moved"):
+        parts.append("migrated %d backup(s) out of a skill root" % len(report["moved"]))
+    if report.get("failed"):
+        parts.append("MIGRATION FAILED: " + "; ".join(report["failed"]))
+    return ("; " + "; ".join(parts)) if parts else ""
+
+
 def install(agents=None):
     """Copy our skills into every skill root each agent has, as one transaction per root."""
     from . import __version__
@@ -451,17 +468,18 @@ def install(agents=None):
             raise ForgeError("RBF-ARG-001", "unknown agent %r" % agent,
                              hint="one of: %s" % ", ".join(_ROOTS))
     results = {}
-    migrate_backups(targets)
+    migration = migrate_backups(targets)
     for agent in targets:
         roots, plan = _plan(agent)
         if not roots:
-            results[agent] = "skipped: no skill directory found"
+            results[agent] = "skipped: no skill directory found" + _migration_note(migration, agent)
             continue
         blocked = [msg for per in plan.values() for msg in per.values()
                    if isinstance(msg, str) and msg.startswith("blocked")]
         if blocked:
             # Nothing was written: a foreign skill anywhere cancels the whole batch.
-            results[agent] = "blocked before any change: " + "; ".join(sorted(set(blocked)))
+            results[agent] = ("blocked before any change: " + "; ".join(sorted(set(blocked)))
+                              + _migration_note(migration, agent))
             continue
 
         src_root = paths.skills_source_dir()
@@ -548,7 +566,7 @@ def install(agents=None):
             if skipped:
                 parts.append("already current %d" % len(skipped))
             notes.append("%s: %s" % (root, "; ".join(parts) or "nothing to do"))
-        results[agent] = " | ".join(notes)
+        results[agent] = " | ".join(notes) + _migration_note(migration, agent)
     return results
 
 

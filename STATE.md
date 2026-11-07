@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.14.2 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.14.3 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
