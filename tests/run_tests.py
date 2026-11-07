@@ -2158,15 +2158,20 @@ def _():
 
 
 def _prepared_root():
-    """(src, root) with one installed skill whose roblox-docs copy the user then edited."""
+    """(src, root) with one installed skill whose roblox-docs copy the user then edited.
+
+    One stable home per test, restored in _cleanup with the other patched globals: a lambda that makes
+    a new directory per call leaks into later tests and leaves temp dirs behind.
+    """
     from rbforge import skills
     src = tempfile.mkdtemp(prefix="rbf-src-")
     root = tempfile.mkdtemp(prefix="rbf-root-")
-    skills.paths.home = lambda: tempfile.mkdtemp(prefix="rbf-home-")
+    home = tempfile.mkdtemp(prefix="rbf-home-")
+    orig = (skills.paths.skills_source_dir, skills.roots_for, skills.paths.home)
+    skills.paths.home = lambda: home
     for name in skills.OUR_SKILLS:
         os.makedirs(os.path.join(src, name))
         open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
-    orig = (skills.paths.skills_source_dir, skills.roots_for)
     skills.paths.skills_source_dir = lambda: src
     skills.roots_for = lambda agent: [root]
     _sandbox_agent(skills, root, "sbx-prep")
@@ -2177,7 +2182,7 @@ def _prepared_root():
 
 
 def _cleanup(skills, root, src, orig):
-    skills.paths.skills_source_dir, skills.roots_for = orig
+    skills.paths.skills_source_dir, skills.roots_for, skills.paths.home = orig
     skills._ROOTS.pop("sbx-prep", None)
     import shutil as _sh
     _sh.rmtree(root, ignore_errors=True)
@@ -2500,7 +2505,8 @@ def _prepared_old_tree(extra=None):
     from rbforge import skills
     src = tempfile.mkdtemp(prefix="rbf-src-")
     root = tempfile.mkdtemp(prefix="rbf-root-")
-    skills.paths.home = lambda: tempfile.mkdtemp(prefix="rbf-home-")
+    home = tempfile.mkdtemp(prefix="rbf-home-")
+    skills.paths.home = lambda: home
     for name in skills.OUR_SKILLS:
         os.makedirs(os.path.join(src, name))
         open(os.path.join(src, name, "SKILL.md"), "w").write("# " + name)
@@ -2841,6 +2847,96 @@ def _():
             del skills._ROOTS["sandbox"]
     assert not inside, inside
     assert kept, "no backup was taken outside the skill root"
+
+
+@check("optimize: 'ai' in 'terrain' and 'map' in 'bitmap' do not route")
+def _():
+    from rbforge import optimize
+    with tempdir() as root:
+        open(os.path.join(root, "Main.server.luau"), "w").write(
+            "local terrain = workspace.Terrain\nlocal bitmap = 'x'\n")
+        terrain = optimize.profile(root, "simple terrain obby")
+        bitmap = optimize.profile(root, "bitmap UI tutorial")
+        roadmap = optimize.profile(root, "roadmapping tutorial for beginners")
+    assert not [i for i in terrain["level_b"] if i["id"] == "npc"], terrain["level_b"]
+    assert not [i for i in bitmap["level_b"] if i["id"] == "streaming"], bitmap["level_b"]
+    assert not [i for i in roadmap["level_b"] if i["id"] == "streaming"], roadmap["level_b"]
+
+
+@check("optimize: comments in the source do not route a project")
+def _():
+    from rbforge import optimize
+    with tempdir() as root:
+        open(os.path.join(root, "Main.server.luau"), "w").write(
+            "-- TODO: maybe PathfindingService and RemoteEvent later\nlocal x = 1\n")
+        prof = optimize.profile(root, "simple obby")
+    assert prof["level_b"] == [], prof["level_b"]
+
+
+@check("optimize: an invalid project directory is an explicit error")
+def _():
+    from rbforge import optimize
+    from rbforge.errors import ForgeError
+    missing = os.path.join(tempfile.gettempdir(), "rbf-does-not-exist-%d" % os.getpid())
+    error = None
+    try:
+        optimize.profile(missing, "multiplayer city")
+    except ForgeError as exc:
+        error = exc
+    assert error is not None and error.code == "RBF-ARG-003", error
+
+
+@check("optimize: no readable source is reported, not called 'small'")
+def _():
+    from rbforge import optimize
+    with tempdir() as root:
+        prof = optimize.profile(root, "")
+    assert prof["source"] == "none", prof
+    assert "small project" not in prof["next"], prof["next"]
+    assert "no readable Luau source" in prof["next"], prof["next"]
+
+
+@check("skills: migration moves only our backups and reports what it cannot move")
+def _():
+    from rbforge import skills
+    with tempdir() as root, tempdir() as home:
+        ours = os.path.join(root, "roblox-docs.rbforge-backup-20260101-000000-abcd")
+        theirs = os.path.join(root, "my-tool.rbforge-backup-20260101-000000-ffff")
+        os.makedirs(ours)
+        open(os.path.join(ours, "SKILL.md"), "w").write("# ours")
+        os.makedirs(theirs)
+        open(os.path.join(theirs, "keep.txt"), "w").write("not ours")
+        old = (skills.paths.home, skills.roots_for)
+        skills.paths.home = lambda: home
+        skills.roots_for = lambda agent: [root]
+        skills._ROOTS["sbxmig"] = ("RBFORGE_MIG_SKILLS", (root,))
+        try:
+            report = skills.migrate_backups(["sbxmig"])
+        finally:
+            skills.paths.home, skills.roots_for = old
+            del skills._ROOTS["sbxmig"]
+        moved_names = [os.path.basename(p) for p in report["moved"]]
+        ours_gone = not os.path.isdir(ours)
+        theirs_alive = os.path.isdir(theirs)
+        content = os.path.isfile(os.path.join(home, "backups",
+                                              "roblox-docs.rbforge-backup-20260101-000000-abcd",
+                                              "SKILL.md"))
+    assert moved_names and ours_gone, report
+    assert theirs_alive, "an unrelated directory was relocated"
+    assert content, "the backup lost its contents"
+    assert report["failed"] == [], report
+
+
+@check("skills: migration refuses an unknown agent before touching anything")
+def _():
+    from rbforge import skills
+    from rbforge.errors import ForgeError
+    error = None
+    try:
+        skills.migrate_backups(["definitely-not-an-agent"])
+    except ForgeError as exc:
+        error = exc
+    assert error is not None and error.code == "RBF-ARG-001", error
 
 
 if __name__ == "__main__":

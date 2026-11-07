@@ -357,28 +357,39 @@ def backup_root():
 
 
 def migrate_backups(agents=None):
-    """Move backups that older versions left inside skill roots into the private backup folder."""
-    moved = []
-    for agent in (agents or list(_ROOTS)):
+    """Move backups that older versions left inside skill roots into the private backup folder.
+
+    Only directories named after one of our own skills are touched - `<skill>.rbforge-backup-*` - so an
+    unrelated folder whose name merely contains that marker is left alone. Failures are reported, not
+    swallowed, and every agent name is validated before anything is read or moved.
+    """
+    targets = list(agents or _ROOTS)
+    for agent in targets:
+        if agent not in _ROOTS:
+            raise ForgeError("RBF-ARG-001", "unknown agent %r" % agent,
+                             hint="one of: %s" % ", ".join(_ROOTS))
+    moved, failed = [], []
+    for agent in targets:
         for root in roots_for(agent):
             try:
                 names = os.listdir(root)
-            except OSError:
+            except OSError as exc:
+                failed.append("%s: %s" % (root, exc))
                 continue
             for name in names:
-                if ".rbforge-backup-" not in name:
-                    continue
+                if not any(name.startswith(skill + ".rbforge-backup-") for skill in OUR_SKILLS):
+                    continue  # not ours, even if the marker appears somewhere in the name
                 source = os.path.join(root, name)
                 if not os.path.isdir(source):
                     continue
-                target = _unique(os.path.join(backup_root(), name))
-                os.makedirs(backup_root(), exist_ok=True)
                 try:
-                    os.replace(source, target)
+                    os.makedirs(backup_root(), exist_ok=True)
+                    target = _unique(os.path.join(backup_root(), name))
+                    os.replace(source, target)  # a rename: every byte inside moves with it
                     moved.append(target)
-                except OSError:
-                    pass
-    return moved
+                except OSError as exc:
+                    failed.append("%s: %s" % (source, exc))
+    return {"moved": moved, "failed": failed}
 
 
 def _unique(path):
@@ -435,12 +446,13 @@ def install(agents=None):
     from . import __version__
 
     targets = agents or list(_ROOTS)
-    results = {}
-    migrate_backups(targets)
     for agent in targets:
         if agent not in _ROOTS:
             raise ForgeError("RBF-ARG-001", "unknown agent %r" % agent,
                              hint="one of: %s" % ", ".join(_ROOTS))
+    results = {}
+    migrate_backups(targets)
+    for agent in targets:
         roots, plan = _plan(agent)
         if not roots:
             results[agent] = "skipped: no skill directory found"

@@ -146,10 +146,13 @@ def new_project(path, genre="generic", premise=""):
     agent should do next, so the first session starts with intent instead of
     setup.
     """
-    from . import planning
+    from . import optimize, planning
 
     result = scaffold(path, genre)
     plan = planning.vertical_slice(genre, premise or "a first playable slice")
+    # A new project starts small: the profile is computed from the real (empty-ish) source, so it
+    # reports level A only and says so instead of attaching a pipeline nobody needs yet.
+    guidance = optimize.profile(path, premise or genre)
 
     lines = [
         "# Plan: %s" % (premise or "first slice"),
@@ -173,9 +176,13 @@ def new_project(path, genre="generic", premise=""):
         lines += ["", "## Do not do this", plan["anti_pattern"]]
     lines += [
         "",
+        "## Optimization (recheck when a new system lands)",
+        optimize.render(guidance),
+        "",
         "## Commands",
         "```",
         "rbforge check .        # offline gate; run before every playtest",
+        'rbforge optimize --premise "<what this game is>"   # levels for THIS project',
         "```",
         "Rungs 1-3 must be clean (or their skips named) before any Studio playtest.",
         "",
@@ -186,6 +193,7 @@ def new_project(path, genre="generic", premise=""):
         fh.write("\n".join(lines))
 
     return {
+        "optimization": guidance,
         "path": result["path"],
         "genre": genre,
         "files": result["files"] + [os.path.relpath(plan_path, path).replace(os.sep, "/")],

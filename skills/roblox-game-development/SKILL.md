@@ -55,6 +55,19 @@ screen_capture + INSPECT       -> only claim visual success if you actually look
 fix, re-run, THEN expand       -> vertical slice proven before adding systems
 ```
 
+## When to ask for optimization guidance
+
+Run `rbforge optimize --premise "<what the game is>"` (JSON, or `--text`) at three moments only:
+
+- when a project starts - `rbforge new` already writes the profile into `PLAN.md`;
+- when a new system lands that could dominate cost (streaming, NPC crowds, physics assemblies,
+  procedural generation, persistence);
+- when something is measurably slow, before choosing a fix.
+
+It returns level A always, level B only for what the request and source actually contain, and the
+measurement level C would need. It is routing, not proof: nothing in it says a game is optimized,
+and a small obby gets no pipeline. If the root has no readable source it says so instead of guessing.
+
 ## Hard rules
 
 1. **Vertical slices only.** Never build map + economy + UI + inventory + shop

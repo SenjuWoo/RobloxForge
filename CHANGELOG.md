@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.14.2 - 2026-11-06
+
+Routing that reads a project instead of a string, and a migration that only touches its own folders.
+
+### Fixed
+- **Substring routing.** `ai` matched `terrain`, `map` matched `bitmap` and `roadmapping`. Premises are
+  now matched as whole words or whole phrases (plurals included), and the source scan ignores comments,
+  so a `-- TODO: PathfindingService` line no longer routes a project to NPC guidance.
+- **A nonexistent `--root` was silently "a small project".** It now raises `RBF-ARG-003` and the CLI
+  exits 2 with `{"ok": false, "error": ...}`.
+- **No readable source was called "small".** The result carries `source: "none"` and says the verdict is
+  unavailable until the project has scripts.
+- **Backup migration moved anything with `.rbforge-backup-` in its name.** It now only accepts
+  `<our-skill>.rbforge-backup-*`, validates every agent name first (`RBF-ARG-001`), moves whole
+  directories by rename, and returns `{moved, failed}` instead of swallowing errors.
+- **Test isolation:** `_prepared_root()` installed a `paths.home` lambda that created a new temp
+  directory on every call and was never restored. One stable home per test now, restored with the other
+  patched globals in `_cleanup`.
+
+### Added
+- `rbforge new` writes the optimization profile into `PLAN.md` and returns it as `optimization`, so a
+  new project starts with guidance that matches its (nearly empty) source instead of boilerplate.
+- The primary skill says when to run `rbforge optimize`: project start, a new dominant system, or a
+  measured slowdown - not on every change.
+
+### Tests
+136 total (was 130): terrain obby -> no NPC, bitmap UI -> no streaming, roadmapping -> no streaming,
+comment-only mentions -> nothing, invalid root -> error, no-source wording, migration moves only ours
+(contents intact) and refuses an unknown agent.
+
 ## 0.14.1 - 2026-11-06
 
 Four trust defects, one of them visible in the agent UI as duplicate skills.

@@ -11,26 +11,26 @@ import re
 
 # Each rule: id, level, premise words, source patterns, and why it fires.
 _RULES = (
-    ("streaming", "B", ("large", "open world", "city", "district", "map", "island", "world"),
+    ("streaming", "B", ("large", "open world", "cities", "city", "districts", "district", "maps", "map", "island", "world"),
      (r"\bStreamingEnabled\b", r"\bRequestStreamAroundAsync\b"),
      "large worlds: streaming plus streaming-safe code, or distant content loads all at once"),
-    ("networking", "B", ("multiplayer", "pvp", "pvpve", "co-op", "players", "extraction"),
+    ("networking", "B", ("multiplayer", "pvp", "pvpve", "co-op", "players", "player", "extraction"),
      (r"RemoteEvent", r"RemoteFunction", r"UnreliableRemoteEvent"),
      "network traffic: batch updates, validate payloads, keep the server authoritative"),
-    ("npc", "B", ("npc", "enemy", "enemies", "companion", "ai", "horde", "boss"),
+    ("npc", "B", ("npc", "npcs", "enemy", "enemies", "companion", "companions", "ai", "hordes", "horde", "boss", "bosses"),
      (r"PathfindingService", r"Humanoid:MoveTo"),
      "many agents: stagger updates, cap population, clean up after death"),
-    ("physics", "B", ("physics", "vehicle", "ship", "ragdoll", "collision", "building"),
+    ("physics", "B", ("physics", "vehicles", "vehicle", "ships", "ship", "ragdoll", "collisions", "collision", "building"),
      (r"AssemblyLinearVelocity", r"ApplyImpulse", r"WeldConstraint"),
      "moving assemblies: simplify collisions, watch network ownership, measure the simulation cost"),
-    ("procedural", "B", ("procedural", "generated", "spaceship", "leviathan", "random", "infinite"),
+    ("procedural", "B", ("procedural", "generated", "spaceships", "spaceship", "leviathan", "random", "infinite"),
      (r"EditableMesh", r"Terrain:FillRegion", r"for .* do\s*$"),
      "runtime geometry: budget generation, chunk it, keep it deterministic and reusable"),
-    ("persistence", "B", ("save", "progression", "inventory", "economy", "profile"),
+    ("persistence", "B", ("save", "saves", "progression", "inventories", "inventory", "economy", "profile", "profiles"),
      (r"DataStoreService", r"ProfileStore", r"UpdateAsync"),
      "saved state: UpdateAsync correctness, session locking, migration path"),
     # A single ScreenGui is not an interface-heavy game; it needs more than one signal.
-    ("ui", "B", ("hud", "menu", "interface", "mobile", "touch", "controller", "gamepad"),
+    ("ui", "B", ("hud", "menus", "menu", "interfaces", "interface", "mobile", "touch", "controller", "controllers", "gamepad"),
      (r"ScreenGui", r"UIGridLayout", r"UIListLayout", r"UserInputService"),
      "interface-heavy: measure layout cost, scale for device and input"),
 )
@@ -56,6 +56,21 @@ _LEVEL_C = {
 }
 
 
+def _has_phrase(text, words):
+    """Whole-word or whole-phrase match: 'ai' must not fire on 'terrain', 'map' not on 'bitmap'."""
+    for word in words:
+        pattern = r"(?<![\w])" + re.escape(word).replace(r"\ ", r"\s+") + r"(?![\w])"
+        if re.search(pattern, text):
+            return True
+    return False
+
+
+def _strip_comments(source):
+    """Comments describe intent, not behaviour; matching on them routes a project by its prose."""
+    source = re.sub(r"--\[=*\[.*?\]=*\]", " ", source, flags=re.S)
+    return re.sub(r"--[^\n]*", " ", source)
+
+
 def _source_text(root, limit=400_000):
     chunks, total = [], 0
     for base, dirs, files in os.walk(root):
@@ -69,7 +84,7 @@ def _source_text(root, limit=400_000):
                     text = fh.read()
             except OSError:
                 continue
-            chunks.append(text)
+            chunks.append(_strip_comments(text))
             total += len(text)
             if total > limit:  # a scan, not a parse: cap it and stop
                 return "\n".join(chunks)
@@ -78,11 +93,17 @@ def _source_text(root, limit=400_000):
 
 def profile(root=".", premise=""):
     """A small, explainable set of priorities for this project."""
+    from .errors import ForgeError
+
+    if not os.path.isdir(root):
+        raise ForgeError("RBF-ARG-003", "not a project directory: %s" % root,
+                         hint="pass --root with a directory that exists")
     words = (premise or "").lower()
     source = _source_text(root)
+    have_source = bool(source.strip())
     items = []
     for rid, level, keywords, patterns, why in _RULES:
-        premise_hit = any(word in words for word in keywords)
+        premise_hit = _has_phrase(words, keywords)
         code_hits = sum(1 for pattern in patterns if re.search(pattern, source))
         if not premise_hit and code_hits < _MIN_HITS.get(rid, 1):
             continue
@@ -96,11 +117,15 @@ def profile(root=".", premise=""):
                       "measure_first": _LEVEL_C.get(rid)})
     return {
         "root": os.path.abspath(root),
+        "source": "scanned" if have_source else "none",
         "level_a": list(_LEVEL_A),
         "level_b": items,
         "note": "agent-guided routing, not measurement: nothing here claims the project is optimized",
         "next": ("apply level A, then only the level B items above; level C needs a measurement first"
-                 if items else "small project: level A only, skip the optimization machinery"),
+                 if items else
+                 ("small project: level A only, skip the optimization machinery" if have_source
+                  else "no readable Luau source here, so nothing was inferred: run this from the project "
+                       "root (or after the first scripts exist) before trusting a 'small' verdict")),
     }
 
 
