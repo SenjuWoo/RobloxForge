@@ -44,7 +44,7 @@ first; references carry the detail.
 
 ```
 rb_doctor / rb_capabilities   -> is Studio actually connected? (probe, don't assume)
-rbforge check .               -> offline gate: format, lint, types, structure
+rbforge check .               -> offline gate: format, lint, types, structure (types need `rbforge types fetch` once)
 inspect current place          -> search_game_tree / inspect_instance BEFORE writing anything
 plan smallest vertical slice   -> one playable loop, not the whole game
 implement                      -> server owns truth; client owns input/presentation
@@ -129,6 +129,7 @@ Before Studio, run `rbforge review --kind traps` (MCP `rb_traps_review`).
 - `references/sharp-edges.md` - the traps that break AI-built games
 - `references/game-design.md` - loop design and game-feel ("juice") matrices
 - `references/performance.md` - MicroProfiler-first optimization, known traps
+- `references/optimization-levels.md` - pick level A/B/C from project evidence; no universal budgets
 - `references/assets.md` - generative 3D/materials, procedural prop kits, Creator Store sanitization
 - `references/worldbuilding-lighting.md` - terrain generators and lighting presets
 - `references/free-stack.md` - the $0 rule, what is free, what to never pay for

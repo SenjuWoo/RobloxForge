@@ -11,8 +11,6 @@ from .errors import ForgeError
 
 _SERVER = '''--!strict
 -- Server entry point. Systems own authoritative state.
-local Systems = game:GetService("ServerScriptService"):WaitForChild("Systems")
-
 local Config = require(game:GetService("ReplicatedStorage"):WaitForChild("Config"))
 
 print("[server] booted with genre=" .. Config.Genre)
@@ -90,6 +88,20 @@ quote_style = "AutoPreferDouble"
 '''
 
 
+_PROJECT = """{
+  "name": "{genre}",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": { "$path": "src/shared" },
+    "ServerScriptService": { "$path": "src/server" },
+    "StarterPlayer": {
+      "StarterPlayerScripts": { "$path": "src/client" }
+    }
+  }
+}
+"""
+
+
 def scaffold(path, genre="generic"):
     genre = (genre or "generic").lower()
     if genre not in ("generic", "obby", "simulator", "tycoon"):
@@ -112,6 +124,9 @@ def scaffold(path, genre="generic"):
         os.path.join(path, ".luaurc"): _LUAURC,
         os.path.join(path, "selene.toml"): _SELENE,
         os.path.join(path, "stylua.toml"): _STYLUA,
+        # Rojo map: without it every `require` is unknown to the typechecker, and the project cannot
+        # be built from disk at all.
+        os.path.join(path, "default.project.json"): _PROJECT,
     }
     for d in dirs:
         os.makedirs(d, exist_ok=True)

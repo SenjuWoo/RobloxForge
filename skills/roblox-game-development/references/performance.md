@@ -50,3 +50,7 @@ If available through Studio's `skill` tool:
 6. compare before/after.
 
 "Use fewer parts" is not a performance analysis.
+
+Pick the level before the technique: `references/optimization-levels.md`. There are no
+universal texture, part-count or FPS budgets in this skill - record a measurement, name its device
+and conditions, and compare like with like.

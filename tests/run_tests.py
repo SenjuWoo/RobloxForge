@@ -885,12 +885,16 @@ def _():
     """A machine without StyLua is not a machine with clean formatting. If a
     skip could ever read as a pass, an agent would report verified work it never
     verified -- the exact failure this gate exists to prevent."""
-    from rbforge import check as check_mod
+    from rbforge import check as check_mod, types as types_mod
+    old_discover = types_mod.discover
+    types_mod.discover = lambda root, ref=None: (None, "no definitions in this fixture")
     with tempdir() as root:
         report = check_mod.run(root)
         assert report["status"] == "incomplete", report["status"]
         assert report["counts"]["skip"] > 0
         assert "do NOT report this as verified" in report["gate"]
+    types_mod.discover = old_discover
+
 
 @check("check: proven defects fail and name the file")
 
@@ -2605,6 +2609,77 @@ def _():
     assert state != "current", state
     assert backups, "the upgrade dropped the edited pointer without a backup"
     assert saved == "edited before the upgrade", saved
+
+
+@check("types: project definitions win, then the cache, then a clear reason")
+def _():
+    from rbforge import types as t
+    with tempdir() as root, tempdir() as cache:
+        old_cache = t.cache_dir
+        t.cache_dir = lambda: cache
+        try:
+            found, why = t.discover(root)
+            assert found is None and "types fetch" in why, (found, why)
+            cached = os.path.join(cache, "globalTypes-%s.d.luau" % t.REF)
+            open(cached, "w").write("x" * 2048)
+            found, source = t.discover(root)
+            assert source == "cache", (found, source)
+            project = os.path.join(root, "globalTypes.d.luau")
+            open(project, "w").write("y" * 2048)
+            found, source = t.discover(root)
+            assert source == "project" and found == project, (found, source)
+        finally:
+            t.cache_dir = old_cache
+
+
+@check("types: a payload that does not match the pin is refused, not cached")
+def _():
+    from rbforge import types as t
+    with tempdir() as cache:
+        old_cache, old_sha = t.cache_dir, t.SHA256
+        t.cache_dir = lambda: cache
+        t.SHA256 = "0" * 64
+        try:
+            error = None
+            try:
+                t.fetch(force=True)
+            except Exception as exc:  # noqa: BLE001
+                error = exc
+            cached = os.listdir(cache) if os.path.isdir(cache) else []
+        finally:
+            t.cache_dir, t.SHA256 = old_cache, old_sha
+    assert error is not None, "an unverified download was accepted"
+    assert "do not match" in str(error), error
+    assert not [n for n in cached if n.endswith(".d.luau")], cached
+
+
+@check("check: the typechecker runs with platform and definitions, and parses (line,col)")
+def _():
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        open(os.path.join(root, "a.luau"), "w").write("local x: number = 1\n")
+        defs = os.path.join(root, "globalTypes.d.luau")
+        open(defs, "w").write("--" + "x" * 2048)
+        calls = {}
+
+        def fake_run(argv, cwd, timeout=180):
+            calls["argv"] = argv
+            return 1, "a.luau(1,7): TypeError: Expected number, got string"
+
+        old_run, old_which = check_mod._run, check_mod.shutil.which
+        check_mod._run = fake_run
+        check_mod.shutil.which = lambda name: "C:/fake/" + name
+        os.environ["RBFORGE_LUAU_DEFINITIONS"] = defs
+        try:
+            rung = check_mod.rung_static(root)
+        finally:
+            check_mod._run, check_mod.shutil.which = old_run, old_which
+            os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
+    lsp = [c for c in rung["checks"] if c["id"] == "luau-lsp"][0]
+    assert any("--platform=roblox" == a for a in calls["argv"]), calls["argv"]
+    assert any(a.startswith("--definitions=@roblox=") for a in calls["argv"]), calls["argv"]
+    assert lsp["status"] == "fail", lsp
+    assert "(1,7)" in lsp["detail"], lsp
 
 
 if __name__ == "__main__":

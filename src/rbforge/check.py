@@ -156,7 +156,11 @@ def rung_static(root, changed=None):
 
     # luau-lsp without Roblox definitions reports `game`/`Instance` as unknown
     # and produces pure noise, so it runs only when definitions resolve.
-    defs = os.environ.get("RBFORGE_LUAU_DEFINITIONS") or _find_definitions(root)
+    from . import types as types_mod
+
+    defs, defs_source = types_mod.discover(root)
+    if defs is None:
+        defs = os.environ.get("RBFORGE_LUAU_DEFINITIONS") or _find_definitions(root)
     sourcemap = os.path.join(root, "sourcemap.json")
     if not shutil.which("luau-lsp"):
         rung["checks"].append({"id": "luau-lsp", "status": "skip",
@@ -164,10 +168,32 @@ def rung_static(root, changed=None):
     elif not defs:
         rung["checks"].append({
             "id": "luau-lsp", "status": "skip",
-            "detail": "no Roblox type definitions; set RBFORGE_LUAU_DEFINITIONS "
-                      "to globalTypes.d.luau (luau-lsp analyze --definitions=@roblox=...)"})
+            "detail": "no Roblox type definitions: run `rbforge types fetch` (offline: set "
+                      "RBFORGE_LUAU_DEFINITIONS to a globalTypes.d.luau)"})
     else:
-        argv = ["luau-lsp", "analyze", "--definitions=@roblox=%s" % defs]
+        argv = ["luau-lsp", "analyze", "--platform=roblox", "--definitions=@roblox=%s" % defs,
+                "--ignore=artifacts/**", "--ignore=backups/**", "--ignore=.git/**"]
+        generated_map = None
+        if not os.path.isfile(sourcemap):
+            # Without a sourcemap every `require` is "unknown", which buries real type errors. Rojo
+            # can produce one from the project file; it is a temp file, never written into the repo.
+            project_file = next((os.path.join(root, n) for n in
+                                 ("default.project.json", "default.project.jsonc", "rojo.json")
+                                 if os.path.isfile(os.path.join(root, n))), None)
+            if project_file and shutil.which("rojo"):
+                try:
+                    handle, candidate = tempfile.mkstemp(suffix=".sourcemap.json")
+                    os.close(handle)
+                    code, out = _run(["rojo", "sourcemap", "--output", candidate, project_file], root, 90)
+                    # An empty or failed sourcemap makes every require unknown again; use it only when
+                    # rojo actually produced one.
+                    if code == 0 and os.path.getsize(candidate) > 2:
+                        generated_map = candidate
+                    else:
+                        os.remove(candidate)
+                except OSError:
+                    generated_map = None
+            sourcemap = generated_map or sourcemap
         if os.path.isfile(sourcemap):
             argv.append("--sourcemap=%s" % sourcemap)
         if os.path.isfile(os.path.join(root, ".luaurc")):
@@ -176,17 +202,33 @@ def rung_static(root, changed=None):
         # Exit status decides, never a word search: "0 errors" contains "error", and a crashed
         # typechecker (127, "terminated unexpectedly") prints no diagnostics at all. Diagnostics look
         # like `src/a.luau:12:5: TypeError: ...`, so their absence is checked structurally.
-        diagnostics = re.findall(r"^[^\s:][^:]*\.lua?u?:\d+:\d+", out, re.M)
+        # luau-lsp prints `path(line,col): Kind: message`; older releases used `path:line:col`.
+        # It reports type errors and lint findings in the same stream - selene already owns lint, so
+        # only TypeError/SyntaxError blocks the gate, and lint-only output is a warning.
+        found = re.findall(
+            r"^\s*(\S.*?(?:\(\d+,\d+\)|:\d+:\d+)): (\w+): (.*)$", out, re.M)
+        blocking = [(loc, kind, msg) for loc, kind, msg in found if kind in ("TypeError", "SyntaxError")]
+        lint = [(loc, kind, msg) for loc, kind, msg in found if kind not in ("TypeError", "SyntaxError")]
         if code is None:
             status, detail = "skip", "typechecker could not run: " + out[:600]
-        elif code == 0 and not diagnostics:
+        elif blocking:
+            status, detail = "fail", "%d type error(s): " % len(blocking) + "; ".join(
+                "%s %s: %s" % (loc[-40:], kind, msg[:110]) for loc, kind, msg in blocking[:4])
+        elif lint:
+            status, detail = "warn", "%d lint finding(s), no type errors: %s" % (
+                len(lint), "; ".join("%s %s: %s" % (loc[-30:], kind, msg[:90])
+                                     for loc, kind, msg in lint[:3]))
+        elif code == 0:
             status, detail = "pass", "no type errors"
-        elif diagnostics:
-            status, detail = "fail", out[:800]
         else:
-            # Non-zero with no diagnostics is a tool failure (crash, bad flag, killed process).
+            # Non-zero with no readable diagnostics is a tool failure (crash, bad flag, killed process).
             status, detail = "fail", "luau-lsp exited %s without diagnostics: %s" % (code, out[:600])
         rung["checks"].append({"id": "luau-lsp", "status": status, "detail": detail})
+        if generated_map and os.path.isfile(generated_map):
+            try:
+                os.remove(generated_map)
+            except OSError:
+                pass
     return rung
 
 

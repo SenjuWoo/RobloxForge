@@ -44,6 +44,10 @@ def main(argv=None):
     p_tools = sub.add_parser("tools", help="optional Luau toolchain status")
     p_tools.add_argument("action", nargs="?", default="status", choices=["status"])
 
+    p_types = sub.add_parser("types", help="Roblox type definitions for the luau-lsp typecheck")
+    p_types.add_argument("action", nargs="?", default="status", choices=["status", "fetch"])
+    p_types.add_argument("--force", action="store_true", help="re-download even when cached")
+
     p_check = sub.add_parser("check", help="offline verification gate (run before Studio)")
     p_check.add_argument("--root", default=".", help="project directory to check")
     p_check.add_argument("--scope", nargs="+", choices=["static", "unit", "structure"],
@@ -158,6 +162,16 @@ def _dispatch(args):
 
     if args.cmd == "tools":
         _emit(tooling.status())
+        return ExitCode.OK
+
+    if args.cmd == "types":
+        from rbforge import types as types_mod
+
+        if args.action == "fetch":
+            path, digest, size = types_mod.fetch(force=args.force)
+            _emit({"ok": True, "path": path, "sha256": digest, "bytes": size})
+        else:
+            _emit(types_mod.status())
         return ExitCode.OK
 
     if args.cmd == "check":

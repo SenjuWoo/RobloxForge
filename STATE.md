@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.13.13 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.14.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -30,6 +30,7 @@ claim checkable.
 | Live Studio: full trust ladder | one observation produced `verified_playtest` (real PASS + clean console + inspected 250 KB JPEG); wrong `revision` and omitted `scenario` both degraded to `unverified` |
 | Live Studio: console + screenshot | `get_console_output` read; a real 240 KB `image/jpeg` captured and hashed |
 | Live Studio: rollback | engine refused a 210 KB `Source`; existing-script, new-script and class-change pushes all `rolled_back` with the previous state verified afterwards |
+| Live typecheck | `rbforge types fetch` + `luau-lsp analyze --platform=roblox` with a generated Rojo sourcemap; real diagnostics on the Haven project |
 | Unit-only | `ROLLBACK_FAILED` (a restore that itself fails) — not reachable through the documented API |
 | Unverified | published-place path, multiplayer, mobile, weak-model benchmark |
 

@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.14.0 - 2026-11-06
+
+The typecheck rung finally runs, and optimization advice is chosen instead of recited.
+
+### Added
+- `rbforge types status|fetch`: downloads the maintained Roblox definitions
+  (`JohnnyMorganz/luau-lsp@1.70.1 scripts/globalTypes.d.luau`, 851 KB) into
+  `%LOCALAPPDATA%\RobloxForge\types`, **verifies the pinned sha256 before caching**, and never
+  executes what it downloads. A project-local `globalTypes.d.luau`, `types/globalTypes.d.luau` or
+  `RBFORGE_LUAU_DEFINITIONS` wins over the cache.
+- The typecheck rung now resolves definitions in that order, runs `luau-lsp analyze --platform=roblox`,
+  and generates a temporary Rojo sourcemap when the project has a `default.project.json` and `rojo` is
+  installed - which is what turns every `require` from "unknown" into a checked call.
+- `references/optimization-levels.md`: level A (always), level B (feature-driven, with an evidence
+  table), level C (profiling required first), and the no-universal-budgets rule.
+
+### Fixed
+- The typecheck rung was a permanent skip on every machine: without definitions luau-lsp reports
+  `Unknown global 'Instance'` on every line, so the result was noise and got skipped.
+- Diagnostics were parsed as `path:line:col` only; luau-lsp prints `path(line,col)`, so real
+  diagnostics fell through as "exited 1 without diagnostics".
+- `--ignore` for `artifacts/**`, `backups/**`, `.git/**`: recovery copies were being typechecked.
+- Lint findings no longer fail the typecheck rung (selene owns lint); only `TypeError`/`SyntaxError`
+  block the gate, and lint-only output is a `warn`.
+- `rbforge new` now writes `default.project.json`; without it a fresh project could not be built from
+  disk and every require was unknown. The server template no longer declares an unused handle.
+
+### Verified
+- On DEADZONE: HAVEN the rung now runs against 71 files with the cached definitions and reports real
+  errors (e.g. `Viewmodel.luau(169,23): TypeError: Key 'lastYaw' not found`), where yesterday it
+  reported nothing at all.
+
 ## 0.13.13 - 2026-11-06
 
 One decision rule, one more case, caught by the reproduction rather than by a fresh install.
