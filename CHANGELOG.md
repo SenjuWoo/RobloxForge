@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.14.1 - 2026-11-06
+
+Four trust defects, one of them visible in the agent UI as duplicate skills.
+
+### Fixed
+- **Installer backups were written inside skill roots**, where every directory is a loadable skill: a
+  `roblox-audio.rbforge-backup-*` folder appeared as a duplicate skill in Hermes, Claude and Grok.
+  Backups now go to `%LOCALAPPDATA%\RobloxForge\backups\<skill>.<stamp>`, and `migrate_backups()`
+  sweeps leftovers out of every root on each install (12 removed on this machine, 0 left behind).
+- **An abnormal analyzer exit could be downgraded to `warn`.** Ordering is now: no process → skip;
+  exit not in (0, 1) → fail (luau-lsp documents 1 as "diagnostics"); type errors → fail; lint-only →
+  warn; else pass. Exit 127 with readable lint output is a failure, not a warning.
+- **Cached type definitions were trusted by size alone.** `discover()` now verifies the pinned sha256
+  before using the cache, reports a tampered cache with the refetch command, and memoises the digest on
+  (path, size, mtime) so one check does not rehash 850 KB repeatedly.
+- **The vendored performance skill still set a universal texture rule** ("1024² max for most"). It now
+  asks for a measurement at the target device tier; the amendment is disclosed in
+  `THIRD-PARTY-NOTICES.md`, and no other vendored file is modified.
+- A format-string bug in the ROLLBACK_FAILED message (two placeholders, one argument) surfaced through
+  the new backup-location tests and is fixed.
+
+### Added
+- `rbforge optimize --premise "..."`: picks level A always, level B only from evidence (request words
+  plus source patterns for streaming, networking, NPCs, physics, procedural generation, persistence,
+  UI), and names the measurement level C would need. It says plainly that it is agent-guided routing,
+  not measurement.
+
+### State
+- `STATE.md` no longer claims luau-lsp never runs; it records what now runs and the pin as the gap.
+
 ## 0.14.0 - 2026-11-06
 
 The typecheck rung finally runs, and optimization advice is chosen instead of recited.

@@ -44,6 +44,11 @@ def main(argv=None):
     p_tools = sub.add_parser("tools", help="optional Luau toolchain status")
     p_tools.add_argument("action", nargs="?", default="status", choices=["status"])
 
+    p_opt = sub.add_parser("optimize", help="which optimization levels this project has earned")
+    p_opt.add_argument("--root", default=".", help="project directory to scan")
+    p_opt.add_argument("--premise", default="", help="one line describing the game")
+    p_opt.add_argument("--text", action="store_true", help="human-readable instead of JSON")
+
     p_types = sub.add_parser("types", help="Roblox type definitions for the luau-lsp typecheck")
     p_types.add_argument("action", nargs="?", default="status", choices=["status", "fetch"])
     p_types.add_argument("--force", action="store_true", help="re-download even when cached")
@@ -162,6 +167,13 @@ def _dispatch(args):
 
     if args.cmd == "tools":
         _emit(tooling.status())
+        return ExitCode.OK
+
+    if args.cmd == "optimize":
+        from rbforge import optimize as opt_mod
+
+        prof = opt_mod.profile(args.root, args.premise)
+        _emit(prof if not args.text else {"text": opt_mod.render(prof)})
         return ExitCode.OK
 
     if args.cmd == "types":

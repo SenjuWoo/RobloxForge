@@ -350,6 +350,37 @@ def _write_knowledge_pointer(dst, src_root):
                      "Roblox Creator Hub documentation.\n")
 
 
+def backup_root():
+    """Where replaced copies go. Never inside a skill root: every directory there is a loadable skill,
+    and a backup named `roblox-audio.rbforge-backup-*` shows up as a duplicate skill in the agent UI."""
+    return os.path.join(paths.home(), "backups")
+
+
+def migrate_backups(agents=None):
+    """Move backups that older versions left inside skill roots into the private backup folder."""
+    moved = []
+    for agent in (agents or list(_ROOTS)):
+        for root in roots_for(agent):
+            try:
+                names = os.listdir(root)
+            except OSError:
+                continue
+            for name in names:
+                if ".rbforge-backup-" not in name:
+                    continue
+                source = os.path.join(root, name)
+                if not os.path.isdir(source):
+                    continue
+                target = _unique(os.path.join(backup_root(), name))
+                os.makedirs(backup_root(), exist_ok=True)
+                try:
+                    os.replace(source, target)
+                    moved.append(target)
+                except OSError:
+                    pass
+    return moved
+
+
 def _unique(path):
     """A path that does not exist yet - backups must never overwrite each other."""
     candidate, n = path, 1
@@ -405,6 +436,7 @@ def install(agents=None):
 
     targets = agents or list(_ROOTS)
     results = {}
+    migrate_backups(targets)
     for agent in targets:
         if agent not in _ROOTS:
             raise ForgeError("RBF-ARG-001", "unknown agent %r" % agent,
@@ -459,8 +491,9 @@ def install(agents=None):
                     dst = os.path.join(root, name)
                     backup = None
                     if os.path.isdir(dst):
-                        base = "%s.rbforge-backup-%s-%s" % (
-                            dst, time.strftime("%Y%m%d-%H%M%S"), os.urandom(2).hex())
+                        os.makedirs(backup_root(), exist_ok=True)
+                        base = os.path.join(backup_root(), "%s.%s-%s" % (
+                            name, time.strftime("%Y%m%d-%H%M%S"), os.urandom(2).hex()))
                         backup = _unique(base)
                         os.replace(dst, backup)
                     # The operation is in flight from this point: the original is already in the
@@ -485,8 +518,8 @@ def install(agents=None):
                 detail = "restored %s" % ", ".join(restored) if restored else "nothing to restore"
                 code = "RBF-SKILL-003"
                 if failed:
-                    detail += "; ROLLBACK_FAILED for %s - the previous copy is in " \
-                              "<name>.rbforge-backup-* beside the skill" % ", ".join(failed)
+                    detail += ("; ROLLBACK_FAILED for %s - the previous copy is under %s"
+                               % (", ".join(failed), backup_root()))
                     code = "RBF-SKILL-005"
                 raise ForgeError(code, "activation failed at %s: %s" % (agent, exc), hint=detail)
 

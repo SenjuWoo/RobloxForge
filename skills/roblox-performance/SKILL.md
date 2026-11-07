@@ -83,7 +83,9 @@ end)
   decorative meshes; `CanCollide/CanQuery/CanTouch = false` for pure decoration.
 - Lights: limit shadow-casting `PointLight`/`SpotLight`/`SurfaceLight`; limit `ParticleEmitter.Rate`
   and particle size (overdraw); `Beam`/`Trail` counts.
-- Textures/images: reuse, keep resolutions reasonable (1024² max for most); `SurfaceAppearance` sparingly.
+- Textures/images: reuse aggressively and size by measurement, not by rule - record memory and frame
+  time at the resolution you ship, on the device tier you target (a 1024² texture is fine on desktop
+  and wrong for a mobile crowd scene; 2048² can be right for one hero asset). `SurfaceAppearance` sparingly.
 - Enable streaming (`roblox-architecture`), `Model.LevelOfDetail = SLIM` for static models, and let
   `StreamOutBehavior = Opportunistic` free memory.
 

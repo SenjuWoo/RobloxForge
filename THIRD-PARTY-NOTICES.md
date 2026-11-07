@@ -33,3 +33,9 @@ treated as outdated and not relied upon.
 "Roblox" and "Roblox Studio" are trademarks of Roblox Corporation. This
 project is not affiliated with, endorsed by, or sponsored by Roblox
 Corporation.
+
+## Amendments to vendored text
+
+`skills/roblox-performance/SKILL.md` (EL4CTEO pack, MIT): one sentence that set a universal
+"1024² max for most" texture rule was replaced with measurement-based guidance, because a fixed
+resolution is wrong on one device tier and right on another. No other vendored file is modified.

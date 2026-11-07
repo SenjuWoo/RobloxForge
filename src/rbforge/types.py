@@ -59,8 +59,11 @@ def discover(root, ref=REF):
         if os.path.isfile(candidate) and os.path.getsize(candidate) > 1024:
             return candidate, "project"
     cached = cached_path(ref)
-    if os.path.isfile(cached) and os.path.getsize(cached) > 1024:
-        return cached, "cache"
+    if os.path.isfile(cached):
+        if _verified(cached):
+            return cached, "cache"
+        return None, ("cached definitions do not match the pinned digest; run `rbforge types fetch "
+                      "--force` (or set RBFORGE_LUAU_DEFINITIONS for your own file)")
     return None, ("no Roblox type definitions found; run `rbforge types fetch` "
                   "(or set RBFORGE_LUAU_DEFINITIONS)")
 
@@ -108,6 +111,25 @@ def status(ref=REF):
         "source": source,
         "luau_lsp": installed_version(),
     }
+
+
+_DIGESTS = {}
+
+
+def _verified(path, expected=None):
+    """True when this file matches its pin. Memoised on (path, size, mtime) so one check does not
+    rehash 850 KB several times; a touched file invalidates itself."""
+    expected = expected or SHA256
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return False
+    key = (os.path.normcase(os.path.abspath(path)), stat.st_size, stat.st_mtime_ns)
+    digest = _DIGESTS.get(key)
+    if digest is None:
+        digest = _sha(path)
+        _DIGESTS[key] = digest
+    return digest == expected
 
 
 def _sha(path):

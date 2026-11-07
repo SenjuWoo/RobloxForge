@@ -211,6 +211,11 @@ def rung_static(root, changed=None):
         lint = [(loc, kind, msg) for loc, kind, msg in found if kind not in ("TypeError", "SyntaxError")]
         if code is None:
             status, detail = "skip", "typechecker could not run: " + out[:600]
+        elif code not in (0, 1):
+            # luau-lsp documents 0 = clean and 1 = findings. Anything else is the tool itself failing
+            # (127 not found, crash, bad flag), and partial output must not downgrade that to a warn.
+            status, detail = "fail", "typechecker exited %s (not a diagnostics result): %s" % (
+                code, out[-400:])
         elif blocking:
             status, detail = "fail", "%d type error(s): " % len(blocking) + "; ".join(
                 "%s %s: %s" % (loc[-40:], kind, msg[:110]) for loc, kind, msg in blocking[:4])

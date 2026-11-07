@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.14.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.14.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -38,7 +38,7 @@ claim checkable.
 
 1. **Weak-model E2E benchmark** (`tests/agent-benchmarks`) has not been run — the 1.0.0 gate.
 2. **Published-place and multiplayer paths** are untested; the live work used an unpublished disposable place.
-3. **`luau-lsp` never runs here** (no `globalTypes.d.luau`); the exit-status fix is proven against a fake tool.
+3. **`luau-lsp` runs** since 0.14.0: `rbforge types fetch` caches the pinned definitions and the rung generates a Rojo sourcemap, so it produces real diagnostics (measured on the Haven project). Remaining gap: the pinned definitions are 1.70.1 until the pin is bumped.
 4. **The test suite needs a Luau parser** (`stylua` and/or `selene`); CI and the release install a pinned selene.
 5. **Provenance is an id, not a signature.** An observation proves RobloxForge recorded a run; an agent with write
    access to the receipts directory can still forge files. Documented, not hidden.
@@ -96,7 +96,7 @@ claim checkable.
 
 - 0.5.0: live-iteration reference, engine traps, geometry proofs and
   `templates/studio/` snippets from a real procedural build; snippets pass
-  stylua + selene through `rbforge check` (luau-lsp skipped: no definitions).
+  stylua + selene through `rbforge check`; luau-lsp also runs once `rbforge types fetch` has cached the definitions.
 
 - `rbforge check` gate: rungs 1-3 offline (format/lint/types, Lune unit specs,
   structural audit). Verified against a negative fixture that triggers
