@@ -114,9 +114,11 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install the pinned luau-lsp
+      # Two suite tests honestly refuse to pass without a Luau formatter, so install it here too.
+      - name: Install the pinned toolchain (luau-lsp + stylua)
         run: |
           python scripts/install_luau_lsp.py
+          python scripts/install_stylua.py
           echo "$PWD/.ci-tools" >> "$GITHUB_PATH"
 
       - name: Confirm the analyzer is the pinned build
