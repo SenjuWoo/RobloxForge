@@ -10,12 +10,15 @@ claim checkable.
 
 ## Version
 
-0.14.5 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.14.6 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
 | Area | Evidence |
 |---|---|
+| CLI surface | `check`, `check .`, `check --root .`, `check . --scope static` all execute; a positional/`--root` conflict exits 2 (test `cli: ...`) |
+| Luau semantic examples | extracted from `typing-luau.md` and re-analysed by pinned luau-lsp 1.70.1; CI job `luau-semantics` runs them with `RBFORGE_REQUIRE_LUAU_LSP=1` |
+| Diagnostic map | grouped by repository-relative path; `Server/init.luau` and `Client/init.luau` stay separate (test `check: two files with the same basename...`) |
 | Offline gate (`check`, traps, probes, review) | 82 automated tests + fixture projects |
 | Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
 | Receipts / observations | unit tests, including omission, mismatch, expiry, replay and tamper cases |

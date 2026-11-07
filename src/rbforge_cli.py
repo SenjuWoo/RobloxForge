@@ -54,7 +54,9 @@ def main(argv=None):
     p_types.add_argument("--force", action="store_true", help="re-download even when cached")
 
     p_check = sub.add_parser("check", help="offline verification gate (run before Studio)")
-    p_check.add_argument("--root", default=".", help="project directory to check")
+    # Both `rbforge check .` and `rbforge check --root .` are documented; accept either.
+    p_check.add_argument("path", nargs="?", help="project directory (same as --root)")
+    p_check.add_argument("--root", default=None, help="project directory to check")
     p_check.add_argument("--scope", nargs="+", choices=["static", "unit", "structure"],
                          help="limit which rungs run")
     p_check.add_argument("--changed-only", action="store_true",
@@ -188,7 +190,14 @@ def _dispatch(args):
 
     if args.cmd == "check":
         from rbforge import check as check_mod
-        report = check_mod.run(args.root, scope=args.scope, changed_only=args.changed_only,
+
+        if args.path and args.root and os.path.abspath(args.path) != os.path.abspath(args.root):
+            _emit({"error": "conflicting project paths",
+                   "detail": "pass the project directory once: `check [path]` or `check --root <dir>`",
+                   "path": args.path, "root": args.root})
+            return ExitCode.VALIDATION
+        target = args.path or args.root or "."
+        report = check_mod.run(target, scope=args.scope, changed_only=args.changed_only,
                                base_ref=args.base_ref)
         if args.json:
             _emit(report)

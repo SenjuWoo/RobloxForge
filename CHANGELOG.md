@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.14.6 - 2026-11-07
+
+Reliability pass on the 0.14.5 work: the documented command did not run, a "skip" counted as a pass,
+and the diagnostic map merged same-named files.
+
+### Fixed
+- **`rbforge check .` was documented everywhere and accepted nowhere.** The CLI only had `--root`.
+  `check` now takes an optional positional project path as well, keeps `--root` working, and refuses
+  a positional path that disagrees with `--root` (exit 2, explicit message) instead of silently
+  preferring one.
+- **A skipped test counted as a pass.** Any non-exception return was green, so the Luau semantic test
+  could report success without an analyzer on the machine. `tests/run_tests.py` now has a real SKIP
+  status, prints it separately, and reports `N passed, M failed, K skipped`.
+- **The doc test did not test the doc.** It embedded a copy of the example. It now extracts the
+  canonical block out of `typing-luau.md`, so the reference and the test cannot drift, and a guard
+  test proves a returned skip is never counted as a pass.
+- **Same-named files were merged in the diagnostic map.** Grouping by basename put
+  `src/Server/init.luau` and `src/Client/init.luau` in one bucket - common in Roblox projects. The map
+  now groups by repository-relative path and keeps the parent directory.
+- **"definitions ok" overclaimed.** File presence is not proof of a successful load; the line now says
+  `definitions present` / `sourcemap present`.
+- The new definition-using tests restore a pre-existing `RBFORGE_LUAU_DEFINITIONS` value instead of
+  deleting it.
+
+### Added
+- `scripts/install_luau_lsp.py` - pinned luau-lsp 1.70.1, per-platform asset, `.ci-tools/` (gitignored).
+- A dedicated `luau-semantics` CI job on one platform: installs the pinned analyzer, runs the suite
+  with `RBFORGE_REQUIRE_LUAU_LSP=1` so the semantic examples execute for real instead of skipping. The
+  other matrix legs stay tool-free and fast.
+
 ## 0.14.5 - 2026-11-07
 
 Correction pass on 0.14.4's guidance: one explanation was wrong, one recommendation was unsafe, and

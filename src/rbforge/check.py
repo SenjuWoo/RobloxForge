@@ -95,7 +95,7 @@ def changed_files(root, base_ref="HEAD"):
 
 
 
-def _summarize_diagnostics(blocking, code, defs, sourcemap):
+def _summarize_diagnostics(blocking, code, defs, sourcemap, root="."):
     """Compact map of where the type errors are, so an agent fixes a root cause instead of 4,000 leaves.
 
     Returns lines: totals, the worst files, the worst message kinds. Pure formating over the parsed
@@ -103,9 +103,19 @@ def _summarize_diagnostics(blocking, code, defs, sourcemap):
     """
     files = {}
     kinds = {}
+    root_abs = os.path.abspath(root)
     for loc, kind, msg in blocking:
         path = re.split(r"\(\d+,|:\d+:", loc)[0]
-        name = os.path.basename(path.replace("\\", "/"))
+        absolute = os.path.abspath(path)
+        if absolute.startswith(root_abs):
+            rel = os.path.relpath(absolute, root_abs)
+        else:
+            rel = path
+        rel = rel.replace("\\", "/")
+        # Roblox projects are full of same-named files (init.luau, Config.luau), so keep the parent
+        # directory: basename bucketing merged separate files into one count.
+        parts = rel.split("/")
+        name = "/".join(parts[-2:]) if len(parts) > 1 else parts[-1]
         files[name] = files.get(name, 0) + 1
         # The first sentence of a diagnostic is its kind; the rest is the specific type.
         head = msg.split(";")[0].split(":")[0][:60]
@@ -114,8 +124,8 @@ def _summarize_diagnostics(blocking, code, defs, sourcemap):
     worst_kinds = sorted(kinds.items(), key=lambda kv: -kv[1])[:5]
     lines = [
         "%d blocking diagnostic(s) in %d file(s); analyzer exit %s; definitions %s; sourcemap %s"
-        % (len(blocking), len(files), code, "ok" if defs else "missing",
-           "ok" if sourcemap else "missing"),
+        % (len(blocking), len(files), code, "present" if defs else "missing",
+           "present" if sourcemap else "missing"),
         "  worst files: " + ", ".join("%s %d" % (n, c) for n, c in worst_files),
         "  worst kinds: " + ", ".join("%s %d" % (k[1] or k[0], c) for k, c in worst_kinds),
     ]
@@ -245,7 +255,8 @@ def rung_static(root, changed=None):
             status, detail = "fail", "typechecker exited %s (not a diagnostics result): %s" % (
                 code, out[-400:])
         elif blocking:
-            summary = _summarize_diagnostics(blocking, code, bool(defs), bool(os.path.isfile(sourcemap)))
+            summary = _summarize_diagnostics(blocking, code, bool(defs),
+                                             bool(os.path.isfile(sourcemap)), root)
             status, detail = "fail", "%d type error(s): " % len(blocking) + "; ".join(
                 "%s %s: %s" % (loc[-40:], kind, msg[:110]) for loc, kind, msg in blocking[:3]
             ) + "\n" + summary

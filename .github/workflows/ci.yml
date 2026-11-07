@@ -101,3 +101,28 @@ jobs:
           assert r["rungs"], "gate produced no rungs"
           print("gate OK:", r["status"], r["counts"])
           EOF
+
+  # The Luau semantic examples in the docs are only real if a real analyzer runs them. One job, one
+  # platform: installing luau-lsp on all four matrix legs would download the same 20 MB four times for
+  # no extra coverage. The offline suite stays tool-free everywhere else.
+  luau-semantics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install the pinned luau-lsp
+        run: |
+          python scripts/install_luau_lsp.py
+          echo "$PWD/.ci-tools" >> "$GITHUB_PATH"
+
+      - name: Confirm the analyzer is the pinned build
+        run: luau-lsp --version
+
+      - name: Run the semantic examples against the real analyzer
+        env:
+          RBFORGE_REQUIRE_LUAU_LSP: "1"
+        run: python tests/run_tests.py

@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import rbforge  # noqa: E402
 from rbforge import errors as err_mod  # noqa: E402
 
-PASS, FAIL = [], []
+PASS, FAIL, SKIPPED = [], [], []
 
 def _fake_session(out):
     """A Studio session double that returns `out` from execute_luau."""
@@ -92,9 +92,15 @@ def _isolated_home():
 def check(name):
     def deco(fn):
         try:
-            fn()
-            PASS.append(name)
-            print("ok   %s" % name)
+            # A test that cannot run its subject returns "skip: <why>". That is never counted as a
+            # pass: an integration test that silently degrades to green is worse than no test.
+            outcome = fn()
+            if isinstance(outcome, str) and outcome.lower().startswith("skip"):
+                SKIPPED.append((name, outcome))
+                print("skip %s (%s)" % (name, outcome))
+            else:
+                PASS.append(name)
+                print("ok   %s" % name)
         except Exception as exc:  # noqa: BLE001
             FAIL.append((name, exc))
             print("FAIL %s: %r" % (name, exc))
@@ -2772,25 +2778,116 @@ def _():
     assert "127" in lsp["detail"], lsp
 
 
+@check("tests: a returned skip is reported as skipped, never counted as a pass")
+def _():
+    import runpy  # noqa: F401  (kept for clarity: the harness lives in this file)
+    before_pass, before_skip = len(PASS), len(SKIPPED)
+
+    @check("harness: deliberate skip probe")
+    def _probe():
+        return "skip: nothing to analyse"
+
+    assert len(SKIPPED) == before_skip + 1, SKIPPED[-1:]
+    assert len(PASS) == before_pass, "a skip was counted as a pass"
+    assert "skip" in SKIPPED[-1][1]
+    SKIPPED.pop()  # leave the run's counters as they were
+
+    @check("harness: deliberate pass probe")
+    def _probe2():
+        return None
+
+    assert len(PASS) == before_pass + 1
+    PASS.pop()
+
+
+@check("cli: check accepts a positional path, --root, and both scopes")
+def _():
+    import io
+    import contextlib
+    from rbforge_cli import main as cli_main
+    with tempdir() as root:
+        os.makedirs(os.path.join(root, "src"))
+        open(os.path.join(root, "src", "main.luau"), "w").write("--!strict\nreturn 1\n")
+        forms = [
+            ["check"],
+            ["check", "."],
+            ["check", "--root", "."],
+            ["check", ".", "--scope", "static"],
+        ]
+        for argv in forms:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = cli_main(argv)
+            # 0 clean, 2 a defect was proven, 4 tooling missing: all valid; an argparse error raises.
+            assert code in (0, 2, 4), (argv, code, buf.getvalue()[:200])
+
+
+@check("cli: conflicting positional path and --root is refused, not silently preferred")
+def _():
+    import io
+    import contextlib
+    from rbforge_cli import main as cli_main
+    with tempdir() as a, tempdir() as b:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = cli_main(["check", a, "--root", b])
+    assert code == 2, (code, buf.getvalue()[:200])
+    assert "conflicting project paths" in buf.getvalue(), buf.getvalue()[:200]
+
+
+@check("check: two files with the same basename stay separate in the summary")
+def _():
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        for sub in ("Server", "Client"):
+            os.makedirs(os.path.join(root, "src", sub))
+            open(os.path.join(root, "src", sub, "init.luau"), "w").write("return 1\n")
+        defs = os.path.join(root, "globalTypes.d.luau")
+        open(defs, "w").write("--" + "x" * 2048)
+        out = "\n".join([
+            os.path.join(root, "src", "Server", "init.luau") + "(1,1): TypeError: bad one",
+            os.path.join(root, "src", "Client", "init.luau") + "(2,1): TypeError: bad two",
+        ])
+
+        def fake_run(argv, cwd, timeout=180):
+            return 1, out
+
+        old_run, old_which = check_mod._run, check_mod.shutil.which
+        old_env = os.environ.get("RBFORGE_LUAU_DEFINITIONS")
+        check_mod._run = fake_run
+        check_mod.shutil.which = lambda name: "C:/fake/" + name
+        os.environ["RBFORGE_LUAU_DEFINITIONS"] = defs
+        try:
+            rung = check_mod.rung_static(root)
+        finally:
+            check_mod._run, check_mod.shutil.which = old_run, old_which
+            if old_env is None:
+                os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
+            else:
+                os.environ["RBFORGE_LUAU_DEFINITIONS"] = old_env
+    lsp = [c for c in rung["checks"] if c["id"] == "luau-lsp"][0]
+    assert "2 blocking diagnostic(s) in 2 file(s)" in lsp["detail"], lsp
+    assert "Server/init.luau 1" in lsp["detail"], lsp
+    assert "Client/init.luau 1" in lsp["detail"], lsp
+
+
 @check("docs: the sealed/unsealed table examples in typing-luau.md still behave as documented")
 def _():
-    # Guards the claim that was wrong once: annotated locals are sealed, bare literals are not, and a
-    # literal widens into an annotated destination. Skipped when the analyzer is not installed.
+    # The snippet is extracted from the reference itself, so the doc and the test cannot drift apart.
+    # Skipped when luau-lsp is absent - reported as a skip, never as a pass - unless CI demands it.
     from rbforge import check as check_mod
+    doc = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "skills", "roblox-game-development", "references", "typing-luau.md")
+    text = open(doc, encoding="utf-8").read()
+    blocks = re.findall(r"```lua\n(.*?)```", text, re.S)
+    snippet = next((b for b in blocks if "local a: { x: number }" in b), None)
+    assert snippet, "typing-luau.md no longer contains the sealed/unsealed example"
+
     if not check_mod.shutil.which("luau-lsp"):
-        return "skipped: luau-lsp not installed"
-    snippet = """--!strict
-local a: { x: number } = { x = 1 }
-a.y = 2
-local g = {}
-g.one = 1
-g.two = 2
-local function f(p: { x: number }) end
-f({ x = 1, extra = true })
-local budget: { [string]: { t: number, n: number } } = {}
-budget["k"] = { n = 0, t = 1 }
-return { a = a, g = g, budget = budget }
-"""
+        if os.environ.get("RBFORGE_REQUIRE_LUAU_LSP"):
+            raise AssertionError("luau-lsp is required here (RBFORGE_REQUIRE_LUAU_LSP) but not installed")
+        return "skip: luau-lsp not installed"
+
     with tempdir() as root:
         os.makedirs(os.path.join(root, "src"))
         open(os.path.join(root, "src", "cases.luau"), "w").write(snippet)
@@ -2823,6 +2920,7 @@ def _():
             return 2, ""  # crash / bad flag: no diagnostics at all
 
         old_run, old_which = check_mod._run, check_mod.shutil.which
+        old_env = os.environ.get("RBFORGE_LUAU_DEFINITIONS")
         check_mod._run = fake_run
         check_mod.shutil.which = lambda name: "C:/fake/" + name
         os.environ["RBFORGE_LUAU_DEFINITIONS"] = defs
@@ -2830,7 +2928,10 @@ def _():
             rung = check_mod.rung_static(root)
         finally:
             check_mod._run, check_mod.shutil.which = old_run, old_which
-            os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
+            if old_env is None:
+                os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
+            else:
+                os.environ["RBFORGE_LUAU_DEFINITIONS"] = old_env
     lsp = [c for c in rung["checks"] if c["id"] == "luau-lsp"][0]
     assert lsp["status"] == "fail", lsp
     assert "exited 2" in lsp["detail"], lsp
@@ -3045,7 +3146,9 @@ def _():
 
 
 if __name__ == "__main__":
-    print("\n%d passed, %d failed" % (len(PASS), len(FAIL)))
+    print("\n%d passed, %d failed, %d skipped" % (len(PASS), len(FAIL), len(SKIPPED)))
+    for name, why in SKIPPED:
+        print("  SKIPPED: %s -> %s" % (name, why))
     for name, exc in FAIL:
         print("  FAILED: %s -> %r" % (name, exc))
     sys.exit(1 if FAIL else 0)
