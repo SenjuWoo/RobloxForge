@@ -193,3 +193,23 @@ was invisible in the code and obvious in the capture.
 plain names (`{ Grass = ... }`) misses every time and falls through to its default. In an impact or
 surface-effect payload send `result.Material.Name`, and keep `tostring()` for logs only. The failure is
 silent: the effect still plays, it just plays the fallback for every surface.
+
+
+## Luau syntax that does not exist (and reads like a type error)
+
+- **No default parameter values.** `function f(a: string, b: number? = nil)` is a *syntax* error
+  (`Expected ')' ... got '='`) and can cascade into hundreds of bogus diagnostics in one file. Write
+  `b: number?` and pass `nil` explicitly at every call site that omits it.
+- **A line that starts with `(`** continues the previous expression. `local x = 1` followed by
+  `(tbl :: any).field()` is "Ambiguous syntax: this looks like an argument list". Assign to a local
+  first, or prefix the statement with `;`.
+- **Nullability is not optionality.** `material: Enum.Material?` still requires an argument. A helper
+  with four optional parameters has four-argument call sites, so pass the `nil`s.
+
+## Type errors cascade from untyped parameters
+
+`function M.Do(player, id)` gives `player` a generic type, which Luau then unifies against every call
+site; the failures are reported *at the callers*, as `Expected this to be 'Player', but got
+'{- Character: {- FindFirstChild: ... }}'`. That message means "the parameter was never typed", not
+"a wrong value was passed". Annotating the parameter fixes dozens of errors in one edit. See
+`typing-luau.md` for the full triage.

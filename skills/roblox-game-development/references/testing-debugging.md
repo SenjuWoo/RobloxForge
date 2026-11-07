@@ -177,3 +177,27 @@ A file that merely `return`s a value reports nothing: it was silently a 120 s `T
 as "the test hung" instead of "the test never reported". Newer builds return
 `INVALID: the test never sets workspace:<attr>` immediately - if you see `TIMEOUT`, check that the
 attribute name in the test matches the one the runner passes (`test_attr`, default `RbforgeTest`).
+
+
+## The MCP sandbox has its own `require` cache
+
+Code executed through the MCP's Luau sandbox gets a **separate module cache** from the running server.
+`require(ServerScriptService.Systems.DataManager)` there returns a fresh copy: it answers an empty
+`Profiles` table even while the game's HUD shows a loaded profile, and mutations you make in the
+sandbox are invisible to the game. Two consequences:
+
+- A test that needs live server state (a profile, an assigned plot, a spawned enemy) must run as a
+  real `Script` in `ServerScriptService`, not through the sandbox.
+- Do not diagnose "the game is broken" from a sandbox read of module state. Cross-check with
+  something the game writes: a `leaderstats` value, a workspace attribute, or the HUD text.
+
+Setting `Script.Source` from the sandbox is refused in Play mode
+(`cannot read 'Source' (lacking capability PluginOrOpenCloud)`), so a live test has to be pushed to
+the place from disk (Rojo mapping + `rb_studio_push`) before Play starts.
+
+## A cold-start `NoPath` is a navmesh bake, not bad geometry
+
+`PathfindingService` honors build order: a plot's navmesh is baked asynchronously, so a route computed
+immediately after `WorldReady` can answer `Enum.PathStatus.NoPath` while the same route succeeds two
+minutes later. Retry `ComputeAsync` for a bounded window (12 attempts x 0.5 s is plenty) and still
+fail if no route ever appears - that keeps the test honest without making it flaky.

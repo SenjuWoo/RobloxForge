@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.14.4 - 2026-11-07
+
+Knowledge from taking a real 72-file game from 4,815 type errors to zero, plus the two test-harness
+defects that hid failures behind a timeout.
+
+### Added
+- **`references/typing-luau.md`.** The triage that actually works: get the diagnostic distribution by
+  file and message before editing, then kill the four root causes - untyped parameters (generic
+  unification reports the failures at *call sites*), `nil` reassignment killing narrowing, sealed table
+  literals refusing to widen, and `--!strict` on procedural geometry. Includes the boundaries where a
+  cast is honest (`DataStore:UpdateAsync`'s structural twin, module-boundary tables) and why they need
+  a comment.
+
+### Changed
+- **`references/sharp-edges.md`** now opens with the Luau syntax that does not exist: no default
+  parameter values (`= nil` is a syntax error that cascades into hundreds of diagnostics), a line
+  starting with `(` is an ambiguous argument list, and a nullable parameter is still a required
+  argument.
+- **`references/testing-debugging.md`** documents that the MCP Luau sandbox has its **own `require`
+  cache**: module state read there is empty even while the game is running fine, `Script.Source`
+  cannot be written from it in Play mode, and live-state tests therefore need a pushed Script. Also
+  records that a cold-start `PathStatus.NoPath` is an asynchronous navmesh bake - retry `ComputeAsync`
+  for a bounded window instead of treating it as broken geometry.
+
 ## 0.14.3 - 2026-11-06
 
 Maintenance pass: two reports that were being dropped, and test scaffolding that leaked.

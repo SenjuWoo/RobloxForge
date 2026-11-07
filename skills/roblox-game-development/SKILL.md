@@ -143,6 +143,7 @@ Before Studio, run `rbforge review --kind traps` (MCP `rb_traps_review`).
 - `references/game-design.md` - loop design and game-feel ("juice") matrices
 - `references/performance.md` - MicroProfiler-first optimization, known traps
 - `references/optimization-levels.md` - pick level A/B/C from project evidence; no universal budgets
+- `references/typing-luau.md` - take a `--!strict` project to zero `luau-lsp` errors: root causes, syntax that does not exist, and which boundaries deserve a cast
 - `references/assets.md` - generative 3D/materials, procedural prop kits, Creator Store sanitization
 - `references/worldbuilding-lighting.md` - terrain generators and lighting presets
 - `references/free-stack.md` - the $0 rule, what is free, what to never pay for
