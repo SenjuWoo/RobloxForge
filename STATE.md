@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.14.4 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.14.5 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -176,3 +176,10 @@ python mcp_server\server.py        # stdio MCP, 12 tools
   installed across all agent roots, 29 tests green.
 - 2026-08-25 — 0.1.1: roblox-docs skill repaired.
 - 2026-08-22 — 0.1.0: initial core, CLI, MCP server, skills, tests.
+
+## Still unverified (do not claim these)
+
+- Weak-model end-to-end benchmark: no baseline-versus-Forge run yet. This gates 1.0.0.
+- Published-place workflow (Open Cloud upload, live server) - untested.
+- Multiplayer behaviour with more than one real client - untested.
+- Mobile device testing (touch UI, memory, thermal) - untested.

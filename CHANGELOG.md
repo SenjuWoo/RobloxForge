@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.14.5 - 2026-11-07
+
+Correction pass on 0.14.4's guidance: one explanation was wrong, one recommendation was unsafe, and
+the "how to verify" section taught a method that can report a crashed analyzer as clean.
+
+### Fixed
+- **The sealed/unsealed explanation was wrong.** Table literals are unsealed by default; a type
+  annotation is what seals a variable. A literal still widens into an annotated parameter or
+  dictionary index. `typing-luau.md` now shows the four verified cases, keeps the annotation, and
+  documents the real cause of the error that started this: a dictionary keyed by an instance type
+  reads as `T?`, and assigning a fresh table into that local does not un-optionalise it, so writing it
+  back into a non-optional slot fails. Fix with a fresh local, not by deleting the type.
+- **`--!strict` on procedural geometry is no longer described as a mistake.** Replaced with a
+  decision order (typed config, boundary validation, typed intermediates, narrow casts) and an
+  explicit escape-hatch policy: `--!nonstrict` needs concrete evidence in the header comment, every
+  `any` needs one line naming the invariant it relies on, and neither removes the tests.
+- **`grep -c Error` is gone from the guidance.** `check.py`'s contract is documented instead:
+  pass / fail / skip, with abnormal or silent analyzer exits as failures and missing definitions as a
+  skip, never a pass.
+- **Navmesh advice reconciled.** Wait for the world's ready signal, retry a bounded configurable
+  window, then treat `NoPath` as a genuine defect - the "available after a couple of minutes" note was
+  a warm-server observation and is no longer presented as a rule.
+- **Case studies are labelled as case studies.** Untyped-parameter cascades, config-driven builders
+  and the DataStore structural twin are scoped to the project they came from; the general language
+  rules are separated from them.
+
+### Added
+- **Diagnostic map in the failure detail.** A failing `luau-lsp` rung now prints the blocking count,
+  file count, analyzer exit, whether definitions and the sourcemap loaded, the worst files and the
+  worst diagnostic kinds - so a weak model can find a root cause instead of reading thousands of
+  repeated leaves. Pure formatting over diagnostics already parsed; no second analyzer.
+- Tests: a silent abnormal exit cannot be reported clean, the summary names the worst file and kind,
+  and the sealed/unsealed examples in `typing-luau.md` are re-run through the pinned analyzer so the
+  doc cannot rot back into a wrong claim.
+
 ## 0.14.4 - 2026-11-07
 
 Knowledge from taking a real 72-file game from 4,815 type errors to zero, plus the two test-harness

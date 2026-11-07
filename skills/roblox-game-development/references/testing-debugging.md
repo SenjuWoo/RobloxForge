@@ -195,9 +195,25 @@ Setting `Script.Source` from the sandbox is refused in Play mode
 (`cannot read 'Source' (lacking capability PluginOrOpenCloud)`), so a live test has to be pushed to
 the place from disk (Rojo mapping + `rb_studio_push`) before Play starts.
 
-## A cold-start `NoPath` is a navmesh bake, not bad geometry
+## A cold-start `NoPath` can be a navmesh bake - but it is still a failure if it persists
 
-`PathfindingService` honors build order: a plot's navmesh is baked asynchronously, so a route computed
-immediately after `WorldReady` can answer `Enum.PathStatus.NoPath` while the same route succeeds two
-minutes later. Retry `ComputeAsync` for a bounded window (12 attempts x 0.5 s is plenty) and still
-fail if no route ever appears - that keeps the test honest without making it flaky.
+`PathfindingService` bakes asynchronously, so a route computed the instant the world signals ready can
+answer `Enum.PathStatus.NoPath` even though the geometry is fine. Two rules keep this honest:
+
+- **Wait for the world's own ready signal first** (an attribute the builder sets after the last part
+  exists), then start the clock.
+- **Retry a bounded, configurable number of times** - 12 attempts x 0.5 s was measured sufficient for
+  six plots on one map; log the attempt that first succeeded so the budget stays evidence-based.
+- **After the window, `NoPath` is a real defect**, reported with the start/end positions and the
+  attempt count - never silently downgraded to a pass. A geometry regression and a slow bake look
+  identical on the first frame and completely different after the window.
+
+Do not assume "it becomes available after a couple of minutes" - that observation came from a warm
+server where the route had been computed before. Measure on a cold Play, then set the budget.
+
+## A clean static pass is not a working game
+
+`rbforge check` passing means formatting, lint and types are clean. It says nothing about network
+ownership, multiplayer authority, mobile layout, or frame time. Evidence for those comes from a played
+session: a test that exercises the remotes, a capture at the target resolution, and a MicroProfiler
+run when performance is claimed. Report them separately, and never let a green gate stand in for one.

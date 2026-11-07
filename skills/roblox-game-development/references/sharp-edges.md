@@ -209,7 +209,8 @@ silent: the effect still plays, it just plays the fallback for every surface.
 ## Type errors cascade from untyped parameters
 
 `function M.Do(player, id)` gives `player` a generic type, which Luau then unifies against every call
-site; the failures are reported *at the callers*, as `Expected this to be 'Player', but got
-'{- Character: {- FindFirstChild: ... }}'`. That message means "the parameter was never typed", not
-"a wrong value was passed". Annotating the parameter fixes dozens of errors in one edit. See
-`typing-luau.md` for the full triage.
+site, so the failures are reported *at the callers*:
+`Expected this to be 'Player', but got '{- Character: {- FindFirstChild: ... }}'`. That message
+usually means the parameter was never typed rather than that a wrong value was passed - but check the
+argument first, because a genuine `Instance` passed where a `Player` is required produces the same
+shape of message. Once the parameter is typed, the callers either pass. See `typing-luau.md`.

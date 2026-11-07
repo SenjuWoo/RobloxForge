@@ -94,6 +94,34 @@ def changed_files(root, base_ref="HEAD"):
     return sorted(set(files))
 
 
+
+def _summarize_diagnostics(blocking, code, defs, sourcemap):
+    """Compact map of where the type errors are, so an agent fixes a root cause instead of 4,000 leaves.
+
+    Returns lines: totals, the worst files, the worst message kinds. Pure formating over the parsed
+    diagnostics - no second analyzer, no re-run.
+    """
+    files = {}
+    kinds = {}
+    for loc, kind, msg in blocking:
+        path = re.split(r"\(\d+,|:\d+:", loc)[0]
+        name = os.path.basename(path.replace("\\", "/"))
+        files[name] = files.get(name, 0) + 1
+        # The first sentence of a diagnostic is its kind; the rest is the specific type.
+        head = msg.split(";")[0].split(":")[0][:60]
+        kinds[(kind, head)] = kinds.get((kind, head), 0) + 1
+    worst_files = sorted(files.items(), key=lambda kv: -kv[1])[:5]
+    worst_kinds = sorted(kinds.items(), key=lambda kv: -kv[1])[:5]
+    lines = [
+        "%d blocking diagnostic(s) in %d file(s); analyzer exit %s; definitions %s; sourcemap %s"
+        % (len(blocking), len(files), code, "ok" if defs else "missing",
+           "ok" if sourcemap else "missing"),
+        "  worst files: " + ", ".join("%s %d" % (n, c) for n, c in worst_files),
+        "  worst kinds: " + ", ".join("%s %d" % (k[1] or k[0], c) for k, c in worst_kinds),
+    ]
+    return "\n".join(lines)
+
+
 def rung_static(root, changed=None):
     """Format, lint and typecheck. Each tool is independent; absence is a skip.
 
@@ -217,8 +245,10 @@ def rung_static(root, changed=None):
             status, detail = "fail", "typechecker exited %s (not a diagnostics result): %s" % (
                 code, out[-400:])
         elif blocking:
+            summary = _summarize_diagnostics(blocking, code, bool(defs), bool(os.path.isfile(sourcemap)))
             status, detail = "fail", "%d type error(s): " % len(blocking) + "; ".join(
-                "%s %s: %s" % (loc[-40:], kind, msg[:110]) for loc, kind, msg in blocking[:4])
+                "%s %s: %s" % (loc[-40:], kind, msg[:110]) for loc, kind, msg in blocking[:3]
+            ) + "\n" + summary
         elif lint:
             status, detail = "warn", "%d lint finding(s), no type errors: %s" % (
                 len(lint), "; ".join("%s %s: %s" % (loc[-30:], kind, msg[:90])

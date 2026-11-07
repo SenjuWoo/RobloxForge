@@ -2772,6 +2772,103 @@ def _():
     assert "127" in lsp["detail"], lsp
 
 
+@check("docs: the sealed/unsealed table examples in typing-luau.md still behave as documented")
+def _():
+    # Guards the claim that was wrong once: annotated locals are sealed, bare literals are not, and a
+    # literal widens into an annotated destination. Skipped when the analyzer is not installed.
+    from rbforge import check as check_mod
+    if not check_mod.shutil.which("luau-lsp"):
+        return "skipped: luau-lsp not installed"
+    snippet = """--!strict
+local a: { x: number } = { x = 1 }
+a.y = 2
+local g = {}
+g.one = 1
+g.two = 2
+local function f(p: { x: number }) end
+f({ x = 1, extra = true })
+local budget: { [string]: { t: number, n: number } } = {}
+budget["k"] = { n = 0, t = 1 }
+return { a = a, g = g, budget = budget }
+"""
+    with tempdir() as root:
+        os.makedirs(os.path.join(root, "src"))
+        open(os.path.join(root, "src", "cases.luau"), "w").write(snippet)
+        defs = os.path.join(root, "globalTypes.d.luau")
+        open(defs, "w").write("--" + "x" * 2048)
+        old_env = os.environ.get("RBFORGE_LUAU_DEFINITIONS")
+        os.environ["RBFORGE_LUAU_DEFINITIONS"] = defs
+        try:
+            rung = check_mod.rung_static(root)
+        finally:
+            if old_env is None:
+                os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
+            else:
+                os.environ["RBFORGE_LUAU_DEFINITIONS"] = old_env
+    lsp = [c for c in rung["checks"] if c["id"] == "luau-lsp"][0]
+    assert lsp["status"] == "fail", lsp
+    assert "1 blocking diagnostic(s) in 1 file(s)" in lsp["detail"], lsp
+    assert "Cannot add property 'y'" in lsp["detail"], lsp
+
+
+@check("check: an analyzer that exits abnormally with no output is a failure, not an empty pass")
+def _():
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        open(os.path.join(root, "main.luau"), "w").write("print(1)\n")
+        defs = os.path.join(root, "globalTypes.d.luau")
+        open(defs, "w").write("--" + "x" * 2048)
+
+        def fake_run(argv, cwd, timeout=180):
+            return 2, ""  # crash / bad flag: no diagnostics at all
+
+        old_run, old_which = check_mod._run, check_mod.shutil.which
+        check_mod._run = fake_run
+        check_mod.shutil.which = lambda name: "C:/fake/" + name
+        os.environ["RBFORGE_LUAU_DEFINITIONS"] = defs
+        try:
+            rung = check_mod.rung_static(root)
+        finally:
+            check_mod._run, check_mod.shutil.which = old_run, old_which
+            os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
+    lsp = [c for c in rung["checks"] if c["id"] == "luau-lsp"][0]
+    assert lsp["status"] == "fail", lsp
+    assert "exited 2" in lsp["detail"], lsp
+
+
+@check("check: the failure detail maps the worst files and diagnostic kinds")
+def _():
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        open(os.path.join(root, "main.luau"), "w").write("print(1)\n")
+        defs = os.path.join(root, "globalTypes.d.luau")
+        open(defs, "w").write("--" + "x" * 2048)
+
+        lines = []
+        for i in range(7):
+            lines.append("src/Builder.luau(%d,7): TypeError: Unknown type used in - operation" % (i + 1))
+        lines.append("src/Other.luau(1,1): TypeError: Key 'Range' not found in external type 'Light'")
+        out = "\n".join(lines)
+
+        def fake_run(argv, cwd, timeout=180):
+            return 1, out
+
+        old_run, old_which = check_mod._run, check_mod.shutil.which
+        check_mod._run = fake_run
+        check_mod.shutil.which = lambda name: "C:/fake/" + name
+        os.environ["RBFORGE_LUAU_DEFINITIONS"] = defs
+        try:
+            rung = check_mod.rung_static(root)
+        finally:
+            check_mod._run, check_mod.shutil.which = old_run, old_which
+            os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
+    lsp = [c for c in rung["checks"] if c["id"] == "luau-lsp"][0]
+    assert lsp["status"] == "fail", lsp
+    assert "8 blocking diagnostic(s) in 2 file(s)" in lsp["detail"], lsp
+    assert "Builder.luau 7" in lsp["detail"], lsp
+    assert "analyzer exit 1" in lsp["detail"], lsp
+
+
 @check("types: a tampered cache is not trusted, and fetch repairs it")
 def _():
     from rbforge import types as t
