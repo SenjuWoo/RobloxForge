@@ -304,7 +304,8 @@ def glb_summary(path):
         "counts_geometry": False,
         "note": "counts come from accessor counts by primitive mode; vertex data is not inspected",
     }
-    if declared and declared != size:
+    if declared != size:
+        # Zero counts as a mismatch too: a header that disagrees with the file makes every number suspect.
         out["declared_bytes_mismatch"] = True
         problems.append("header declares %d bytes, file holds %d" % (declared, size))
         kinds.add(STATUS_UNVERIFIED)

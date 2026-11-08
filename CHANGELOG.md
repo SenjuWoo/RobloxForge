@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.15.3 - 2026-11-08
+
+Two reproduced result-contract bugs from 0.15.2, plus a collision in the publisher. No interface changes.
+
+### Fixed
+- **`prove()` returned a path to a file it had just deleted.** With no `--out`, the report path pointed into
+  the temporary working directory that the `finally` block removes, so `ok: true` came with a path that did
+  not exist. The report is already returned inline, so the result now says `report_path: null` with
+  `report_persisted: false` rather than claiming a persistent file. With `--out`, the path returned is the
+  one that was actually written.
+- **A GLB declaring a length of zero passed.** `if declared and declared != size` skipped the check whenever
+  the declared length was falsy. Any disagreement with the real file size is now a mismatch, including zero;
+  the file comes back `unverified` and the CLI exits non-zero.
+- **The publisher staged to a fixed filename.** `destination + ".rbf-tmp"` collided between concurrent
+  proves aimed at the same destination. Publication now stages through `tempfile.mkstemp()` in the
+  destination directory and `os.replace()`s it, removing the staging file on any failure without touching an
+  existing report.
+
+### Tests
+163 passed, 0 failed, 0 skipped. The new assertions were reproduced as failures before the fix: a report
+path that did not exist, and a zero-length header returning `within_limit`. Coverage added for every
+returned `report_path` (must exist or be null), zero/exact/undersized/oversized/truncated declared lengths
+with CLI exit codes, and a publication that cannot happen leaving an unrelated report byte-identical.
+
 ## 0.15.2 - 2026-11-08
 
 Three reproduced false-success paths, closed. No new features.

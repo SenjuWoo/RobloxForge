@@ -194,20 +194,33 @@ def prove(spec, out_path=None, res=None, configured=None, python=None, timeout=6
                 out["reason"] = "report could not be written to %s" % out_path
                 return out
         else:
-            out["report_path"] = report_path.replace("\\", "/")
+            # The working copy dies with this call, so no path is claimed: the report is returned inline.
+            out["report_path"] = None
+            out["report_persisted"] = False
         return out
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
 def _publish(source, destination):
-    """Copy a validated report to where the caller asked for it, atomically. Existing file survives failure."""
+    """Copy a validated report to where the caller asked for it, atomically.
+
+    The staging file is unique per call, so two concurrent proves targeting the same destination cannot
+    corrupt each other, and a failed write never removes the report that was already there.
+    """
+    staged = None
     try:
         directory = os.path.dirname(os.path.abspath(destination))
         os.makedirs(directory, exist_ok=True)
-        staged = destination + ".rbf-tmp"
+        handle, staged = tempfile.mkstemp(prefix=".rbf-report-", suffix=".tmp", dir=directory)
+        os.close(handle)
         shutil.copyfile(source, staged)
         os.replace(staged, destination)
         return destination.replace("\\", "/")
     except OSError:
+        if staged and os.path.exists(staged):
+            try:
+                os.unlink(staged)
+            except OSError:
+                pass
         return None

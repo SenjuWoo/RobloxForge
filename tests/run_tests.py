@@ -1574,6 +1574,7 @@ def _():
         "truncated": (good[:-16], False),           # fewer bytes than declared
         "oversized": (good + b"\x00" * 16, False),  # more bytes than declared
         "declared-too-big": (good[:8] + b"\x8f\x86\x01\x00" + good[12:], False),
+        "declared-zero": (good[:8] + b"\x00\x00\x00\x00" + good[12:], False),
     }
     with tempdir() as root:
         for name, (blob, should_pass) in cases.items():
@@ -1651,9 +1652,12 @@ def _():
             return mapkit.prove("s", configured=skill, python=python or _sys.executable,
                                 timeout=timeout, out_path=out, probe=lambda p: [])
 
-        # 1. normal PASS
+        # 1. normal PASS, without --out: the report comes back inline and no file is claimed
         ok = run(writes_pass, "pass")
         assert ok["available"] and ok["ok"] is True and ok["result"] == "PASS", ok
+        assert ok.get("report") and ok["report"]["result"] == "PASS", ok
+        assert ok.get("report_path") is None, "a path inside the deleted workdir is not a result"
+        assert ok.get("report_persisted") is False, ok
 
         # 2. normal FAIL: upstream exits nonzero on purpose, and that must survive as a real result
         bad = run(writes_fail, "fail")
@@ -1703,6 +1707,21 @@ def _():
         fresh = run(writes_pass, "fresh", out=published)
         assert fresh["ok"] is True and os.path.isfile(published), fresh
         assert json.load(open(published))["result"] == "PASS", fresh
+
+        # 11. every returned report_path is a file that actually exists
+        assert fresh["report_path"] and os.path.isfile(fresh["report_path"]), fresh
+        for result in (ok, bad, empty, junk, odd):
+            path = result.get("report_path")
+            assert path is None or os.path.isfile(path), (path, result.get("reason"))
+
+        # 12. publication that cannot happen fails, and an unrelated report survives byte-for-byte
+        blocked_parent = os.path.join(root, "blocked")
+        open(blocked_parent, "w").write("a file where a directory would have to be")
+        before = open(stale, "rb").read()
+        unwritable = run(writes_pass, "publish-fail", out=os.path.join(blocked_parent, "report.json"))
+        assert unwritable["ok"] is False, unwritable
+        assert "could not be written" in unwritable["reason"], unwritable
+        assert open(stale, "rb").read() == before, "an earlier report was modified by a failed publish"
 
 
 @check("map: the CLI reports map failures as JSON with a non-success exit")

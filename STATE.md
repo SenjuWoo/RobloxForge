@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.15.2 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.15.3 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -48,6 +48,12 @@ claim checkable.
    through the documented API.
 
 ## Done (verified)
+
+- 0.15.3: `mapkit.prove` no longer hands back a path into the temp workdir it just deleted - the report is
+  inline and `report_path` is null unless `--out` was given, in which case it is the file that was written.
+  A GLB whose header declares length 0 is a mismatch like any other, not a pass. `_publish` stages through
+  `mkstemp` so two concurrent publishes cannot collide, and cleans up without touching an existing report.
+  163 tests.
 
 - 0.15.2: three false-success paths closed. Malformed glTF metadata (null accessors, list `attributes`,
   non-array `primitives`, boolean modes) reports `invalid` instead of raising `AttributeError` through the
