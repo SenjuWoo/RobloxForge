@@ -1598,6 +1598,8 @@ def _():
     with tempdir() as root:
         exe = os.path.join(root, "blender.exe" if os.name == "nt" else "blender")
         open(exe, "wb").write(b"MZ")
+        if os.name != "nt":
+            os.chmod(exe, 0o755)  # which() only finds an executable file on POSIX
         old_path, old_override = os.environ.get("PATH", ""), os.environ.pop("RBFORGE_BLENDER", None)
         os.environ["PATH"] = root + os.pathsep + old_path
         try:
@@ -1707,6 +1709,7 @@ def _():
 def _():
     import io
     import contextlib
+    from rbforge import mapkit
     from rbforge_cli import main as cli_main
 
     with tempdir() as root:
@@ -1722,9 +1725,13 @@ def _():
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 code = cli_main(["map", "prove", "s"])
-            assert code == 2, (code, buf.getvalue()[:200])
-            report = json.loads(buf.getvalue())
-            assert report["ok"] is False and "no report file" in report["reason"], report
+            report = json.loads(buf.getvalue())  # JSON either way, never a traceback
+            if mapkit.missing_dependencies():          # a CI interpreter without numpy/scipy/PIL
+                assert code == 4, (code, report)       # unavailable is incomplete, not a pass
+                assert report["available"] is False and report["missing_dependencies"], report
+            else:
+                assert code == 2, (code, report)
+                assert report["ok"] is False and "no report file" in report["reason"], report
 
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
