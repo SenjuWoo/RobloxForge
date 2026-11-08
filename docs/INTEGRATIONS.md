@@ -53,7 +53,7 @@ rbforge map prove minimal --out report.json          # run one spec, keep its re
 |---|---|
 | Discovery | `RBFORGE_SYPHODEV`, accepted at either the repo root or the skill folder. A directory without `scripts/prove.py` and `specs/` is refused, so a wrong path cannot look configured. |
 | Dependencies | Probed in the current interpreter (`numpy`, `scipy`, `PIL`). Missing ones make it **unavailable**, not half-working: `rbforge map prove` then exits `DEPENDENCY` and names what is absent. |
-| Spec + report | Upstream's own JSON spec and its own report file. The adapter adds `checks_failed` as a summary; it does not reinterpret or rewrite the checks. |
+| Spec + report | Upstream's own JSON spec and its own report file. Each run writes to a fresh temporary path, and that report must parse, carry a known result and a `checks` array, and agree with the exit code before it counts. `--out` is published only after that, atomically; a failed run never overwrites an earlier report. |
 | Studio | Never contacted. The adapter is a subprocess that prints a report; placing a map stays a separate, deliberate step. |
 | Exit codes | `0` when upstream says PASS/INFO, `VALIDATION` when it says WARN/FAIL, `DEPENDENCY` when it cannot run at all. |
 | Licence | Not redistributed. `status()` carries the attribution line, and `docs/INTEGRATIONS.md` says where it came from. |
@@ -99,12 +99,14 @@ Four outcomes, and the exit code follows them rather than collapsing into succes
 
 | `status` | Meaning | Exit |
 |---|---|---|
-| `within_limit` | measured, every mesh under the cap | 0 |
+| `within_limit` | measured, every mesh under the cap, header length matches the file | 0 |
 | `over_limit` | measured, and named meshes are over `ROBLOX_TRI_LIMIT` | `VALIDATION` (2) |
-| `invalid` | not the format it claims, malformed, or unsupported extension | `VALIDATION` (2) |
-| `unverified` | recognised but not measured (FBX, OBJ, `.gltf`, a GLB it could not fully account for) | `DEPENDENCY` (4) |
+| `invalid` | not the format it claims, malformed structure (null accessor, non-object `attributes`, negative or dangling index, boolean mode) | `VALIDATION` (2) |
+| `unverified` | recognised but not measurable: FBX, OBJ, `.gltf`, an unknown primitive mode, or a GLB whose declared length disagrees with its size | `DEPENDENCY` (4) |
 
-`unverified` is deliberately not a pass: a file whose geometry was never counted cannot close a gate.
+`unverified` is deliberately not a pass: a file whose geometry was never counted cannot close a gate. A
+declared-length mismatch is never merely noted — a header that lies about the file makes every number in it
+suspect, so the file does not pass.
 
 ### Three ways to authenticate, and why none of them is automatic here
 

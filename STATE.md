@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.15.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.15.2 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -48,6 +48,14 @@ claim checkable.
    through the documented API.
 
 ## Done (verified)
+
+- 0.15.2: three false-success paths closed. Malformed glTF metadata (null accessors, list `attributes`,
+  non-array `primitives`, boolean modes) reports `invalid` instead of raising `AttributeError` through the
+  CLI; negative accessor indices are rejected instead of wrapping to the last accessor; and a GLB whose
+  header lies about its length can no longer pass. `rbforge.mapkit.prove` writes every run to a fresh temp
+  report, validates its shape and result, reconciles it with the exit code, and only then publishes to
+  `--out`, leaving an older report intact on failure. Blender on `PATH` is found via `shutil.which`.
+  163 tests.
 
 - 0.15.1: four reproduced asset defects fixed - the triangle cap is applied **per mesh** (two legal 16k
   meshes now pass at 32k total), the add-on folder uses Blender's `5.2` not `5.2.0` and the search covers

@@ -1320,14 +1320,16 @@ def _():
         blob += b" " * ((4 - len(blob) % 4) % 4)
         out_of_range = probe("range.glb", _struct.pack("<4sII", b"glTF", 2, 20 + len(blob))
                              + _struct.pack("<II", len(blob), 0x4E4F534A) + blob)
-        assert out_of_range["status"] == assets.STATUS_UNVERIFIED, out_of_range
+        assert out_of_range["status"] == assets.STATUS_INVALID, out_of_range
         assert any("out of range" in p for p in out_of_range["problems"]), out_of_range
 
-        # A mismatched declared file length is reported, not silently accepted.
+        # A mismatched declared file length is reported and never passes.
         good = _glb_bytes([("M", [(4, 30, True)])])
         lies = good[:8] + _struct.pack("<I", 99999) + good[12:]
         mismatch = probe("lies.glb", lies)
         assert mismatch.get("declared_bytes_mismatch") is True, mismatch
+        assert mismatch["status"] != assets.STATUS_WITHIN, mismatch
+        assert "within_limit" not in mismatch, "a file with a lying header must not carry a verdict"
 
 
 @check("assets: nothing passes without being measured, and the CLI exit codes agree")
@@ -1485,6 +1487,255 @@ def _():
         assert report["available"] is False and "dependencies" in report["reason"], report
         run = mapkit.prove("tiny", configured=skill, python=os.path.join(root, "no-such-python"))
         assert run["available"] is False and run["missing_dependencies"], run
+
+
+@check("assets: malformed metadata is invalid, never an exception")
+def _():
+    import io
+    import contextlib
+    from rbforge import assets
+    from rbforge_cli import main as cli_main
+
+    def glb(doc, declared=None):
+        import struct as _struct
+        blob = json.dumps(doc).encode("utf-8")
+        blob += b" " * ((4 - len(blob) % 4) % 4)
+        total = declared if declared is not None else 20 + len(blob)
+        return (_struct.pack("<4sII", b"glTF", 2, total)
+                + _struct.pack("<II", len(blob), 0x4E4F534A) + blob)
+
+    base = {"asset": {"version": "2.0"}}
+    cases = {
+        "accessor-null": dict(base, accessors=[None],
+                              meshes=[{"primitives": [{"indices": 0, "mode": 4}]}]),
+        "attributes-list": dict(base, accessors=[{"count": 30}],
+                                meshes=[{"primitives": [{"attributes": [1, 2], "mode": 4}]}]),
+        "primitives-not-array": dict(base, accessors=[{"count": 30}],
+                                     meshes=[{"primitives": {"mode": 4}}]),
+        "mesh-not-object": dict(base, accessors=[], meshes=["nope"]),
+        "primitive-not-object": dict(base, accessors=[], meshes=[{"primitives": [7]}]),
+        "mode-bool": dict(base, accessors=[{"count": 30}],
+                          meshes=[{"primitives": [{"indices": 0, "mode": True}]}]),
+    }
+    with tempdir() as root:
+        for name, doc in cases.items():
+            path = os.path.join(root, name + ".glb")
+            open(path, "wb").write(glb(doc))
+            report = assets.inspect_export(path)  # must not raise
+            assert report["status"] == assets.STATUS_INVALID, (name, report)
+            assert report.get("problems") or report.get("error"), (name, report)
+
+            # The CLI contract is JSON on stdout even for this, and the exit code is a failure.
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = cli_main(["assets", "check", path])
+            assert code == 2, (name, code, buf.getvalue()[:200])
+            parsed = json.loads(buf.getvalue())
+            assert parsed["status"] == assets.STATUS_INVALID, (name, parsed)
+
+
+@check("assets: a negative accessor index is malformed, not Python's last item")
+def _():
+    import struct as _struct
+    from rbforge import assets
+
+    def glb(doc):
+        blob = json.dumps(doc).encode("utf-8")
+        blob += b" " * ((4 - len(blob) % 4) % 4)
+        return (_struct.pack("<4sII", b"glTF", 2, 20 + len(blob))
+                + _struct.pack("<II", len(blob), 0x4E4F534A) + blob)
+
+    with tempdir() as root:
+        docs = {
+            "neg-indices": {"accessors": [{"count": 30}],
+                            "meshes": [{"primitives": [{"indices": -1, "mode": 4}]}]},
+            "neg-position": {"accessors": [{"count": 30}],
+                             "meshes": [{"primitives": [{"attributes": {"POSITION": -1}, "mode": 4}]}]},
+        }
+        for name, body in docs.items():
+            path = os.path.join(root, name + ".glb")
+            open(path, "wb").write(glb(dict({"asset": {"version": "2.0"}}, **body)))
+            report = assets.inspect_export(path)
+            assert report["status"] == assets.STATUS_INVALID, (name, report)
+            assert "negative" in " ".join(report.get("problems", [])), (name, report)
+            assert "within_limit" not in report, (name, report)
+
+
+@check("assets: the declared GLB length is enforced, never just noted")
+def _():
+    import io
+    import contextlib
+    from rbforge import assets
+    from rbforge_cli import main as cli_main
+
+    good = _glb_bytes([("Body", [(4, 90, True)])])
+    cases = {
+        "exact": (good, True),
+        "truncated": (good[:-16], False),           # fewer bytes than declared
+        "oversized": (good + b"\x00" * 16, False),  # more bytes than declared
+        "declared-too-big": (good[:8] + b"\x8f\x86\x01\x00" + good[12:], False),
+    }
+    with tempdir() as root:
+        for name, (blob, should_pass) in cases.items():
+            path = os.path.join(root, name + ".glb")
+            open(path, "wb").write(blob)
+            report = assets.inspect_export(path)
+            if should_pass:
+                assert report["status"] == assets.STATUS_WITHIN, (name, report)
+                continue
+            assert report["status"] != assets.STATUS_WITHIN, (name, report)
+            assert "within_limit" not in report or report["within_limit"] is False, (name, report)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = cli_main(["assets", "check", path])
+            assert code in (2, 4), (name, code, buf.getvalue()[:200])
+            json.loads(buf.getvalue())  # still machine-readable
+
+
+@check("assets: a Blender on PATH is discovered without an override")
+def _():
+    from rbforge import assets
+    with tempdir() as root:
+        exe = os.path.join(root, "blender.exe" if os.name == "nt" else "blender")
+        open(exe, "wb").write(b"MZ")
+        old_path, old_override = os.environ.get("PATH", ""), os.environ.pop("RBFORGE_BLENDER", None)
+        os.environ["PATH"] = root + os.pathsep + old_path
+        try:
+            found = {c["path"].lower() for c in assets._blender_candidates()}
+        finally:
+            os.environ["PATH"] = old_path
+            if old_override is not None:
+                os.environ["RBFORGE_BLENDER"] = old_override
+        assert exe.replace("\\", "/").lower() in found, sorted(found)
+
+
+@check("map: a stale report can never pass as this run's result")
+def _():
+    import sys as _sys
+    from rbforge import mapkit
+
+    def install(root, script):
+        skill = os.path.join(root, "roblox-map")
+        os.makedirs(os.path.join(skill, "scripts"), exist_ok=True)
+        os.makedirs(os.path.join(skill, "specs"), exist_ok=True)
+        open(os.path.join(skill, "specs", "s.json"), "w").write("{}")
+        open(os.path.join(skill, "scripts", "prove.py"), "w").write(script)
+        return skill
+
+    writes_pass = ("import json, sys\n"
+                   "a = sys.argv[1:]\n"
+                   "out = a[a.index('--json') + 1]\n"
+                   "json.dump({'map': 'M', 'result': 'PASS', 'checks': []}, open(out, 'w'))\n")
+    writes_fail = ("import json, sys\n"
+                   "a = sys.argv[1:]\n"
+                   "out = a[a.index('--json') + 1]\n"
+                   "json.dump({'map': 'M', 'result': 'FAIL', 'checks': [\n"
+                   "    {'id': 'P1', 'title': 'Grounding', 'status': 'FAIL', 'detail': 'x'}]}, open(out, 'w'))\n"
+                   "sys.exit(1)\n")
+    silent_ok = "print('nothing to see')\n"
+    silent_fail = "import sys\nprint('boom')\nsys.exit(1)\n"
+    bad_json = ("import sys\n"
+                "a = sys.argv[1:]\n"
+                "open(a[a.index('--json') + 1], 'w').write('{not json')\n")
+    odd_shape = ("import json, sys\n"
+                 "a = sys.argv[1:]\n"
+                 "json.dump({'result': 'PASSED', 'checks': []}, open(a[a.index('--json') + 1], 'w'))\n")
+
+    with tempdir() as root:
+        def run(script, name, out=None, timeout=60, python=None):
+            work = os.path.join(root, name)
+            os.makedirs(work, exist_ok=True)
+            skill = install(work, script)
+            return mapkit.prove("s", configured=skill, python=python or _sys.executable,
+                                timeout=timeout, out_path=out, probe=lambda p: [])
+
+        # 1. normal PASS
+        ok = run(writes_pass, "pass")
+        assert ok["available"] and ok["ok"] is True and ok["result"] == "PASS", ok
+
+        # 2. normal FAIL: upstream exits nonzero on purpose, and that must survive as a real result
+        bad = run(writes_fail, "fail")
+        assert bad["ok"] is False and bad["result"] == "FAIL", bad
+        assert [c["id"] for c in bad["checks_failed"]] == ["P1"], bad
+
+        # 3. exit 0, no report at all
+        empty = run(silent_ok, "silent-ok")
+        assert empty["ok"] is False and "no report file" in empty["reason"], empty
+
+        # 4. the reproduced false success: an old PASS report at out_path, and a silent exit 0
+        stale_dir = os.path.join(root, "stale")
+        os.makedirs(stale_dir)
+        stale = os.path.join(stale_dir, "report.json")
+        json.dump({"map": "Old", "result": "PASS", "checks": []}, open(stale, "w"))
+        rerun = run(silent_ok, "stale-run", out=stale)
+        assert rerun["ok"] is False, rerun
+        assert rerun.get("result") != "PASS", rerun
+        kept = json.load(open(stale))
+        assert kept["map"] == "Old", "the failed run must not destroy the earlier report"
+
+        # 5. exit 1, no report
+        broken = run(silent_fail, "silent-fail")
+        assert broken["ok"] is False and "no report file" in broken["reason"], broken
+
+        # 6. invalid JSON
+        junk = run(bad_json, "bad-json")
+        assert junk["ok"] is False and "unreadable" in junk["reason"], junk
+
+        # 7. unexpected structure / unknown result value
+        odd = run(odd_shape, "odd-shape")
+        assert odd["ok"] is False and "result" in odd["reason"], odd
+
+        # 8. the interpreter cannot even be launched
+        launched = run(writes_pass, "launch", python=os.path.join(root, "no-such-python"))
+        # a bogus interpreter is caught by the dependency probe first
+        assert launched["available"] is False or launched["ok"] is False, launched
+
+        # 9. timeout
+        slow = ("import time\n"
+                "time.sleep(5)\n")
+        timed = run(slow, "slow", timeout=1)
+        assert timed["ok"] is False and "timed out" in timed["reason"], timed
+
+        # 10. a successful run publishes to the requested destination, replacing the old file
+        published = os.path.join(stale_dir, "fresh.json")
+        fresh = run(writes_pass, "fresh", out=published)
+        assert fresh["ok"] is True and os.path.isfile(published), fresh
+        assert json.load(open(published))["result"] == "PASS", fresh
+
+
+@check("map: the CLI reports map failures as JSON with a non-success exit")
+def _():
+    import io
+    import contextlib
+    from rbforge_cli import main as cli_main
+
+    with tempdir() as root:
+        skill = os.path.join(root, "roblox-map")
+        os.makedirs(os.path.join(skill, "scripts"), exist_ok=True)
+        os.makedirs(os.path.join(skill, "specs"), exist_ok=True)
+        open(os.path.join(skill, "specs", "s.json"), "w").write("{}")
+        open(os.path.join(skill, "scripts", "prove.py"), "w").write("print('no report')\n")
+
+        old = os.environ.get("RBFORGE_SYPHODEV")
+        os.environ["RBFORGE_SYPHODEV"] = skill
+        try:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = cli_main(["map", "prove", "s"])
+            assert code == 2, (code, buf.getvalue()[:200])
+            report = json.loads(buf.getvalue())
+            assert report["ok"] is False and "no report file" in report["reason"], report
+
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = cli_main(["map"])
+            assert code == 0, (code, buf.getvalue()[:200])
+            assert json.loads(buf.getvalue())["available"] is True, buf.getvalue()[:200]
+        finally:
+            if old is None:
+                os.environ.pop("RBFORGE_SYPHODEV", None)
+            else:
+                os.environ["RBFORGE_SYPHODEV"] = old
 
 
 @check("assets: a fake Blender 5.2 install reports the add-on as installed, not merely searched")

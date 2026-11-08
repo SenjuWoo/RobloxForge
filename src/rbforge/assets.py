@@ -14,6 +14,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import struct
 
 ROBLOX_TRI_LIMIT = 20000
@@ -57,6 +58,9 @@ def _blender_candidates():
         r"/snap/bin/blender",
     ):
         out.extend(glob.glob(pattern))
+    on_path = shutil.which("blender") or shutil.which("blender.exe")
+    if on_path:
+        out.append(on_path)
     for path in out:
         if not os.path.isfile(path):
             continue
@@ -172,30 +176,51 @@ def find_addon_anywhere(blender):
     return None, searched, complete
 
 
+def _accessor_count(accessors, index, label):
+    """(count, problem, kind). Negative indices are refused: Python must not repair a malformed file."""
+    if isinstance(index, bool) or not isinstance(index, int):
+        return None, "%s is not an integer" % label, STATUS_INVALID
+    if index < 0:
+        return None, "%s is negative (%s)" % (label, index), STATUS_INVALID
+    if index >= len(accessors):
+        return None, "%s references accessor %s out of range" % (label, index), STATUS_INVALID
+    accessor = accessors[index]
+    if not isinstance(accessor, dict):
+        return None, "accessor %s is not an object" % index, STATUS_INVALID
+    count = accessor.get("count")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        return None, "accessor %s has no usable count" % index, STATUS_INVALID
+    return count, None, None
+
+
 def _triangles_for_primitive(prim, accessors):
-    """(triangles, problem) for one primitive, respecting glTF mode and indexed/non-indexed geometry."""
+    """(triangles, problem, kind) for one primitive, respecting glTF mode and indexed/non-indexed geometry.
+
+    `kind` is STATUS_INVALID for a structure that violates the spec, STATUS_UNVERIFIED for something
+    we simply cannot measure (an unknown mode), and None when the primitive was counted.
+    """
     mode = prim.get("mode", MODE_TRIANGLES)
-    if not isinstance(mode, int):
-        return 0, "primitive mode is not an integer"
+    if isinstance(mode, bool) or not isinstance(mode, int):
+        return 0, "primitive mode is not an integer", STATUS_INVALID
     if mode in NON_TRIANGLE_MODES:
-        return 0, None  # points and lines legitimately carry no triangles
+        return 0, None, None  # points and lines legitimately carry no triangles
     if mode not in (MODE_TRIANGLES, MODE_STRIP, MODE_FAN):
-        return 0, "unsupported primitive mode %s" % mode
+        return 0, "unsupported primitive mode %s" % mode, STATUS_UNVERIFIED
     idx = prim.get("indices")
     if idx is not None:
-        if not isinstance(idx, int) or idx >= len(accessors):
-            return 0, "indices reference accessor %s out of range" % idx
-        count = accessors[idx].get("count")
+        count, problem, kind = _accessor_count(accessors, idx, "indices")
     else:
-        pos = (prim.get("attributes") or {}).get("POSITION")
-        if not isinstance(pos, int) or pos >= len(accessors):
-            return 0, "primitive has neither indices nor a usable POSITION accessor"
-        count = accessors[pos].get("count")
-    if not isinstance(count, int) or count < 0:
-        return 0, "accessor count is missing or negative"
+        attributes = prim.get("attributes")
+        if not isinstance(attributes, dict):
+            return 0, "attributes is not an object", STATUS_INVALID
+        if "POSITION" not in attributes:
+            return 0, "primitive has neither indices nor a POSITION attribute", STATUS_INVALID
+        count, problem, kind = _accessor_count(accessors, attributes["POSITION"], "POSITION")
+    if problem or count is None:
+        return 0, problem or "unusable accessor count", kind or STATUS_INVALID
     if mode == MODE_TRIANGLES:
-        return count // 3, None
-    return max(0, count - 2), None  # STRIP/FAN: n vertices give n-2 triangles
+        return count // 3, None, None
+    return max(0, count - 2), None, None  # STRIP/FAN: n vertices give n-2 triangles
 
 
 def glb_summary(path):
@@ -240,19 +265,27 @@ def glb_summary(path):
     if not isinstance(accessors, list) or not isinstance(meshes, list):
         return {"status": STATUS_INVALID, "error": "accessors or meshes is not a list"}
 
-    per_mesh, problems, total = [], [], 0
+    per_mesh, problems, total, kinds = [], [], 0, set()
     for index, mesh in enumerate(meshes):
         if not isinstance(mesh, dict):
             problems.append("mesh %d is not an object" % index)
+            kinds.add(STATUS_INVALID)
+            continue
+        primitives = mesh.get("primitives")
+        if not isinstance(primitives, list):
+            problems.append("mesh %d has no primitives array" % index)
+            kinds.add(STATUS_INVALID)
             continue
         count = 0
-        for prim in mesh.get("primitives") or []:
+        for prim in primitives:
             if not isinstance(prim, dict):
                 problems.append("mesh %d has a primitive that is not an object" % index)
+                kinds.add(STATUS_INVALID)
                 continue
-            tris, problem = _triangles_for_primitive(prim, accessors)
+            tris, problem, kind = _triangles_for_primitive(prim, accessors)
             if problem:
                 problems.append("mesh %d: %s" % (index, problem))
+                kinds.add(kind or STATUS_INVALID)
             count += tris
         total += count
         per_mesh.append({"name": mesh.get("name") or "mesh%d" % index, "triangles": count})
@@ -273,8 +306,12 @@ def glb_summary(path):
     }
     if declared and declared != size:
         out["declared_bytes_mismatch"] = True
+        problems.append("header declares %d bytes, file holds %d" % (declared, size))
+        kinds.add(STATUS_UNVERIFIED)
     if problems:
-        out["status"] = STATUS_UNVERIFIED  # a file we cannot fully account for never passes
+        # A structure that violates the spec is invalid; something we simply cannot measure is unverified.
+        # Neither may pass: a file we could not fully account for cannot close a gate.
+        out["status"] = STATUS_INVALID if STATUS_INVALID in kinds else STATUS_UNVERIFIED
         out["problems"] = problems
         return out
     out["status"] = STATUS_OVER if over else STATUS_WITHIN

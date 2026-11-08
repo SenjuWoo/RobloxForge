@@ -18,8 +18,10 @@ unavailable and `prove()` refuses - it never silently degrades into a guess.
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 SKILL_RELATIVE = os.path.join("skills", "roblox-map")
 MODULES = ("numpy", "scipy", "PIL")
@@ -101,11 +103,35 @@ def status(configured=None, python=None, probe=None):
     return out
 
 
+RESULT_PASS, RESULT_INFO = "PASS", "INFO"
+ALLOWED_RESULTS = {RESULT_PASS, "FAIL", "WARN", "UNVERIFIABLE", RESULT_INFO}
+
+
+def _read_report(path):
+    """(report, problem). A report has to be a JSON object with a known result and a checks list."""
+    if not os.path.isfile(path):
+        return None, "the prover wrote no report file"
+    try:
+        report = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, "report unreadable: %s" % exc
+    if not isinstance(report, dict):
+        return None, "report is not a JSON object"
+    result = report.get("result")
+    if result not in ALLOWED_RESULTS:
+        return None, "report result %r is not one of %s" % (result, sorted(ALLOWED_RESULTS))
+    if not isinstance(report.get("checks"), list):
+        return None, "report has no checks array"
+    return report, None
+
+
 def prove(spec, out_path=None, res=None, configured=None, python=None, timeout=600, probe=None):
     """Run the external prover on one spec and return its report.
 
-    Its spec and report formats are untouched: the JSON this returns under `report` is the file the
-    upstream script wrote. `checks_failed` is a convenience summary, not a reinterpretation.
+    The spec and report formats are upstream's; `checks_failed` is a convenience summary, not a
+    reinterpretation. The report is always written to a **fresh temporary path** for this invocation, so a
+    file left over from an earlier run can never be mistaken for this run's evidence. `out_path` is only
+    written once the new report has been read back and reconciles with the subprocess exit code.
     """
     path = find_install(configured)
     if not path:
@@ -120,37 +146,68 @@ def prove(spec, out_path=None, res=None, configured=None, python=None, timeout=6
     if not os.path.isfile(spec_path):
         return {"available": True, "ok": False, "reason": "no such spec: %s" % spec_path}
 
-    report_path = out_path or os.path.join(os.path.dirname(os.path.abspath(spec_path)),
-                                           "prove-report.json")
+    workdir = tempfile.mkdtemp(prefix="rbf-map-")
+    report_path = os.path.join(workdir, "report.json")
     cmd = [python or sys.executable, os.path.join(path, "scripts", "prove.py"), spec_path,
            "--json", report_path]
     if res:
         cmd += ["--res", str(res)]
+    base: dict = {"available": True, "ok": False, "attribution": ATTRIBUTION,
+                  "touches_studio": False, "spec": spec_path.replace("\\", "/")}
     try:
-        done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return {"available": True, "ok": False, "reason": "prover timed out after %ss" % timeout}
-
-    report, problem = None, None
-    if os.path.isfile(report_path):
         try:
-            report = json.load(open(report_path, encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            problem = "report unreadable: %s" % exc
-    else:
-        problem = "the prover wrote no report file"
+            done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return dict(base, reason="prover timed out after %ss" % timeout)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return dict(base, reason="prover could not be started: %s" % exc)
 
-    out = {"available": True, "ok": done.returncode == 0, "exit_code": done.returncode,
-           "report_path": report_path.replace("\\", "/"),
-           "stdout_tail": "\n".join(done.stdout.strip().splitlines()[-14:]),
-           "attribution": ATTRIBUTION, "touches_studio": False}
-    if problem:
-        out["reason"] = problem
-        return out
-    out["report"] = report
-    if isinstance(report, dict):
-        out["result"] = report.get("result")
+        report, problem = _read_report(report_path)
+        out: dict = dict(base)
+        out["exit_code"] = done.returncode
+        out["stdout_tail"] = "\n".join(done.stdout.strip().splitlines()[-14:])
+        if problem:
+            # The old report at out_path, if any, is deliberately left untouched: it is not this run's.
+            out["reason"] = problem
+            return out
+        assert report is not None  # _read_report returns one or the other
+
+        result = report["result"]
+        exited_ok = done.returncode == 0
+        consistent = (result in (RESULT_PASS, RESULT_INFO)) == exited_ok
+        out["report"] = report
+        out["result"] = result
         out["map"] = report.get("map")
         out["checks_failed"] = [{"id": c.get("id"), "title": c.get("title"), "detail": c.get("detail")}
-                                for c in report.get("checks", []) if c.get("status") == "FAIL"]
-    return out
+                                for c in report["checks"]
+                                if isinstance(c, dict) and c.get("status") == "FAIL"]
+        if not consistent:
+            out["reason"] = "report says %s but the prover exited %s" % (result, done.returncode)
+            return out
+
+        out["ok"] = exited_ok
+        if out_path:
+            written = _publish(report_path, out_path)
+            out["report_path"] = written
+            if not written:
+                out["ok"] = False
+                out["reason"] = "report could not be written to %s" % out_path
+                return out
+        else:
+            out["report_path"] = report_path.replace("\\", "/")
+        return out
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _publish(source, destination):
+    """Copy a validated report to where the caller asked for it, atomically. Existing file survives failure."""
+    try:
+        directory = os.path.dirname(os.path.abspath(destination))
+        os.makedirs(directory, exist_ok=True)
+        staged = destination + ".rbf-tmp"
+        shutil.copyfile(source, staged)
+        os.replace(staged, destination)
+        return destination.replace("\\", "/")
+    except OSError:
+        return None

@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.15.2 - 2026-11-08
+
+Three reproduced false-success paths, closed. No new features.
+
+### Fixed
+- **Malformed glTF metadata no longer raises.** `accessors: [null]` and `attributes: [1, 2]` used to escape
+  as `AttributeError` straight through the CLI, breaking its JSON contract. Accessor entries must be objects
+  and each primitive's `attributes` must be an object; non-object meshes, non-array `primitives` and
+  non-integer modes are reported as `invalid`. A boolean is not accepted as a mode or an index, because
+  Python treats it as one.
+- **Negative accessor indices are rejected.** `indices: -1` used to resolve to the last accessor through
+  Python indexing and produced `within_limit`. Every accessor reference is now range-checked from zero, for
+  `indices` and `POSITION` alike.
+- **A lying GLB header can no longer pass.** A file declaring 99,999 bytes while holding 137 is now
+  `unverified` with the mismatch in `problems`, instead of `within_limit` plus an advisory flag.
+- **The map adapter cannot report a stale report.** `prove()` used to read whatever sat at `out_path`, so a
+  leftover `{"result": "PASS"}` became this run's evidence. Each run now writes to a fresh temporary path,
+  the report must parse, carry a known result (`PASS`/`INFO`/`WARN`/`FAIL`/`UNVERIFIABLE`) and a `checks`
+  array, and must reconcile with the exit code — exit 0 with `WARN` is a contradiction, and so is exit 1
+  with `PASS`. `out_path` is published only after that, atomically, and a failed run leaves any earlier
+  report untouched. Launch failures and timeouts are structured results, not exceptions.
+- **Blender on `PATH` is discovered** through `shutil.which()`, keeping `RBFORGE_BLENDER` ahead of it.
+
+### Notes
+- Malformed structure is `invalid`; something merely unmeasurable (an unknown primitive mode) stays
+  `unverified`. Both are non-success, and the exit codes (`2` and `4`) follow the state.
+- The asset and map checks still live in `tests/run_tests.py` (now ~3,900 lines). A split into
+  `tests/asset_map_tests.py` is recorded as future maintenance: it needs a loader change to the runner,
+  which was not worth destabilising a green suite in a correctness patch.
+
+### Tests
+163 passed, 0 failed, 0 skipped (was 157).
+
 ## 0.15.1 - 2026-11-08
 
 Correctness pass on 0.15.0's asset validator, plus the map prover actually wired in.
