@@ -25,7 +25,7 @@ Studio plugin (sends the DataModel tree so requires and instance paths type-chec
 rojo = "rojo-rbx/rojo@7.7.0"
 wally = "UpliftGames/wally@0.3.2"
 lune = "lune-org/lune@0.10.5"
-stylua = "JohnnyMorganz/StyLua@2.5.2"
+stylua = "JohnnyMorganz/StyLua@2.6.0"
 selene = "Kampfkarren/selene@0.31.0"
 luau-lsp = "JohnnyMorganz/luau-lsp@1.70.1"
 darklua = "seaofvoices/darklua@0.19.0"

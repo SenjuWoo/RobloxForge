@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.14.7 - 2026-11-08
+
+Closes the three defects the 0.14.6 summary claimed were already closed, plus the two that were left
+open: the diagnostic map still merged files, the CLI test still never touched its project, and a cached
+analyzer was trusted by its filename.
+
+### Fixed
+- **The diagnostic map still merged nested same-named files.** 0.14.6 kept the last two path segments,
+  which turned `src/Server/init.luau` and `tests/Server/init.luau` into one bucket - the exact case the
+  0.14.6 test did not cover. The key is now the whole project-relative path, and containment is a real
+  `commonpath` check rather than a string prefix, so `proj2` no longer counts as inside `proj`. A path
+  outside the root keeps the name the analyzer printed.
+- **The CLI test proved nothing about the path argument.** It built a temporary project and then ran
+  `check` against the process cwd, accepting exit 0, 2 or 4 - so a broken positional path passed. It now
+  runs `check <path>`, `check --root <path>` and `check <path> --scope static` from a cwd that is not the
+  project and asserts `report.root` and `report.rungs_run`, plus one real render whose header must name
+  the project.
+- **A cached luau-lsp was reused without asking it its version.** `scripts/install_luau_lsp.py` now
+  probes `--version`, reuses the binary only when it reports the pin, and reinstalls - naming what the
+  cache actually reported - otherwise.
+
+### Changed
+- StyLua is stated as **2.6.0** everywhere (skills, `docs/roblox-briefs`, both vendored copies, and the
+  knowledge source manifest, which also carried a stale luau-lsp 1.69.0). The scaffold and `rokit.toml`
+  already said 2.6.0; the documentation now agrees.
+- `STATE.md`: the diagnostic-map and CLI rows describe what their tests actually assert, the duplicated
+  "Skill installer (previous)" row is gone, and the test count is current.
+
+### Tests
+148 passed, 0 failed, 0 skipped (was 145).
+
 ## 0.14.6 - 2026-11-07
 
 Reliability pass on the 0.14.5 work: the documented command did not run, a "skip" counted as a pass,

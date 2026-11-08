@@ -11,6 +11,7 @@ import io
 import os
 import platform
 import stat
+import subprocess
 import sys
 import urllib.request
 import zipfile
@@ -32,14 +33,36 @@ def asset_name():
     return "luau-lsp-linux-x86_64.zip", "luau-lsp"
 
 
+def probe_version(binary_path):
+    """The version a cached binary reports, or None when it will not run at all.
+
+    A file being present proves nothing: a half-finished download, a binary from an older pin, or
+    something else entirely can all sit at that path. Ask the binary.
+    """
+    try:
+        proc = subprocess.run([binary_path, "--version"], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    first = (proc.stdout or proc.stderr or "").strip().splitlines()
+    return first[0].strip() if first else None
+
+
+def is_current(target, expected=VERSION, probe=probe_version):
+    """True only when the cached executable exists, runs, and reports the pinned version."""
+    return os.path.isfile(target) and probe(target) == expected
+
+
 def main():
     force = "--force" in sys.argv
     asset, binary = asset_name()
     os.makedirs(DEST, exist_ok=True)
     target = os.path.join(DEST, binary)
-    if os.path.isfile(target) and not force:
-        print(f"luau-lsp already at {target}")
+    if not force and is_current(target):
+        print(f"luau-lsp {VERSION} already at {target}")
         return 0
+    if not force and os.path.isfile(target):
+        print(f"cached {target} reports {probe_version(target) or 'no usable version'}; "
+              f"installing {VERSION}")
     url = f"{BASE}/{asset}"
     print(f"downloading {url}")
     with urllib.request.urlopen(url, timeout=180) as resp:

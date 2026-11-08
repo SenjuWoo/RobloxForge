@@ -10,20 +10,19 @@ claim checkable.
 
 ## Version
 
-0.14.6 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.14.7 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
 | Area | Evidence |
 |---|---|
-| CLI surface | `check`, `check .`, `check --root .`, `check . --scope static` all execute; a positional/`--root` conflict exits 2 (test `cli: ...`) |
+| CLI surface | `check <path>`, `check --root <path>` and `check <path> --scope static` are run from a cwd that is **not** the project, and each report's `root` and `rungs_run` are asserted; a positional/`--root` conflict exits 2 (tests `cli: ...`) |
 | Luau semantic examples | extracted from `typing-luau.md` and re-analysed by pinned luau-lsp 1.70.1; CI job `luau-semantics` runs them with `RBFORGE_REQUIRE_LUAU_LSP=1` |
-| Diagnostic map | grouped by repository-relative path; `Server/init.luau` and `Client/init.luau` stay separate (test `check: two files with the same basename...`) |
-| Offline gate (`check`, traps, probes, review) | 82 automated tests + fixture projects |
+| Diagnostic map | keyed by the whole project-relative path, so `src/Server/init.luau` and `tests/Server/init.luau` are two files; containment is `commonpath`, so a sibling `proj2` is not inside `proj` (tests `check: same-named files at different depths...`, `check: a sibling directory...`) |
+| Offline gate (`check`, traps, probes, review) | 148 automated tests + fixture projects |
 | Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
 | Receipts / observations | unit tests, including omission, mismatch, expiry, replay and tamper cases |
 | Skill installer | 31 tests: manifest path traversal refused, foreign/legacy/modified dirs preserved, empty+corrupt manifests never `current`, transactional staging and activation rollback, backup-name uniqueness, per-profile `current`, backup instead of delete, preflight abort, idempotent re-run, root dedupe; live across 10 Hermes roots + claude/codex/grok |
-| Skill installer (previous) | 8 tests: per-profile `current`, partial/modified/foreign states, backup instead of delete, preflight abort, idempotent re-run, remove-keeps-user-files, root dedupe; live on this PC across 10 Hermes roots + claude/codex/grok |
 | Release artifact | `smoke_artifact.py` checks all 25 skills, frontmatter and the 17-tool MCP handshake |
 | Live Studio: push + readback | disposable place, 2026-11-06: `synced` digests matched, ModuleScript/Script classes correct |
 | Live Studio: hierarchy + `servePlaceIds` | `HIERARCHY … is Folder, expects Model`; `RBF-STUDIO-003`; `RBF-ARG-002` |
@@ -50,6 +49,13 @@ claim checkable.
 
 ## Done (verified)
 
+- 0.14.7: the diagnostic summary is keyed by the whole project-relative path (`commonpath` containment,
+  not a string prefix), so nested same-named files and sibling directories sharing the root's name are
+  counted separately; the CLI test runs `check <path>`, `--root <path>` and `--scope static` from a
+  foreign cwd and asserts the report's `root` and `rungs_run` instead of accepting any exit code; the
+  cached luau-lsp is reused only when its own `--version` matches the pin, and reinstalls otherwise; StyLua
+  2.6.0 and luau-lsp 1.70.1 are the single stated pins across skills, briefs, vendored copies and the
+  knowledge manifest. 148 tests.
 - 0.13.5: receipts must state the observation's project, scenario and revision (omission no longer matches);
   console classification handles `[Server] Error:` and timestamped/located lines; a batch stops after an
   unrecovered `rollback_failed` and marks the rest `not_attempted`; `rb_collect_evidence` applies its advertised

@@ -64,7 +64,7 @@
     {
       "name": "StyLua",
       "url": "https://github.com/JohnnyMorganz/StyLua",
-      "version_snapshot": "2.5.2",
+      "version_snapshot": "2.6.0",
       "role": "Luau formatter"
     },
     {
@@ -76,7 +76,7 @@
     {
       "name": "luau-lsp",
       "url": "https://github.com/JohnnyMorganz/luau-lsp",
-      "version_snapshot": "1.69.0",
+      "version_snapshot": "1.70.1",
       "role": "Luau LSP / Roblox sourcemap analysis",
       "license": "MIT"
     },

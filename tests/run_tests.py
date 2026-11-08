@@ -1164,6 +1164,32 @@ def _():
     assert '"rb_studio_probe"' in text and '"rb_traps_review"' in text
 
 
+@check("installer: a cached luau-lsp is trusted only when it reports the pinned version")
+def _():
+    # A file at the cache path proves nothing: an older pin, a half-written download or an
+    # unrelated executable all live there. The decision is the binary's own --version.
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location(
+        "rbf_install_lsp", os.path.join(root, "scripts", "install_luau_lsp.py"))
+    assert spec and spec.loader, "install_luau_lsp.py cannot be loaded"
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    with tempdir() as tmp:
+        cached = os.path.join(tmp, "luau-lsp")
+        open(cached, "wb").write(b"\x00not really a binary")
+        assert mod.is_current(cached, "1.70.1", probe=lambda p: "1.70.1") is True, "the pin was not reused"
+        assert mod.is_current(cached, "1.70.1", probe=lambda p: "1.69.0") is False, "an older pin was trusted"
+        assert mod.is_current(cached, "1.70.1", probe=lambda p: None) is False, "an unrunnable file was trusted"
+        assert mod.is_current(cached, "1.70.2", probe=lambda p: "1.70.1") is False, "a bumped pin was ignored"
+        assert mod.is_current(os.path.join(tmp, "absent"), "1.70.1",
+                              probe=lambda p: "1.70.1") is False, "a missing file counted as current"
+        # Reading the real path: garbage cannot report a version, so it must come back as None.
+        assert mod.probe_version(cached) is None, "an unusable binary reported a version"
+    assert mod.VERSION == "1.70.1", mod.VERSION
+
+
 # ---------------------------------------------------------------- helpers (moved above)
 
 
@@ -2800,26 +2826,45 @@ def _():
     PASS.pop()
 
 
-@check("cli: check accepts a positional path, --root, and both scopes")
+@check("cli: check <path>, --root <path> and <path> --scope static inspect the requested project, not the cwd")
 def _():
     import io
     import contextlib
+    from rbforge import check as check_mod
     from rbforge_cli import main as cli_main
-    with tempdir() as root:
-        os.makedirs(os.path.join(root, "src"))
-        open(os.path.join(root, "src", "main.luau"), "w").write("--!strict\nreturn 1\n")
-        forms = [
-            ["check"],
-            ["check", "."],
-            ["check", "--root", "."],
-            ["check", ".", "--scope", "static"],
-        ]
-        for argv in forms:
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                code = cli_main(argv)
-            # 0 clean, 2 a defect was proven, 4 tooling missing: all valid; an argparse error raises.
-            assert code in (0, 2, 4), (argv, code, buf.getvalue()[:200])
+
+    def fake_run(root, scope=None, changed_only=False, base_ref="HEAD"):
+        # Shaped like the real report; `root` is the record of which project the CLI chose.
+        return {"root": os.path.abspath(root), "status": "pass", "counts": {},
+                "rungs_run": ["static"], "rungs": [], "coverage": {}, "gate": "ok"}
+
+    with tempdir() as project, tempdir() as elsewhere:
+        os.makedirs(os.path.join(project, "src"))
+        open(os.path.join(project, "src", "main.luau"), "w").write("--!strict\nreturn 1\n")
+        old_run, old_cwd = check_mod.run, os.getcwd()
+        os.chdir(elsewhere)  # a cwd that is NOT the project, so a fallback to "." cannot pass
+        check_mod.run = fake_run
+        try:
+            forms = [["check", project], ["check", "--root", project],
+                     ["check", project, "--scope", "static"]]
+            for argv in forms:
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    code = cli_main(argv + ["--json"])
+                assert code == 0, (argv, code, buf.getvalue()[:300])
+                report = json.loads(buf.getvalue())
+                assert report["root"] == os.path.abspath(project), (argv, report["root"])
+                assert report["rungs_run"] == ["static"], (argv, report["rungs_run"])
+        finally:
+            check_mod.run = old_run
+            os.chdir(old_cwd)
+
+        # The real pipeline, once: the rendered header must name the project it checked.
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = cli_main(["check", project, "--scope", "structure"])
+        assert code in (0, 2, 4), (code, buf.getvalue()[:300])
+        assert os.path.abspath(project) in buf.getvalue(), buf.getvalue()[:300]
 
 
 @check("cli: conflicting positional path and --root is refused, not silently preferred")
@@ -2867,8 +2912,42 @@ def _():
                 os.environ["RBFORGE_LUAU_DEFINITIONS"] = old_env
     lsp = [c for c in rung["checks"] if c["id"] == "luau-lsp"][0]
     assert "2 blocking diagnostic(s) in 2 file(s)" in lsp["detail"], lsp
-    assert "Server/init.luau 1" in lsp["detail"], lsp
-    assert "Client/init.luau 1" in lsp["detail"], lsp
+    assert "src/Server/init.luau 1" in lsp["detail"], lsp
+    assert "src/Client/init.luau 1" in lsp["detail"], lsp
+
+
+@check("check: same-named files at different depths are two files, not one merged key")
+def _():
+    # `Server/init.luau` under src and under tests collapsed into one bucket when the key was the
+    # last two segments; the summary then reported one file for two real files.
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        blocking = [
+            (os.path.join(root, "src", "Server", "init.luau") + "(1,1)", "TypeError", "bad one"),
+            (os.path.join(root, "tests", "Server", "init.luau") + "(2,1)", "TypeError", "bad two"),
+        ]
+        summary = check_mod._summarize_diagnostics(blocking, 1, True, True, root)
+    assert "in 2 file(s)" in summary, summary
+    assert "src/Server/init.luau 1" in summary, summary
+    assert "tests/Server/init.luau 1" in summary, summary
+
+
+@check("check: a sibling directory sharing the root's name is outside, and outside paths keep their name")
+def _():
+    from rbforge import check as check_mod
+    with tempdir() as parent:
+        root = os.path.join(parent, "proj")
+        sibling = os.path.join(parent, "proj2")
+        os.makedirs(root)
+        blocking = [
+            # A string-prefix containment test would call this file part of `proj`.
+            (os.path.join(sibling, "main.luau") + "(1,1)", "TypeError", "outside"),
+            ("somewhere/else/loose.luau(4,1)", "TypeError", "relative"),
+        ]
+        summary = check_mod._summarize_diagnostics(blocking, 1, True, True, root)
+    assert "in 2 file(s)" in summary, summary
+    assert "somewhere/else/loose.luau 1" in summary, summary
+    assert "proj2" in summary, summary
 
 
 @check("docs: the sealed/unsealed table examples in typing-luau.md still behave as documented")

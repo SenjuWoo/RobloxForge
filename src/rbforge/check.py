@@ -95,6 +95,21 @@ def changed_files(root, base_ref="HEAD"):
 
 
 
+def _project_relative(path, root_abs):
+    """Name an analyzer-reported file relative to the project root.
+
+    Containment is a real path check (commonpath), not a string prefix, so `/proj2`
+    never counts as being inside `/proj`. A different drive cannot be contained.
+    Anything outside the root keeps the path the analyzer printed.
+    """
+    absolute = os.path.abspath(path)
+    try:
+        inside = os.path.commonpath([absolute, root_abs]) == root_abs
+    except ValueError:
+        inside = False
+    return (os.path.relpath(absolute, root_abs) if inside else path).replace("\\", "/")
+
+
 def _summarize_diagnostics(blocking, code, defs, sourcemap, root="."):
     """Compact map of where the type errors are, so an agent fixes a root cause instead of 4,000 leaves.
 
@@ -106,17 +121,11 @@ def _summarize_diagnostics(blocking, code, defs, sourcemap, root="."):
     root_abs = os.path.abspath(root)
     for loc, kind, msg in blocking:
         path = re.split(r"\(\d+,|:\d+:", loc)[0]
-        absolute = os.path.abspath(path)
-        if absolute.startswith(root_abs):
-            rel = os.path.relpath(absolute, root_abs)
-        else:
-            rel = path
-        rel = rel.replace("\\", "/")
-        # Roblox projects are full of same-named files (init.luau, Config.luau), so keep the parent
-        # directory: basename bucketing merged separate files into one count.
-        parts = rel.split("/")
-        name = "/".join(parts[-2:]) if len(parts) > 1 else parts[-1]
-        files[name] = files.get(name, 0) + 1
+        # Roblox projects are full of same-named files (init.luau, Config.luau) at different depths,
+        # so the grouping key is the whole project-relative path: `src/Server/init.luau` and
+        # `tests/Server/init.luau` are two files, and a last-two-segments key merged them into one.
+        rel = _project_relative(path, root_abs)
+        files[rel] = files.get(rel, 0) + 1
         # The first sentence of a diagnostic is its kind; the rest is the specific type.
         head = msg.split(";")[0].split(":")[0][:60]
         kinds[(kind, head)] = kinds.get((kind, head), 0) + 1
