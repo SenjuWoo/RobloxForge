@@ -1737,7 +1737,12 @@ def _():
             with contextlib.redirect_stdout(buf):
                 code = cli_main(["map"])
             assert code == 0, (code, buf.getvalue()[:200])
-            assert json.loads(buf.getvalue())["available"] is True, buf.getvalue()[:200]
+            status = json.loads(buf.getvalue())
+            assert status["path"] == skill.replace("\\", "/"), status
+            if mapkit.missing_dependencies():
+                assert status["available"] is False and status["missing_dependencies"], status
+            else:
+                assert status["available"] is True, status
         finally:
             if old is None:
                 os.environ.pop("RBFORGE_SYPHODEV", None)
