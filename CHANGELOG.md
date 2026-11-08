@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.15.0 - 2026-11-08
+
+Evaluated two upstream projects and adopted only the boundary that does not fork this repository.
+
+### Added
+- **`rbforge assets` / `rb_assets`** — the optional 3D route, as detection and validation only:
+  Blender present and new enough for Roblox's add-on (3.2+), whether the "Upload to Roblox" add-on is
+  installed (found by manifest name, not folder name), and `assets check <file>` reporting a GLB's
+  triangles per mesh against Roblox's 20,000 cap, its meshes and materials. It never logs in, uploads or
+  writes to an account; the interactive add-on and Studio's importer remain the upload paths.
+  FBX is identified but never given a triangle verdict, because counting it needs Blender.
+- `docs/INTEGRATIONS.md` — the classification of all eleven SyphoDev skills and of Roblox's Blender
+  plugin, with the reasons, the licence position and the uninstall path.
+- `skills/roblox-tooling` gained a "3D assets (optional, never required)" route that names the fallback
+  when Blender is absent.
+
+### Not taken
+- The SyphoDev pack is **not vendored**: its licence allows free use and modification but not resale, and
+  asks for attribution. No file here derives from it, and the docs say how to install it separately.
+- No uploader, and no second MCP server. `roblox-code`, `create-roblox-game` and `roblox-build-orchestrator`
+  were skipped as competing architectures; `roblox-skills-setup` because one agent's installer is not
+  another agent's.
+
+### Tests
+152 passed, 0 failed, 0 skipped (was 148). The four new checks cover GLB measurement over and under the
+cap, junk input, binary FBX identification without a verdict, add-on detection by manifest, and an
+explicit `RBFORGE_BLENDER` override.
+
 ## 0.14.7 - 2026-11-08
 
 Closes the three defects the 0.14.6 summary claimed were already closed, plus the two that were left

@@ -118,6 +118,24 @@ If the repo has `tsconfig.json`, `package.json` with `roblox-ts` and `@rbxts/typ
 A ready-to-use GitHub Actions workflow (install tools, format check, lint, type-check, build, publish via
 Open Cloud): [references/ci-workflow.md](references/ci-workflow.md).
 
+## 3D assets (optional, never required)
+
+Everything above builds in Luau. When a mesh is genuinely needed, the route is:
+
+1. `rbforge assets` — is Blender installed, is new enough (3.2+) for Roblox's "Upload to Roblox" add-on, and
+   is that add-on present. It reports facts; it never logs in or uploads.
+2. Author or generate in Blender. Upload through the add-on's own panel (interactive), or import a finished
+   `.glb`/`.fbx` through Studio's 3D importer for scripted work.
+3. `rbforge assets check <file.glb>` before importing — it counts triangles per mesh against Roblox's 20,000
+   cap and lists what is in the file, so an over-budget mesh is caught before it is silently decimated.
+4. No Blender? Build the object from parts (see `roblox-world-building`), or import a finished export. A
+   project never needs Blender to be a valid Roblox project.
+
+For map layout with a reachability proof, and for text-prompt 3D/UI/VFX/animation generators, the external
+[SyphoDev skill pack](https://github.com/SyphoDev-yt/roblox-ai-skills) is the specialist tool; it is not
+vendored here (its licence forbids redistribution for sale and asks for attribution). See
+`docs/INTEGRATIONS.md` for what was evaluated and why only the detection/validation boundary was adopted.
+
 ## Related skills
 
 `roblox-testing` (running tests in CI), `roblox-open-cloud` (publishing, Luau execution),

@@ -229,6 +229,22 @@ def _plugins(a):
     return plugins.status()
 
 
+@tool("rb_assets", {"type": "object", "properties": {
+    "action": {"type": "string", "enum": ["status", "check"], "default": "status"},
+    "path": {"type": "string", "description": "export to inspect when action=check"}}},
+      "Optional 3D asset route: is Blender installed and which version, is Roblox's "
+      "\"Upload to Roblox\" add-on present, and does a finished .glb/.fbx fit Roblox's "
+      "20,000-triangle-per-mesh cap. Detection and validation only - it never uploads, "
+      "logs in or touches an account.")
+def _assets(a):
+    from rbforge import assets
+    if a.get("action") == "check":
+        if not a.get("path"):
+            return {"error": "check needs a path", "detail": "pass path=<file.glb|file.fbx>"}
+        return assets.inspect_export(a["path"])
+    return assets.status()
+
+
 # ------------------------------------------------------------------ wire
 
 @tool("rb_studio_probe", {"type": "object", "properties": {

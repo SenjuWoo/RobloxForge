@@ -106,7 +106,7 @@ plugins` reports what each paid tool would change and what replaces it for $0.
 
 ## Connecting agents (installed OFF by default — token discipline)
 
-The 17 `rb_*` MCP tools are useful during Roblox work but waste context in
+The 18 `rb_*` MCP tools are useful during Roblox work but waste context in
 every other session. `rbforge agent connect` therefore wires the forge's
 MCP server **disabled** into each agent, and installs the skill catalog - 25
 skills (2 first-party, 23 adopted MIT topic skills), always-on but free until a
@@ -153,7 +153,8 @@ docs > verified community practice > model memory.
 | `src/rbforge_cli.py` | CLI — every command prints JSON |
 | `src/rbforge/check.py` | offline verification gate (rungs 1-3 of the ladder) |
 | `src/rbforge/plugins.py` | optional-plugin detection, each with a free alternative |
-| `mcp_server/server.py` | 17-tool MCP server (doctor, capabilities, docs, check, plugins, planning, reviews, receipts, probes, traps, evidence) |
+| `src/rbforge/assets.py` | optional 3D route: Blender and Roblox add-on detection, GLB triangle budget check (never uploads) |
+| `mcp_server/server.py` | 18-tool MCP server (doctor, capabilities, docs, check, plugins, assets, planning, reviews, receipts, probes, traps, evidence) |
 | `skills/` | 25 agent skills (2 first-party + 23 adopted MIT topic skills), installed into Hermes/Claude/Codex/Grok |
 | `tests/run_tests.py` | 105 checks, no Roblox required |
 

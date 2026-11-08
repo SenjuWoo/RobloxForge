@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.14.7 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.15.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -23,7 +23,7 @@ claim checkable.
 | Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
 | Receipts / observations | unit tests, including omission, mismatch, expiry, replay and tamper cases |
 | Skill installer | 31 tests: manifest path traversal refused, foreign/legacy/modified dirs preserved, empty+corrupt manifests never `current`, transactional staging and activation rollback, backup-name uniqueness, per-profile `current`, backup instead of delete, preflight abort, idempotent re-run, root dedupe; live across 10 Hermes roots + claude/codex/grok |
-| Release artifact | `smoke_artifact.py` checks all 25 skills, frontmatter and the 17-tool MCP handshake |
+| Release artifact | `smoke_artifact.py` checks all 25 skills, frontmatter and the 18-tool MCP handshake |
 | Live Studio: push + readback | disposable place, 2026-11-06: `synced` digests matched, ModuleScript/Script classes correct |
 | Live Studio: hierarchy + `servePlaceIds` | `HIERARCHY … is Folder, expects Model`; `RBF-STUDIO-003`; `RBF-ARG-002` |
 | Live Studio: class-change backup | original preserved as `Swap_rbforge_<ms>` in `ServerStorage.rbforge_backups` |
@@ -48,6 +48,12 @@ claim checkable.
    through the documented API.
 
 ## Done (verified)
+
+- 0.15.0: the optional 3D route is detection and validation only. `rb_assets` / `rbforge assets` report
+  Blender (version, add-on minimum), the "Upload to Roblox" add-on found by manifest name, and a GLB's
+  per-mesh triangle count against the 20,000 cap; nothing authenticates or uploads. `docs/INTEGRATIONS.md`
+  records the classification of the SyphoDev pack and the Blender plugin, including why the pack is not
+  vendored and why no uploader was written. 152 tests.
 
 - 0.14.7: the diagnostic summary is keyed by the whole project-relative path (`commonpath` containment,
   not a string prefix), so nested same-named files and sibling directories sharing the root's name are

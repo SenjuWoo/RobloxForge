@@ -1190,6 +1190,92 @@ def _():
     assert mod.VERSION == "1.70.1", mod.VERSION
 
 
+@check("assets: a GLB is measured, and one over Roblox's triangle cap is flagged")
+def _():
+    import struct as _struct
+    from rbforge import assets
+
+    def write_glb(path, triangles):
+        doc = {"asset": {"version": "2.0"},
+               "meshes": [{"name": "Body", "primitives": [
+                   {"attributes": {"POSITION": 0}, "indices": 1}]}],
+               "accessors": [{"count": triangles * 3}, {"count": triangles * 3}],
+               "materials": [{}]}
+        blob = json.dumps(doc).encode("utf-8")
+        blob += b" " * ((4 - len(blob) % 4) % 4)
+        with open(path, "wb") as f:
+            f.write(_struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(blob)))
+            f.write(_struct.pack("<II", len(blob), 0x4E4F534A))
+            f.write(blob)
+
+    with tempdir() as root:
+        small = os.path.join(root, "small.glb")
+        big = os.path.join(root, "big.glb")
+        write_glb(small, 1500)
+        write_glb(big, assets.ROBLOX_TRI_LIMIT + 500)
+        ok = assets.inspect_export(small)
+        over = assets.inspect_export(big)
+        assert ok["triangles"] == 1500 and ok["within_limit"] is True, ok
+        assert over["triangles"] == assets.ROBLOX_TRI_LIMIT + 500, over
+        assert over["within_limit"] is False and over["over_limit"], over
+        assert "Body" in json.dumps(over["over_limit"]), over["over_limit"]
+
+
+@check("assets: a junk file is refused rather than summarised, and binary FBX is recognised")
+def _():
+    from rbforge import assets
+    with tempdir() as root:
+        junk = os.path.join(root, "model.glb")
+        open(junk, "wb").write(b"PVR\x03 not a glb at all")
+        bad = assets.inspect_export(junk)
+        assert "error" in bad and "magic" in bad["error"], bad
+
+        fbx = os.path.join(root, "model.fbx")
+        open(fbx, "wb").write(b"Kaydara FBX Binary  \x00" + b"\x00" * 64)
+        good = assets.inspect_export(fbx)
+        assert good.get("format") == "fbx-binary", good
+        assert "within_limit" not in good, "FBX has no triangle count, so it must not claim a verdict"
+
+        none = assets.inspect_export(os.path.join(root, "missing.glb"))
+        assert none.get("error") == "no such file", none
+
+
+@check("assets: the Roblox add-on is found by its manifest name, not by folder name")
+def _():
+    from rbforge import assets
+    with tempdir() as addons:
+        os.makedirs(os.path.join(addons, "decoy"))
+        open(os.path.join(addons, "decoy", "__init__.py"), "w").write("bl_info = {'name': 'Something Else'}\n")
+        os.makedirs(os.path.join(addons, "upload_to_roblox"))
+        open(os.path.join(addons, "upload_to_roblox", "__init__.py"), "w").write(
+            "bl_info = {'name': 'Upload to Roblox', 'blender': (3, 2, 0)}\n")
+        found = assets.find_addon(addons)
+        assert found and found.replace("\\", "/").endswith("upload_to_roblox"), found
+        assert assets.find_addon(None) is None
+        assert assets.find_addon(os.path.join(addons, "nope")) is None
+
+
+@check("assets: an explicitly named Blender is used, and a free alternative is documented")
+def _():
+    from rbforge import assets
+    with tempdir() as root:
+        fake = os.path.join(root, "blender.exe")
+        open(fake, "wb").write(b"MZ")
+        old = os.environ.get("RBFORGE_BLENDER")
+        os.environ["RBFORGE_BLENDER"] = fake
+        try:
+            found = assets.find_blender()
+        finally:
+            if old is None:
+                os.environ.pop("RBFORGE_BLENDER", None)
+            else:
+                os.environ["RBFORGE_BLENDER"] = old
+        assert found and found["path"].endswith("blender.exe"), found
+    status = assets.status()
+    assert "fallback" in status["upload_routes"], status["upload_routes"]
+    assert status["triangles_per_mesh_limit"] == 20000
+
+
 # ---------------------------------------------------------------- helpers (moved above)
 
 

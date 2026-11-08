@@ -53,6 +53,10 @@ def main(argv=None):
     p_types.add_argument("action", nargs="?", default="status", choices=["status", "fetch"])
     p_types.add_argument("--force", action="store_true", help="re-download even when cached")
 
+    p_assets = sub.add_parser("assets", help="Blender/add-on detection and mesh export validation")
+    p_assets.add_argument("action", nargs="?", default="status", choices=["status", "check"])
+    p_assets.add_argument("path", nargs="?", help="export to check (.glb/.gltf/.fbx/.obj)")
+
     p_check = sub.add_parser("check", help="offline verification gate (run before Studio)")
     # Both `rbforge check .` and `rbforge check --root .` are documented; accept either.
     p_check.add_argument("path", nargs="?", help="project directory (same as --root)")
@@ -176,6 +180,22 @@ def _dispatch(args):
 
         prof = opt_mod.profile(args.root, args.premise)
         _emit(prof if not args.text else {"text": opt_mod.render(prof)})
+        return ExitCode.OK
+
+    if args.cmd == "assets":
+        from rbforge import assets
+
+        if args.action == "check":
+            if not args.path:
+                _emit({"error": "check needs an export path",
+                       "detail": "rbforge assets check <file.glb|file.fbx>"})
+                return ExitCode.VALIDATION
+            report = assets.inspect_export(args.path)
+            _emit(report)
+            if report.get("error") or report.get("within_limit") is False:
+                return ExitCode.VALIDATION
+            return ExitCode.OK
+        _emit(assets.status())
         return ExitCode.OK
 
     if args.cmd == "types":
