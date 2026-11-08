@@ -127,14 +127,20 @@ Everything above builds in Luau. When a mesh is genuinely needed, the route is:
 2. Author or generate in Blender. Upload through the add-on's own panel (interactive), or import a finished
    `.glb`/`.fbx` through Studio's 3D importer for scripted work.
 3. `rbforge assets check <file.glb>` before importing — it counts triangles per mesh against Roblox's 20,000
-   cap and lists what is in the file, so an over-budget mesh is caught before it is silently decimated.
+   cap. It reads the glTF JSON chunk only: vertex validity, normals and degenerate faces are not inspected,
+   and it says so. A `status` of `unverified` (FBX, OBJ, an unaccountable GLB) exits `DEPENDENCY`, never OK.
 4. No Blender? Build the object from parts (see `roblox-world-building`), or import a finished export. A
    project never needs Blender to be a valid Roblox project.
 
-For map layout with a reachability proof, and for text-prompt 3D/UI/VFX/animation generators, the external
-[SyphoDev skill pack](https://github.com/SyphoDev-yt/roblox-ai-skills) is the specialist tool; it is not
-vendored here (its licence forbids redistribution for sale and asks for attribution). See
-`docs/INTEGRATIONS.md` for what was evaluated and why only the detection/validation boundary was adopted.
+For map layout with a reachability proof, `rbforge map` runs the external SyphoDev prover **where it lives**
+(it is not vendored). Set `RBFORGE_SYPHODEV` to that clone, then `rbforge map` reports whether it is usable
+and `rbforge map prove <spec>` runs one spec and returns its own report. With `numpy`/`scipy`/`Pillow`
+missing it refuses instead of half-working, and it never touches a Studio place.
+
+For text-prompt 3D/UI/VFX/animation generators, the rest of that pack
+([SyphoDev skill pack](https://github.com/SyphoDev-yt/roblox-ai-skills)) is the specialist tool; it is not
+vendored here (its licence forbids resale and asks for attribution). See `docs/INTEGRATIONS.md` for what was
+evaluated and why only the detection/validation boundary and the map prover were adopted.
 
 ## Related skills
 

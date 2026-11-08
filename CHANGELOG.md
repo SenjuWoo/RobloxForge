@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.15.1 - 2026-11-08
+
+Correctness pass on 0.15.0's asset validator, plus the map prover actually wired in.
+
+### Fixed
+- **The triangle limit is per mesh, not per file.** `within_limit` was computed from the file total, so two
+  16k meshes (32k total, both legal) failed and the fields could contradict each other. `over_limit` is now
+  the single source of the verdict; `triangles` stays as informational metadata.
+- **The add-on directory used the patch version.** `addons_dir("5.2.0")` built `Blender/5.2.0/scripts/addons`,
+  a folder Blender never writes. It is normalised to `5.2`, and the search now covers the user add-ons, the
+  4.2+ extensions folder, the portable layout and the install-internal layout.
+- **Absence is no longer assumed.** `roblox_addon.state` is `installed`, `absent` or `unknown`; `absent`
+  requires that a required root existed and was searched. Every searched root is listed.
+- **A file that was never measured no longer passes.** `status` is `within_limit` / `over_limit` / `invalid` /
+  `unverified`, and the CLI maps `invalid`/`over_limit` to `VALIDATION` and `unverified` to `DEPENDENCY`, so
+  `rbforge assets check prose.obj` exits 4 instead of 0.
+- **Malformed GLBs no longer crash.** `struct.error` on a truncated chunk header is gone; truncated headers,
+  short JSON chunks, invalid JSON, wrong version, mismatched declared length, out-of-range accessors and
+  unsupported primitive modes all return structured results.
+- **Triangle counting respects the glTF mode.** `TRIANGLES` is count/3, `TRIANGLE_STRIP` and `TRIANGLE_FAN`
+  are n-2, points/lines are 0, and an unknown mode is `unverified` instead of `count // 3`. Indexed and
+  non-indexed primitives both read the right accessor.
+
+### Added
+- **`rbforge map`** — an optional adapter for the external SyphoDev `roblox-map` prover. It discovers an
+  install via `RBFORGE_SYPHODEV`, probes `numpy`/`scipy`/`Pillow`, runs `prove.py` and returns that tool's
+  own report and artifact path. It never contacts Studio, is unavailable when a dependency is missing, and
+  vendors nothing (its licence forbids resale and asks for attribution).
+
+### Docs
+- `docs/INTEGRATIONS.md` states what `assets check` does and does not prove (`counts_geometry: false`), the
+  four outcome states with their exit codes, and the three real upload authorization routes - add-on OAuth,
+  a creator API key, and Studio MCP-managed authorization - correcting the earlier claim that a key is
+  universally required.
+
+### Tests
+157 passed, 0 failed, 0 skipped (was 152).
+
 ## 0.15.0 - 2026-11-08
 
 Evaluated two upstream projects and adopted only the boundary that does not fork this repository.

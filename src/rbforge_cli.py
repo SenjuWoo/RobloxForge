@@ -56,6 +56,11 @@ def main(argv=None):
     p_assets = sub.add_parser("assets", help="Blender/add-on detection and mesh export validation")
     p_assets.add_argument("action", nargs="?", default="status", choices=["status", "check"])
     p_assets.add_argument("path", nargs="?", help="export to check (.glb/.gltf/.fbx/.obj)")
+    p_map = sub.add_parser("map", help="optional external map prover (SyphoDev roblox-map)")
+    p_map.add_argument("action", nargs="?", default="status", choices=["status", "prove"])
+    p_map.add_argument("spec", nargs="?", help="spec name in its specs/ folder, or a path to a .json")
+    p_map.add_argument("--out", help="where to write the JSON report")
+    p_map.add_argument("--res", type=float, help="surface sampling resolution in studs (upstream default 4)")
 
     p_check = sub.add_parser("check", help="offline verification gate (run before Studio)")
     # Both `rbforge check .` and `rbforge check --root .` are documented; accept either.
@@ -192,10 +197,33 @@ def _dispatch(args):
                 return ExitCode.VALIDATION
             report = assets.inspect_export(args.path)
             _emit(report)
-            if report.get("error") or report.get("within_limit") is False:
-                return ExitCode.VALIDATION
+            status = report.get("status")
+            if status == assets.STATUS_INVALID:
+                return ExitCode.VALIDATION   # malformed or wrong type: the file is the problem
+            if status == assets.STATUS_OVER:
+                return ExitCode.VALIDATION   # measured, and over Roblox's per-mesh cap
+            if status == assets.STATUS_UNVERIFIED:
+                return ExitCode.DEPENDENCY   # recognised but nothing was proven: cannot pass a gate
             return ExitCode.OK
         _emit(assets.status())
+        return ExitCode.OK
+
+    if args.cmd == "map":
+        from rbforge import mapkit
+
+        if args.action == "prove":
+            if not args.spec:
+                _emit({"error": "prove needs a spec",
+                       "detail": "rbforge map prove <name|path.json> [--out report.json]"})
+                return ExitCode.VALIDATION
+            report = mapkit.prove(args.spec, out_path=args.out, res=args.res)
+            _emit(report)
+            if not report.get("available"):
+                return ExitCode.DEPENDENCY       # external prover absent or unusable: incomplete, not a pass
+            if report.get("reason") and not report.get("report"):
+                return ExitCode.VALIDATION       # ran nothing, or wrote nothing readable
+            return ExitCode.OK if report.get("ok") else ExitCode.VALIDATION
+        _emit(mapkit.status())
         return ExitCode.OK
 
     if args.cmd == "types":

@@ -705,7 +705,9 @@ def _():
 
         tools = _mcp_rpc(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
         names = {t["name"] for t in tools}
-        assert {"rb_collect_evidence", "rb_verify_receipt"} <= names, sorted(names)
+        assert {"rb_collect_evidence", "rb_verify_receipt", "rb_assets"} <= names, sorted(names)
+        assets_schema = [t for t in tools if t["name"] == "rb_assets"][0]["inputSchema"]
+        assert set(assets_schema["properties"]["action"]["enum"]) == {"status", "check"}, assets_schema
         schema = [t for t in tools if t["name"] == "rb_verify_receipt"][0]["inputSchema"]
         assert "observation_id" in schema["properties"], schema["properties"].keys()
 
@@ -1190,87 +1192,322 @@ def _():
     assert mod.VERSION == "1.70.1", mod.VERSION
 
 
-@check("assets: a GLB is measured, and one over Roblox's triangle cap is flagged")
+def _glb_bytes(meshes, materials=1, version=2, chunk_override=None, magic=b"glTF"):
+    """Build a minimal GLB. `meshes` is [(name, [(mode, accessor_count, indexed)])]."""
+    import struct as _struct
+    accessors, doc_meshes = [], []
+    for name, prims in meshes:
+        out_prims = []
+        for mode, count, indexed in prims:
+            pos = len(accessors)
+            accessors.append({"count": count})
+            prim = {"attributes": {"POSITION": pos}, "mode": mode}
+            if indexed:
+                prim["indices"] = pos
+            out_prims.append(prim)
+        doc_meshes.append({"name": name, "primitives": out_prims})
+    doc = {"asset": {"version": "2.0"}, "meshes": doc_meshes,
+           "accessors": accessors, "materials": [{} for _ in range(materials)]}
+    blob = json.dumps(doc).encode("utf-8")
+    blob += b" " * ((4 - len(blob) % 4) % 4)
+    header = _struct.pack("<4sII", magic, version, 12 + 8 + len(blob))
+    chunk = _struct.pack("<II", len(blob), 0x4E4F534A)
+    if chunk_override is not None:
+        chunk = chunk_override
+    return header + chunk + blob
+
+
+@check("assets: the triangle limit applies per mesh, not to the file total")
+def _():
+    from rbforge import assets
+
+    with tempdir() as root:
+        def write(name, meshes):
+            path = os.path.join(root, name)
+            open(path, "wb").write(_glb_bytes(meshes))
+            return assets.inspect_export(path)
+
+        # One mesh just under the cap.
+        under = write("under.glb", [("Body", [(4, 19999 * 3, True)])])
+        assert under["status"] == assets.STATUS_WITHIN and under["within_limit"] is True, under
+
+        # One mesh just over it.
+        over = write("over.glb", [("Body", [(4, 20001 * 3, True)])])
+        assert over["status"] == assets.STATUS_OVER and over["within_limit"] is False, over
+        assert over["triangles"] == 20001, over
+
+        # Two meshes of 16k each: 32k total, but neither mesh is over - this is a pass.
+        split = write("split.glb", [("A", [(4, 16000 * 3, True)]), ("B", [(4, 16000 * 3, True)])])
+        assert split["triangles"] == 32000, split
+        assert split["status"] == assets.STATUS_WITHIN and split["within_limit"] is True, split
+
+        # One over-cap mesh plus a small one, and the two fields must agree.
+        mixed = write("mixed.glb", [("Huge", [(4, 21000 * 3, True)]), ("Tiny", [(4, 300, True)])])
+        assert mixed["status"] == assets.STATUS_OVER, mixed
+        assert mixed["within_limit"] is False and len(mixed["over_limit"]) == 1, mixed
+        assert mixed["over_limit"][0]["name"] == "Huge", mixed["over_limit"]
+
+        # Several primitives in one mesh add up to that mesh's total.
+        one = write("prim.glb", [("Body", [(4, 12000 * 3, True), (4, 12000 * 3, True)])])
+        assert one["per_mesh"][0]["triangles"] == 24000 and one["status"] == assets.STATUS_OVER, one
+
+
+@check("assets: glTF primitive modes are counted by their own rule, not count // 3")
+def _():
+    from rbforge import assets
+    with tempdir() as root:
+        def counts(name, mode, count, indexed=True):
+            path = os.path.join(root, name)
+            open(path, "wb").write(_glb_bytes([("M", [(mode, count, indexed)])]))
+            return assets.glb_summary(path)
+
+        tri = counts("tri.glb", 4, 300)
+        assert tri["per_mesh"][0]["triangles"] == 100 and tri["status"] == assets.STATUS_WITHIN, tri
+
+        strip = counts("strip.glb", 5, 302)
+        assert strip["per_mesh"][0]["triangles"] == 300, strip  # n-2
+
+        fan = counts("fan.glb", 6, 302)
+        assert fan["per_mesh"][0]["triangles"] == 300, fan  # n-2
+
+        points = counts("points.glb", 0, 900)
+        assert points["per_mesh"][0]["triangles"] == 0 and points["status"] == assets.STATUS_WITHIN, points
+
+        odd = counts("odd.glb", 99, 300)
+        assert odd["status"] == assets.STATUS_UNVERIFIED, "an unknown mode must not be counted as triangles"
+        assert any("mode" in p for p in odd.get("problems", [])), odd
+
+        # Non-indexed geometry reads POSITION instead of indices.
+        loose = counts("loose.glb", 4, 300, indexed=False)
+        assert loose["per_mesh"][0]["triangles"] == 100, loose
+
+
+@check("assets: malformed GLBs are refused with a reason instead of crashing")
 def _():
     import struct as _struct
     from rbforge import assets
+    with tempdir() as root:
+        def probe(name, blob):
+            path = os.path.join(root, name)
+            open(path, "wb").write(blob)
+            return assets.glb_summary(path)
 
-    def write_glb(path, triangles):
-        doc = {"asset": {"version": "2.0"},
-               "meshes": [{"name": "Body", "primitives": [
-                   {"attributes": {"POSITION": 0}, "indices": 1}]}],
-               "accessors": [{"count": triangles * 3}, {"count": triangles * 3}],
-               "materials": [{}]}
+        # The reproduced crash: valid magic, then an incomplete chunk header.
+        short = probe("short.glb", b"glTF" + _struct.pack("<II", 2, 999))
+        assert short["status"] == assets.STATUS_INVALID and "truncated" in short["error"], short
+
+        empty = probe("empty.glb", b"glTF")
+        assert empty["status"] == assets.STATUS_INVALID, empty
+
+        wrong_magic = probe("magic.glb", b"PVR\x00" + b"\x00" * 40)
+        assert wrong_magic["status"] == assets.STATUS_INVALID and "magic" in wrong_magic["error"], wrong_magic
+
+        bad_version = probe("v1.glb", _glb_bytes([("M", [(4, 30, True)])], version=1))
+        assert bad_version["status"] == assets.STATUS_INVALID and "version" in bad_version["error"], bad_version
+
+        not_json = probe("json.glb", _glb_bytes([], chunk_override=_struct.pack("<II", 8, 0x4E4F534A))
+                         + b"not json")
+        assert not_json["status"] == assets.STATUS_INVALID, not_json
+
+        # Declared length larger than the bytes present.
+        truncated = probe("trunc.glb", _glb_bytes([("M", [(4, 30, True)])])[:-20])
+        assert truncated["status"] == assets.STATUS_INVALID, truncated
+
+        # An accessor index past the end of the table is not a zero-triangle mesh.
+        doc = {"asset": {"version": "2.0"}, "accessors": [{"count": 30}],
+               "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 7, "mode": 4}]}]}
         blob = json.dumps(doc).encode("utf-8")
         blob += b" " * ((4 - len(blob) % 4) % 4)
-        with open(path, "wb") as f:
-            f.write(_struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(blob)))
-            f.write(_struct.pack("<II", len(blob), 0x4E4F534A))
-            f.write(blob)
+        out_of_range = probe("range.glb", _struct.pack("<4sII", b"glTF", 2, 20 + len(blob))
+                             + _struct.pack("<II", len(blob), 0x4E4F534A) + blob)
+        assert out_of_range["status"] == assets.STATUS_UNVERIFIED, out_of_range
+        assert any("out of range" in p for p in out_of_range["problems"]), out_of_range
+
+        # A mismatched declared file length is reported, not silently accepted.
+        good = _glb_bytes([("M", [(4, 30, True)])])
+        lies = good[:8] + _struct.pack("<I", 99999) + good[12:]
+        mismatch = probe("lies.glb", lies)
+        assert mismatch.get("declared_bytes_mismatch") is True, mismatch
+
+
+@check("assets: nothing passes without being measured, and the CLI exit codes agree")
+def _():
+    import io
+    import contextlib
+    from rbforge import assets
+    from rbforge_cli import main as cli_main
 
     with tempdir() as root:
-        small = os.path.join(root, "small.glb")
+        obj = os.path.join(root, "not_a_model.obj")
+        open(obj, "w").write("this is prose, not a mesh\n")
+        report = assets.inspect_export(obj)
+        assert report["status"] == assets.STATUS_UNVERIFIED, report
+        assert "within_limit" not in report, "an unmeasured file must not carry a verdict"
+
+        junk = os.path.join(root, "junk.glb")
+        open(junk, "wb").write(b"not a model at all")
+        assert assets.inspect_export(junk)["status"] == assets.STATUS_INVALID
+
+        good = os.path.join(root, "ok.glb")
+        open(good, "wb").write(_glb_bytes([("Body", [(4, 900, True)])]))
         big = os.path.join(root, "big.glb")
-        write_glb(small, 1500)
-        write_glb(big, assets.ROBLOX_TRI_LIMIT + 500)
-        ok = assets.inspect_export(small)
-        over = assets.inspect_export(big)
-        assert ok["triangles"] == 1500 and ok["within_limit"] is True, ok
-        assert over["triangles"] == assets.ROBLOX_TRI_LIMIT + 500, over
-        assert over["within_limit"] is False and over["over_limit"], over
-        assert "Body" in json.dumps(over["over_limit"]), over["over_limit"]
+        open(big, "wb").write(_glb_bytes([("Body", [(4, 20001 * 3, True)])]))
+        txt = os.path.join(root, "notes.txt")
+        open(txt, "w").write("hello")
+
+        def code_for(path):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = cli_main(["assets", "check", path])
+            return code, buf.getvalue()
+
+        assert code_for(good)[0] == 0, "a measured, within-limit export is the only success"
+        assert code_for(big)[0] == 2, "over the cap must fail the gate"
+        assert code_for(junk)[0] == 2, "malformed input must fail"
+        assert code_for(obj)[0] == 4, "recognised but unmeasured must be incomplete, not OK"
+        assert code_for(txt)[0] == 2, "an unsupported extension must fail"
 
 
-@check("assets: a junk file is refused rather than summarised, and binary FBX is recognised")
+@check("assets: the add-on directory uses Blender's major.minor name, and absence is not assumed")
 def _():
     from rbforge import assets
+    # Blender writes 5.2, never 5.2.0 - the folder must match or the search looks in a place that cannot exist.
+    assert assets.addons_dir("5.2.0").replace("\\", "/").endswith("Blender/5.2/scripts/addons"), assets.addons_dir("5.2.0")
+    assert assets.extensions_dir("5.2.0").replace("\\", "/").endswith("Blender/5.2/extensions")
+
     with tempdir() as root:
-        junk = os.path.join(root, "model.glb")
-        open(junk, "wb").write(b"PVR\x03 not a glb at all")
-        bad = assets.inspect_export(junk)
-        assert "error" in bad and "magic" in bad["error"], bad
+        install = os.path.join(root, "Blender")
+        os.makedirs(install)
+        exe = os.path.join(install, "blender.exe")
+        open(exe, "wb").write(b"MZ")
+        os.makedirs(os.path.join(install, "5.2"))
+        blender = {"path": exe.replace("\\", "/"), "version": "5.2.0", "short_version": "5.2"}
 
-        fbx = os.path.join(root, "model.fbx")
-        open(fbx, "wb").write(b"Kaydara FBX Binary  \x00" + b"\x00" * 64)
-        good = assets.inspect_export(fbx)
-        assert good.get("format") == "fbx-binary", good
-        assert "within_limit" not in good, "FBX has no triangle count, so it must not claim a verdict"
-
-        none = assets.inspect_export(os.path.join(root, "missing.glb"))
-        assert none.get("error") == "no such file", none
-
-
-@check("assets: the Roblox add-on is found by its manifest name, not by folder name")
-def _():
-    from rbforge import assets
-    with tempdir() as addons:
-        os.makedirs(os.path.join(addons, "decoy"))
-        open(os.path.join(addons, "decoy", "__init__.py"), "w").write("bl_info = {'name': 'Something Else'}\n")
-        os.makedirs(os.path.join(addons, "upload_to_roblox"))
-        open(os.path.join(addons, "upload_to_roblox", "__init__.py"), "w").write(
-            "bl_info = {'name': 'Upload to Roblox', 'blender': (3, 2, 0)}\n")
-        found = assets.find_addon(addons)
-        assert found and found.replace("\\", "/").endswith("upload_to_roblox"), found
-        assert assets.find_addon(None) is None
-        assert assets.find_addon(os.path.join(addons, "nope")) is None
-
-
-@check("assets: an explicitly named Blender is used, and a free alternative is documented")
-def _():
-    from rbforge import assets
-    with tempdir() as root:
-        fake = os.path.join(root, "blender.exe")
-        open(fake, "wb").write(b"MZ")
-        old = os.environ.get("RBFORGE_BLENDER")
-        os.environ["RBFORGE_BLENDER"] = fake
+        # A hermetic %APPDATA%, because the real one would make the answer machine-dependent.
+        appdata = os.path.join(root, "appdata")
+        os.makedirs(os.path.join(appdata, "Blender Foundation", "Blender", "5.2", "scripts", "addons"))
+        old_appdata = os.environ.get("APPDATA")
+        os.environ["APPDATA"] = appdata
         try:
-            found = assets.find_blender()
+            # Nothing installed in a root that exists -> confirmed absent, not unknown.
+            found, searched, complete = assets.find_addon_anywhere(blender)
+            assert found is None
+            assert complete is True, searched
+            assert any(s["path"].endswith("5.2/scripts/addons") for s in searched), searched
+
+            # Installed in the portable layout beside the binary -> found there, and absence elsewhere
+            # never gets reported as a fact.
+            portable = os.path.join(install, "portable", "5.2", "scripts", "addons", "upload_to_roblox")
+            os.makedirs(portable)
+            open(os.path.join(portable, "blender_manifest.toml"), "w").write(
+                'name = "Upload to Roblox"\nversion = "1.0.0"\n')
+            found, _, _ = assets.find_addon_anywhere(blender)
+            assert found and found.endswith("upload_to_roblox"), found
+        finally:
+            if old_appdata is None:
+                os.environ.pop("APPDATA", None)
+            else:
+                os.environ["APPDATA"] = old_appdata
+
+
+@check("map: an unconfigured external prover is unavailable, never a guess")
+def _():
+    from rbforge import mapkit
+    old = os.environ.pop("RBFORGE_SYPHODEV", None)
+    try:
+        report = mapkit.status()
+        assert report["available"] is False, report
+        assert "RBFORGE_SYPHODEV" in report["reason"], report
+        run = mapkit.prove("minimal")
+        assert run["available"] is False and run["ok"] is False, run
+    finally:
+        if old is not None:
+            os.environ["RBFORGE_SYPHODEV"] = old
+    # A path that is not the package is not accepted just because it exists.
+    with tempdir() as root:
+        assert mapkit.find_install(root) is None
+        assert mapkit.status(configured=root)["available"] is False
+
+
+@check("map: the prover's own spec and report formats survive the adapter")
+def _():
+    import sys as _sys
+    from rbforge import mapkit
+    with tempdir() as root:
+        skill = os.path.join(root, "roblox-map")
+        os.makedirs(os.path.join(skill, "scripts"))
+        os.makedirs(os.path.join(skill, "specs"))
+        open(os.path.join(skill, "specs", "tiny.json"), "w").write('{"name": "Tiny"}\n')
+        # Stands in for the upstream script: same contract, writes the report where --json says.
+        open(os.path.join(skill, "scripts", "prove.py"), "w").write(
+            "import json, sys\n"
+            "args = sys.argv[1:]\n"
+            "out = args[args.index('--json') + 1]\n"
+            "json.dump({'map': 'Tiny', 'result': 'FAIL', 'checks': [\n"
+            "    {'id': 'P2', 'title': 'Standable surface', 'status': 'FAIL', 'detail': 'island'},\n"
+            "    {'id': 'P4', 'title': 'Reachability', 'status': 'PASS', 'detail': 'ok'}]}, open(out, 'w'))\n"
+            "print('RESULT: FAIL')\n"
+            "sys.exit(1)\n")
+        report = mapkit.prove("tiny", configured=skill, python=_sys.executable,
+                              out_path=os.path.join(root, "report.json"), probe=lambda p: [])
+        assert report["available"] is True and report["ok"] is False, report
+        assert report["result"] == "FAIL" and report["map"] == "Tiny", report
+        assert [c["id"] for c in report["checks_failed"]] == ["P2"], report["checks_failed"]
+        assert os.path.isfile(report["report_path"]), report  # the upstream file, untouched
+        assert report["touches_studio"] is False
+
+        # A run that produces no report is a failure with a reason, not a silent pass.
+        open(os.path.join(skill, "scripts", "prove.py"), "w").write(
+            "import sys\nprint('boom')\nsys.exit(1)\n")
+        broken = mapkit.prove("tiny", configured=skill, python=_sys.executable,
+                              out_path=os.path.join(root, "absent.json"), probe=lambda p: [])
+        assert broken["ok"] is False and "no report file" in broken["reason"], broken
+
+        # A spec that does not exist is named, and nothing is executed.
+        missing = mapkit.prove("nope", configured=skill, python=_sys.executable, probe=lambda p: [])
+        assert missing["ok"] is False and "no such spec" in missing["reason"], missing
+
+
+@check("map: missing dependencies make it unavailable instead of half-working")
+def _():
+    from rbforge import mapkit
+    with tempdir() as root:
+        skill = os.path.join(root, "roblox-map")
+        os.makedirs(os.path.join(skill, "scripts"))
+        os.makedirs(os.path.join(skill, "specs"))
+        open(os.path.join(skill, "scripts", "prove.py"), "w").write("print('x')\n")
+        assert mapkit.find_install(skill) is not None
+        assert mapkit.find_install(root) is None  # the parent is not the package
+
+        missing = mapkit.missing_dependencies(python=os.path.join(root, "no-such-python"))
+        assert missing, "an unusable interpreter must report missing dependencies"
+        report = mapkit.status(configured=skill, python=os.path.join(root, "no-such-python"))
+        assert report["available"] is False and "dependencies" in report["reason"], report
+        run = mapkit.prove("tiny", configured=skill, python=os.path.join(root, "no-such-python"))
+        assert run["available"] is False and run["missing_dependencies"], run
+
+
+@check("assets: a fake Blender 5.2 install reports the add-on as installed, not merely searched")
+def _():
+    from rbforge import assets
+    with tempdir() as root:
+        exe = os.path.join(root, "blender.exe")
+        open(exe, "wb").write(b"MZ")
+        open(os.path.join(root, "version.txt"), "w").write("5.2.0\n")
+        old = os.environ.get("RBFORGE_BLENDER")
+        os.environ["RBFORGE_BLENDER"] = exe
+        try:
+            report = assets.status()
         finally:
             if old is None:
                 os.environ.pop("RBFORGE_BLENDER", None)
             else:
                 os.environ["RBFORGE_BLENDER"] = old
-        assert found and found["path"].endswith("blender.exe"), found
+        assert report["blender"]["version"] == "5.2.0", report["blender"]
+        assert report["blender"]["short_version"] == "5.2", report["blender"]
+        assert report["blender"]["meets_addon_minimum"] is True, report["blender"]
+        assert report["roblox_addon"]["state"] in ("installed", "absent", "unknown"), report["roblox_addon"]
+        assert "enabled" in report["roblox_addon"], "enablement is not verifiable here and must say so"
     status = assets.status()
     assert "fallback" in status["upload_routes"], status["upload_routes"]
     assert status["triangles_per_mesh_limit"] == 20000

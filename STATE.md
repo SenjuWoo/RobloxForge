@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.15.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.15.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -48,6 +48,16 @@ claim checkable.
    through the documented API.
 
 ## Done (verified)
+
+- 0.15.1: four reproduced asset defects fixed - the triangle cap is applied **per mesh** (two legal 16k
+  meshes now pass at 32k total), the add-on folder uses Blender's `5.2` not `5.2.0` and the search covers
+  user/extension/portable/install roots, an unmeasured file can no longer pass (`unverified` exits
+  `DEPENDENCY`), and malformed GLBs return structured errors instead of raising `struct.error`. Triangle
+  counting follows the glTF mode: TRIANGLES n/3, STRIP and FAN n-2, points/lines 0, unknown mode unverified.
+  `rbforge map` / `rbforge.mapkit` run the external SyphoDev `roblox-map` prover where it lives (env
+  `RBFORGE_SYPHODEV`), probe numpy/scipy/Pillow, return its own report, never touch Studio, and go
+  `DEPENDENCY` when a dependency is missing. Proven against upstream's `minimal` spec on this machine.
+  157 tests.
 
 - 0.15.0: the optional 3D route is detection and validation only. `rb_assets` / `rbforge assets` report
   Blender (version, add-on minimum), the "Upload to Roblox" add-on found by manifest name, and a GLB's

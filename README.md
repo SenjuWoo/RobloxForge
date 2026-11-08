@@ -154,6 +154,7 @@ docs > verified community practice > model memory.
 | `src/rbforge/check.py` | offline verification gate (rungs 1-3 of the ladder) |
 | `src/rbforge/plugins.py` | optional-plugin detection, each with a free alternative |
 | `src/rbforge/assets.py` | optional 3D route: Blender and Roblox add-on detection, GLB triangle budget check (never uploads) |
+| `src/rbforge/mapkit.py` | optional adapter for an external map prover: discovers it, checks its deps, returns its own report (never touches Studio) |
 | `mcp_server/server.py` | 18-tool MCP server (doctor, capabilities, docs, check, plugins, assets, planning, reviews, receipts, probes, traps, evidence) |
 | `skills/` | 25 agent skills (2 first-party + 23 adopted MIT topic skills), installed into Hermes/Claude/Codex/Grok |
 | `tests/run_tests.py` | 105 checks, no Roblox required |
