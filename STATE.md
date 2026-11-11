@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.16.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.16.2 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -48,6 +48,9 @@ claim checkable.
    through the documented API.
 
 ## Done (verified)
+
+- 0.16.2: three more silent-failure entries (overhead shadows, vertical `lookAt`, scatter reshuffle) and step 7 of
+  the art-direction pass.
 
 - 0.16.1: three more silent-failure entries (viewmodel material tiling, viewmodel fill light, fixed-window
   foley cuts) and two playbook rows.

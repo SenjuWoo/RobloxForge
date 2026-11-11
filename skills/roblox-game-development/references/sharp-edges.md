@@ -228,6 +228,15 @@ Each of these produced no error and cost a session before it was measured.
   N milliseconds can end before the clack. Trim on content (first and last sample above a floor, short fades),
   measure where the main transient sits in the stem, and start playback that much before the animation frame it
   belongs to.
+- **Decorative structure overhead still casts real shadows.** Thin struts of a dome, a canopy frame or a cable net
+  draw dark lines and rings across the ground far below, which reads as a rendering fault - doubly so under a
+  projected or painted sky. Set `CastShadow = false` on overhead framing unless the shadow is the point.
+- **`CFrame.lookAt` between two points on the same vertical is degenerate.** A "rod from A to B" helper built on
+  it produces a twisted or NaN part for a perfectly vertical post. Use a dedicated vertical-post helper, or pass
+  an explicit up vector when the direction is within a degree of world up.
+- **Scatter that rejects candidates must draw its random values first.** If a rejected spot consumes fewer random
+  numbers than an accepted one, moving a single exclusion zone reshuffles every prop after it and the before/after
+  captures no longer compare. Draw the same values for every candidate, then decide.
 - **GUIs are not fogged, parts are.** A `BillboardGui` glow stays visible through `Atmosphere` haze and beyond
   the part draw distance, which makes it the reliable far landmark; neon parts fade with everything else.
 

@@ -187,6 +187,12 @@ screenshot at once, and is verified by a capture from a fixed pose before the ne
    `CorrodedMetal` all over reads as an orange cube. Corrugation is thin ribs, identity is a stencil on a clear
    carrier just proud of the ribs, and clutter goes against rails and walls so play lanes stay open.
 
+7. **Dress the safe area last, and keep it off the buildable land.** Give it the things people who live there
+   would need - fence, power line, water, a generator, stores, crops, lights - placed in the band around the land,
+   with dirt painted under each (`ReplaceMaterial` grass to ground also removes the grass blades). Foliage as an
+   ellipsoid (a block with a `SpecialMesh` sphere takes the block's size per axis) gives flat crowns and loose
+   canopies that stacked cylinders cannot; make it non-solid and non-queryable.
+
 Rules that held: never move or resize the collision geometry while dressing it; seed every random choice from a
 position so a rebuild is identical; rerun the route and combat suites after any prop that collides.
 

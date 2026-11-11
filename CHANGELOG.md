@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.2 - 2026-11-11
+
+### Added
+- `sharp-edges.md`: overhead framing that casts shadows, `CFrame.lookAt` on a vertical, and scatter loops that
+  reshuffle when a candidate is rejected.
+- `worldbuilding-lighting.md`: step 7 of the art-direction pass - dressing the safe area around buildable land.
+
 ## 0.16.1 - 2026-11-11
 
 ### Added
