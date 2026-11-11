@@ -187,6 +187,38 @@ was invisible in the code and obvious in the capture.
   PrimaryPart, then the old offset. First person needs one more step - the body gun is hidden behind the camera, so the
   local tracer must come from the viewmodel's muzzle while remote players keep the body one.
 
+## Silent failures found while art-directing a live place
+
+Each of these produced no error and cost a session before it was measured.
+
+- **A `Sky` with fixed image ids never gets dark.** The textures are drawn as-is at midnight, so "night" is a
+  dim afternoon with a moon in it. A `Sky` left on the engine's own textures (a fresh `Instance.new("Sky")`)
+  follows `ClockTime` and shows stars. Then set the night's ambient high enough to read silhouettes: a correct
+  night with default ambient is pitch black and unplayable.
+- **`rbxasset://` files you added exist only in one Studio build.** `content/` sits inside the versioned install
+  folder; every Studio update creates a new folder without your files. Sounds then fail to load with no error and
+  only stock clips play. It also never reaches a player. Keep an installer script for local work, check with the
+  `sound-audit` probe, and upload real assets before shipping.
+- **Stock content is not a contract either.** A stock `rbxasset://sounds/*.mp3` that loaded last month can be
+  gone after an update; `sound-audit` lists those too.
+- **Background Studio runs at about 15 fps.** Server and client both report the same flat rate and it does not
+  move when you delete half the scene. Boot times, tween timings and anything measured in frames are inflated
+  roughly four times, and Automatic quality drops the draw distance so far geometry disappears from captures.
+  Prove it is the throttle (hide your additions, re-measure) before optimising anything.
+- **Yielding once per chunk makes a build wait on the frame clock.** `task.wait()` after every terrain tile or
+  every N parts spends most of the boot idle. Yield when the thread has held the frame for ~30 ms instead
+  (`if os.clock() - last > 0.03 then task.wait() last = os.clock() end`) - and do not let a search-and-replace
+  rewrite the `task.wait()` inside that helper into a call to itself.
+- **Smooth terrain does not sit at the height you filled it to.** A block filled "to Y = 0" can present its
+  surface a few studs lower. Stand props on a downward raycast hit, and treat water or a non-terrain hit as
+  "do not place here"; one function then keeps scatter out of harbours and off existing buildings.
+- **`_G` is not shared between separate command sessions.** State saved by one `execute_luau` client may be nil
+  for another. Park cross-call state in an attribute (`workspace:SetAttribute`) instead.
+- **Wedge orientation, measured:** a `WedgePart`'s tall edge is its local +Z and the slope falls toward -Z; a
+  `CornerWedgePart` peaks at (+X, -Z). Measure with two downward rays before building a battered wall from memory.
+- **GUIs are not fogged, parts are.** A `BillboardGui` glow stays visible through `Atmosphere` haze and beyond
+  the part draw distance, which makes it the reliable far landmark; neon parts fade with everything else.
+
 ## `tostring(Enum.Material.Grass)` is not `"Grass"`
 
 `tostring()` on an Enum item yields the full path - `"Enum.Material.Grass"` - so a lookup keyed by

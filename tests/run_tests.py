@@ -1093,6 +1093,23 @@ def _():
         assert "execute_luau" in r["run"] and r["purpose"], p["name"]
         assert "return" in r["code"], p["name"] + " returns nothing for execute_luau to show"
 
+@check("probes: goto, capture-quality and sound-audit exist, state their datamodel and are in the playbook")
+def _():
+    from rbforge import probes
+    names = {p["name"]: p for p in probes.catalog()}
+    for name, dm in (("goto", "Server"), ("capture-quality", "Client"), ("sound-audit", "Client")):
+        assert name in names, f"{name} missing from the catalog"
+        assert names[name]["datamodel"] == dm, f"{name} should run in {dm}"
+    restore = probes.render("capture-quality", {"level": "0"})["code"]
+    assert "ForgeSavedQuality" in restore and "_G." not in restore, "quality must be saved in an attribute, not _G"
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "skills", "roblox-game-development", "references", "debugging-playbook.md"),
+              encoding="utf-8") as fh:
+        playbook = fh.read()
+    for name in ("goto", "capture-quality", "sound-audit"):
+        assert f"`{name}`" in playbook, f"{name} is not documented in the playbook"
+
+
 @check("probes: overrides land, unknown names and params are refused")
 def _():
     from rbforge import probes

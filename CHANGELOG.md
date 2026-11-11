@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.16.0 - 2026-11-10
+
+Three probes and the guidance that goes with them, all from one art-direction pass on a live place.
+
+### Added
+- **`goto` probe** (Server): moves the character so an area streams in. Under StreamingEnabled a pinned camera far
+  from the character captures an empty world.
+- **`capture-quality` probe** (Client): forces render quality for a capture, restores it with `level=0`, and
+  reports the frame rate so a throttled background Studio is recognised instead of profiled.
+- **`sound-audit` probe** (Client): loads every sound id the place refers to and lists the ones that do not load,
+  plus ids that exist only inside the current Studio install.
+- `worldbuilding-lighting.md`: an ordered art-direction pass for a prototype world.
+- `sharp-edges.md`: fixed-id skies at night, local `rbxasset://` content, background-throttled Studio, per-chunk
+  yields, terrain surface height, `_G` across command sessions, wedge orientation, fogged parts versus GUIs.
+- `debugging-playbook.md`: nine symptom rows for the above.
+
 ## 0.15.3 - 2026-11-08
 
 Two reproduced result-contract bugs from 0.15.2, plus a collision in the publisher. No interface changes.

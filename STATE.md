@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.15.3 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.16.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -48,6 +48,10 @@ claim checkable.
    through the documented API.
 
 ## Done (verified)
+
+- 0.16.0: probes `goto`, `capture-quality`, `sound-audit` (17 probes), each run against a live Play session;
+  an art-direction pass in `worldbuilding-lighting.md`; ten silent-failure entries in `sharp-edges.md`; nine
+  symptom rows in the playbook.
 
 - 0.15.3: `mapkit.prove` no longer hands back a path into the temp workdir it just deleted - the report is
   inline and `report_path` is null unless `--out` was given, in which case it is the file that was written.

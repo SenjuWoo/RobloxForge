@@ -20,6 +20,9 @@ Studio MCP's `execute_luau`. List them with `rbforge probe`.
 | `whereis` | Where is the instance called X, in which datamodel? |
 | `remotes` | Which remotes exist (compare to the names your code uses) |
 | `perf` | Frame time and the counts that explain a slow place |
+| `goto` | Put the character somewhere so that area streams in (a pinned camera alone shows an empty streamed world) |
+| `capture-quality` | Force full render quality for a capture and report the frame rate; restore with `level=0` |
+| `sound-audit` | Which sound ids fail to load, and which exist only in this Studio install |
 
 Static side: **`rbforge review --kind traps`** (MCP `rb_traps_review`) flags Luau
 that compiles but breaks in Roblox, with the line, the fix and a reference.
@@ -99,6 +102,14 @@ the camera, the height and the view before you touch code.
 | Edit DM tool fails with "not available in Play mode" | Studio is in Play | `start_stop_play is_start=false`, then push |
 | Camera jumps between captures | Game camera script or the Assistant resets it | `camera-pin` |
 | Slow frame rate | Shadow-casting lights, emitters, part count, per-frame remote spam | `perf`, `scene-audit`, traps lint T013 |
+| Frame rate is a flat ~15 fps whatever is in the scene | Studio is in the background and throttled, not the place | `capture-quality` (reports fps); hide your new models and re-measure - if nothing changes it is not your content |
+| Boot or a build step "got four times slower" | Same throttle, plus build code that yields one frame per chunk | publish per-step seconds as an attribute; yield on elapsed time, not per chunk |
+| Custom sounds silent, stock clicks still play, no error | `rbxasset://sounds/<folder>/...` files live in the versioned Studio install; a Studio update removed them | `sound-audit` |
+| A sound that used to be stock is silent | Stock content files are not guaranteed between Studio versions | `sound-audit` |
+| Night sky is bright blue while the ground is dark | The `Sky` uses fixed image ids, which do not follow the clock | replace it with a default `Sky` (engine textures) and capture at night |
+| Far geometry missing from a Play capture but present in Edit | Automatic quality collapsed the draw distance (throttled Studio), or the area is not streamed in | `capture-quality level=21`, `goto` |
+| Distant area is empty in Play although the server built it | StreamingEnabled streams around the character, not a pinned camera | `goto`, then `camera-pin` |
+| Props float or sink on terrain | Positioned at the height the terrain was filled to; smooth terrain settles below it | raycast down and stand the prop on the hit |
 
 ## Input through the MCP
 

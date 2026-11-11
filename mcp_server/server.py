@@ -257,8 +257,10 @@ def _assets(a):
       "Ready-made, reviewed Luau diagnostics to pass to the Roblox Studio MCP's execute_luau: "
       "gui-overflow (SurfaceGui content painting outside its part), ray-all (sight line incl. CanQuery=false "
       "parts), box-scan (area really clear?), hide/restore (bisect a visual artefact), scene-audit, console "
-      "(deduped errors), camera-pin/camera-free (comparable captures), perf, whereis, ui-audit, player-state, "
-      "remotes. Returns code plus the datamodel to run it in. Prefer these over writing inspection code.")
+      "(deduped errors), camera-pin/camera-free (comparable captures), goto (stream an area in around the "
+      "character), capture-quality (full draw distance for a capture, reports fps), sound-audit (sound ids that "
+      "do not load or exist only in this Studio install), perf, whereis, ui-audit, player-state, remotes. "
+      "Returns code plus the datamodel to run it in. Prefer these over writing inspection code.")
 def _studio_probe(a):
     from rbforge import probes
     if not a.get("name"):

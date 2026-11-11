@@ -162,10 +162,39 @@ properties, then load `skill "rbx-convert-to-streaming"` for the model
 requirements (streaming targets, `Model.ModelStreamingMode`, persistence). Turning
 streaming on without reading that skill is how "my script disappears" bugs happen.
 
+## Art-direction pass on a prototype world
+
+A world that is "systems done, looks like a test map" is fixed in this order. Each step is cheap, changes every
+screenshot at once, and is verified by a capture from a fixed pose before the next one starts.
+
+1. **Look first, geometry second.** Engine `Sky` (so night works), a `Clouds` instance under Terrain, one
+   `Atmosphere`, water colour/reflectance/wave size, and `Terrain:SetMaterialColor` for the three or four
+   materials in use. Keep per-phase values (clock, ambient, haze, grade, cloud cover) in one config table that
+   both the server cycle and any client override read.
+2. **Tune in Edit, encode in config.** Apply a candidate profile with a few property writes, capture from two
+   fixed poses, adjust, and only then write the numbers into the table. Two calls per iteration instead of a
+   Play boot per iteration.
+3. **Dress the biggest surface the player always sees** (a perimeter wall, a cliff, a hull). Keep the collision
+   core untouched and add rhythm on the visible face: a sloped plinth, a pier on every joint, a taller feature
+   every fourth joint, one coloured band, pipes/vents/catwalks that alternate by index, lit windows and a few
+   non-shadow spotlights throwing pools. Build each module in the same frame as the slab it decorates, and skip
+   or split anything that would cross a doorway.
+4. **Give the horizon a destination.** A ring of simple tall masses with a few lit windows, as a `Persistent`
+   model, plus a `BillboardGui` glow over it. From the spawn exit the player must be able to see where to go.
+5. **Paint routes into the terrain.** `Terrain:ReplaceMaterial(region, 4, Ground, Asphalt)` along a line changes
+   no height and leaves water alone; add lane dashes for the first stretch and scatter cover along the edges.
+6. **Then the props.** Painted steel is `Metal` with rust as patches and on bottom rails; a box that is
+   `CorrodedMetal` all over reads as an orange cube. Corrugation is thin ribs, identity is a stencil on a clear
+   carrier just proud of the ribs, and clutter goes against rails and walls so play lanes stay open.
+
+Rules that held: never move or resize the collision geometry while dressing it; seed every random choice from a
+position so a rebuild is identical; rerun the route and combat suites after any prop that collides.
+
 ## Checklist before calling a world done
 
 - [ ] spawn is above terrain and faces the first objective
 - [ ] no part the player can see is unanchored
 - [ ] terrain has at least two materials (flat + slope)
-- [ ] exactly one lighting preset, applied and screenshotted
+- [ ] exactly one lighting preset, applied and screenshotted - at night too
+- [ ] a landmark is visible from the spawn exit
 - [ ] `screen_capture` framed on the playable area, and actually looked at
