@@ -216,6 +216,18 @@ Each of these produced no error and cost a session before it was measured.
   for another. Park cross-call state in an attribute (`workspace:SetAttribute`) instead.
 - **Wedge orientation, measured:** a `WedgePart`'s tall edge is its local +Z and the slope falls toward -Z; a
   `CornerWedgePart` peaks at (+X, -Z). Measure with two downward rays before building a battered wall from memory.
+- **Material textures tile in world studs, so they blow up on a first-person viewmodel.** Arms and weapon parts
+  scaled to a fraction of a stud and held against the camera show a few texels of `Fabric` weave as wood planks.
+  Use a matte material without a visible pattern (`Rubber`) for cloth on a viewmodel; `SmoothPlastic` is flat but
+  glossy enough to turn gold in direct sun. Keep the textured material on the third-person copy.
+- **A "fill light" on a viewmodel lights the world.** A `PointLight` near the camera strong enough to lift a dark
+  weapon also bleaches every wall within its range and flattens the night; and it forces every held object to be
+  near-black to survive it. Keep it weak and short (about 0.6 brightness, 4 studs) and give the object real
+  mid-tone finishes instead.
+- **A fixed-length cut of a recording is not a sound effect.** Foley takes start with handling noise; the first
+  N milliseconds can end before the clack. Trim on content (first and last sample above a floor, short fades),
+  measure where the main transient sits in the stem, and start playback that much before the animation frame it
+  belongs to.
 - **GUIs are not fogged, parts are.** A `BillboardGui` glow stays visible through `Atmosphere` haze and beyond
   the part draw distance, which makes it the reliable far landmark; neon parts fade with everything else.
 

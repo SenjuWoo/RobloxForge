@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.1 - 2026-11-11
+
+### Added
+- `sharp-edges.md`: material texture tiling on first-person viewmodels, viewmodel fill lights that light the
+  world, and cutting foley on content instead of a fixed window.
+- `debugging-playbook.md`: two symptom rows for the first two.
+
 ## 0.16.0 - 2026-11-10
 
 Three probes and the guidance that goes with them, all from one art-direction pass on a live place.

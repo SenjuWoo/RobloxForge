@@ -109,6 +109,8 @@ the camera, the height and the view before you touch code.
 | Night sky is bright blue while the ground is dark | The `Sky` uses fixed image ids, which do not follow the clock | replace it with a default `Sky` (engine textures) and capture at night |
 | Far geometry missing from a Play capture but present in Edit | Automatic quality collapsed the draw distance (throttled Studio), or the area is not streamed in | `capture-quality level=21`, `goto` |
 | Distant area is empty in Play although the server built it | StreamingEnabled streams around the character, not a pinned camera | `goto`, then `camera-pin` |
+| First-person arms or weapon look like wood planks, or glow gold in sunlight | Material texture tiling at viewmodel scale; glossy `SmoothPlastic` | matte untextured material on the viewmodel copy (see sharp-edges) |
+| Walls near the player are paler than the same wall further away | A `PointLight` carried by the camera or viewmodel | list lights under `workspace.CurrentCamera`, disable, capture again |
 | Props float or sink on terrain | Positioned at the height the terrain was filled to; smooth terrain settles below it | raycast down and stand the prop on the hit |
 
 ## Input through the MCP
