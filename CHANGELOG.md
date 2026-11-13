@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.3 - 2026-11-12
+
+### Fixed
+- `START-HERE.bat` pins delayed expansion off. Started from a folder whose name contains `!` with delayed
+  expansion enabled in the calling shell, the launcher changed into a path that does not exist.
+
 ## 0.16.2 - 2026-11-11
 
 ### Added
