@@ -176,7 +176,7 @@ def mcp_enabled_setting():
                 data = json.load(handle)
         except (OSError, ValueError):
             continue
-        server = data.get("mcp-server")
+        server = data.get("mcp-server") if isinstance(data, dict) else None
         if isinstance(server, dict) and "enabled" in server:
             states.append((path, bool(server["enabled"])))
     if not states:
@@ -325,7 +325,8 @@ def _await_id(lines, want_id, proc, timeout):
                 msg = json.loads(raw)
             except ValueError:
                 continue
-            if msg.get("id") == want_id:
+            # A stray non-object line (a log number, a list) is not a reply, and must not raise.
+            if isinstance(msg, dict) and msg.get("id") == want_id:
                 return msg
         if proc.poll() is not None and seen >= len(lines):
             return None
@@ -336,25 +337,45 @@ def _await_id(lines, want_id, proc, timeout):
 def _parse_studios(msg):
     if not msg:
         return None
-    content = ((msg.get("result") or {}).get("content")) or []
-    for part in content:
-        if part.get("type") != "text":
+    result = msg.get("result") if isinstance(msg, dict) else None
+    content = (result.get("content") if isinstance(result, dict) else None) or []
+    for part in content if isinstance(content, list) else []:
+        if not isinstance(part, dict) or part.get("type") != "text":
             continue
         try:
             data = json.loads(part.get("text") or "")
         except ValueError:
             continue
-        studios = data.get("studios")
+        studios = data.get("studios") if isinstance(data, dict) else None
         if isinstance(studios, list):
             return studios
     return None
 
 
 def _terminate(proc):
+    """Stop a launcher and everything it started.
+
+    Closing stdin lets a stdio MCP server exit on EOF. On Windows the launcher is `cmd.exe /c
+    mcp.bat`, and TerminateProcess on cmd.exe leaves its StudioMCP.exe child running, so a launcher
+    that does not exit by itself is killed as a tree.
+    """
     try:
         proc.stdin.close()
     except (OSError, ValueError):
         pass
+    try:
+        proc.wait(timeout=3)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if WINDOWS:
+        try:
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                           capture_output=True, timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            pass
     try:
         proc.terminate()
         proc.wait(timeout=5)

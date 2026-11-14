@@ -22,9 +22,9 @@ current Roblox documentation.
 <p>
   <a href="#quickstart">Quickstart</a>
   ·
-  <a href="#the-two-skills-the-actual-product">Skills</a>
+  <a href="#the-skill-catalog-the-actual-product">Skills</a>
   ·
-  <a href="#status-v030--honest">Status</a>
+  <a href="#status">Status</a>
   ·
   <a href="tests/agent-benchmarks/01-weak-model-obby.md">Benchmark</a>
 </p>
@@ -156,8 +156,8 @@ docs > verified community practice > model memory.
 | `src/rbforge/assets.py` | optional 3D route: Blender and Roblox add-on detection, GLB triangle budget check (never uploads) |
 | `src/rbforge/mapkit.py` | optional adapter for an external map prover: discovers it, checks its deps, returns its own report (never touches Studio) |
 | `mcp_server/server.py` | 18-tool MCP server (doctor, capabilities, docs, check, plugins, assets, planning, reviews, receipts, probes, traps, evidence) |
-| `skills/` | 25 agent skills (2 first-party + 23 adopted MIT topic skills), installed into Hermes/Claude/Codex/Grok |
-| `tests/run_tests.py` | 105 checks, no Roblox required |
+| `skills/` | 25 agent skills (2 first-party + 23 adopted MIT topic skills), installed into Hermes/Claude/Codex/Grok/Kimi |
+| `tests/run_tests.py` | 186 checks, no Roblox required |
 
 Register the MCP server manually (all agents, disabled) instead:
 
@@ -165,7 +165,17 @@ Register the MCP server manually (all agents, disabled) instead:
 python src\rbforge_cli.py agent connect all
 ```
 
-## Status (0.13.9 — honest)
+### Pushing scripts safely
+
+`rbforge push src/Server/Main.server.luau` (or `ALL`) copies sources into the open place through the
+official Studio MCP and reads each one back. It remembers what it wrote, so a script someone edited in
+Studio since the last push is refused as a `conflict` instead of being overwritten; `--force` overwrites
+it. Whenever push replaces a source it did not write itself, the Studio copy is cloned into
+`ServerStorage.rbforge_backups` first and listed under `backed_up`.
+
+## Status
+
+0.17.0. Only what was observed is listed as verified.
 
 | Area | Status |
 |---|---|
@@ -173,10 +183,12 @@ python src\rbforge_cli.py agent connect all
 | creator-docs sparse cache + ranked search | verified (2,214 docs indexed) |
 | `rbforge check` offline gate (static / unit / structure) | verified; skips reported as `incomplete`, never `pass` |
 | `rbforge new` one-command project + plan | verified |
-| Plugin detection with a free alternative for every entry | verified (filename-based; none installed here) |
+| `rbforge push`: checksum readback, rollback, class-change backup | verified against a live Studio place |
+| `rbforge push` conflict guard and backup-before-overwrite (0.17.0) | executed under Lune against a mock DataModel; not yet re-run in live Studio |
+| Plugin detection with a free alternative for every entry | verified (filename-based) |
 | Doctor, capabilities matrix | verified |
-| Skill install into Hermes (10 roots), Claude/Codex/Grok | verified; manifest-backed, per-profile status, non-destructive reinstall |
-| Vertical-slice planning, reviews, hash-chained verification receipts | implemented, static-only |
+| Skill install into every Hermes profile, Claude/Codex/Grok/Kimi | verified; manifest-backed, per-profile status, non-destructive reinstall |
+| Verification receipts: observed console, inspected screenshot, server test | verified live (`verified_playtest` reached and refused correctly) |
 | Real E2E weak-model benchmark (baseline vs RobloxForge obby) | **not yet run** |
 
 v1.0.0 waits for the E2E benchmark proving behavioral improvement. See

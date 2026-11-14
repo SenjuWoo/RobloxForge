@@ -3846,6 +3846,486 @@ def _():
     assert "sbx-tmp" not in skills._ROOTS, sorted(skills._ROOTS)
 
 
+# ---------------------------------------------------------------- 0.17.0 audit
+
+def _cli(*argv):
+    """(exit code, parsed JSON) for one CLI run in-process."""
+    import rbforge_cli
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = rbforge_cli.main(list(argv))
+    text = buf.getvalue()
+    try:
+        return code, json.loads(text)
+    except ValueError:
+        return code, text
+
+
+@check("check: a project directory that does not exist is an argument error, not 'incomplete'")
+def _():
+    from rbforge import check
+    from rbforge.errors import ForgeError
+    with tempdir() as d:
+        missing = os.path.join(d, "nope")
+        try:
+            check.run(missing)
+        except ForgeError as exc:
+            assert exc.code == "RBF-ARG-001" and exc.exit_code == 2, exc
+        else:
+            raise AssertionError("a missing directory produced a report")
+        code, out = _cli("check", missing, "--json")
+        assert code == 2 and out["error"]["code"] == "RBF-ARG-001", (code, out)
+
+
+@check("check: a project stored under a folder named *Packages is still audited")
+def _():
+    from rbforge import check
+    with tempdir() as d:
+        root = os.path.join(d, "MyPackages", "game")
+        os.makedirs(os.path.join(root, "src"))
+        os.makedirs(os.path.join(root, "Packages"))
+        open(os.path.join(root, "src", "a.luau"), "w").write("--!strict\nreturn 1\n")
+        open(os.path.join(root, "Packages", "dep.luau"), "w").write("return loadstring('x')\n")
+        rung = check.rung_structure(root)
+        coverage = [c for c in rung["checks"] if c["id"] == "coverage"]
+        assert coverage and coverage[0]["detail"].startswith("1 Luau"), rung["checks"]
+        assert not [c for c in rung["checks"] if c["status"] == "fail"], rung["checks"]
+
+
+@check("check: comments and strings that name loadstring/getfenv are not calls")
+def _():
+    from rbforge import check
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        open(os.path.join(d, "src", "a.luau"), "w").write(
+            "--!strict\n-- never call loadstring(code) here\n--[[ getfenv(1) ]]\n"
+            "local s = \"setfenv(1, {}) is banned\"\nreturn s\n")
+        clean = check.rung_structure(d)
+        assert not [c for c in clean["checks"] if c["status"] == "fail"], clean["checks"]
+        open(os.path.join(d, "src", "b.luau"), "w").write("--!strict\nreturn loadstring('x')\n")
+        dirty = check.rung_structure(d)
+        fails = [c["detail"] for c in dirty["checks"] if c["status"] == "fail"]
+        assert len(fails) == 1 and "b.luau: loadstring" in fails[0], fails
+
+
+@check("check: client DataStoreService is judged on code - a comment is ignored, GetService is not")
+def _():
+    from rbforge import check
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        path = os.path.join(d, "src", "Hud.client.luau")
+        open(path, "w").write("--!strict\n-- the server owns DataStoreService, never the client\nreturn 1\n")
+        assert not [c for c in check.rung_structure(d)["checks"] if c["status"] == "fail"]
+        open(path, "w").write("--!strict\nlocal ds = game:GetService(\"DataStoreService\")\nreturn ds\n")
+        fails = [c["detail"] for c in check.rung_structure(d)["checks"] if c["status"] == "fail"]
+        assert fails and "DataStoreService in a client script" in fails[0], fails
+
+
+@check("luau_text: strings can be kept, comments always go, and a broken string ends at its line")
+def _():
+    from rbforge import luau_text
+    src = "local a = 'x' -- loadstring(\nlocal b = \"open\nprint(loadstring)\n--[==[ multi\nline ]==]return [[k]]\n"
+    code = luau_text.code_only(src)
+    assert "loadstring(" not in code and "multi" not in code and "'x'" not in code, code
+    assert "print(loadstring)" in code, "an unterminated string swallowed the next line: %r" % code
+    kept = luau_text.code_only(src, keep_strings=True)
+    assert "'x'" in kept and "[[k]]" in kept and "multi" not in kept, kept
+
+
+@check("live: a Session whose setup fails stops the MCP process it started")
+def _():
+    from rbforge import live
+    from rbforge.errors import ForgeError
+    with tempdir() as d:
+        fake = os.path.join(d, "fake_mcp.py")
+        open(fake, "w").write(
+            "import json, sys\n"
+            "for line in sys.stdin:\n"
+            "    msg = json.loads(line)\n"
+            "    if 'id' not in msg: continue\n"
+            "    if msg['method'] == 'initialize': result = {'protocolVersion': '2024-11-05'}\n"
+            "    else: result = {'content': [{'type': 'text', 'text': json.dumps({'studios': [\n"
+            "        {'id': 'a', 'name': 'One'}, {'id': 'b', 'name': 'Two'}]})}]}\n"
+            "    print(json.dumps({'jsonrpc': '2.0', 'id': msg['id'], 'result': result}), flush=True)\n")
+        started = []
+        real_popen = live.subprocess.Popen
+
+        def recording(*a, **k):
+            proc = real_popen(*a, **k)
+            started.append(proc)
+            return proc
+
+        orig_cmd = live.studio_mod.mcp_command
+        live.studio_mod.mcp_command = lambda: [sys.executable, fake]
+        live.subprocess.Popen = recording
+        try:
+            try:
+                live.Session(timeout=20)
+            except ForgeError as exc:
+                assert exc.code == "RBF-STUDIO-001", exc
+            else:
+                raise AssertionError("two open Studios did not require --studio")
+        finally:
+            live.subprocess.Popen = real_popen
+            live.studio_mod.mcp_command = orig_cmd
+        assert len(started) == 1, started
+        assert started[0].poll() is not None, "the MCP process outlived the failed Session"
+
+
+@check("live: Rojo names a script by its file minus the script suffix, so X.spec and X stay apart")
+def _():
+    from rbforge import live
+    assert live.script_name("Foo.spec.luau") == "Foo.spec"
+    assert live.script_name("Main.server.luau") == "Main"
+    assert live.script_name("Hud.client.lua") == "Hud"
+    assert live.script_name("Util.luau") == "Util"
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        for name in ("Shop.luau", "Shop.spec.luau"):
+            open(os.path.join(d, "src", name), "w").write("return 1\n")
+        json.dump({"tree": {"ReplicatedStorage": {"$path": "src"}}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        names = sorted(v[1] for v in live.rojo_targets(os.path.join(d, "default.project.json")).values())
+        assert names == ["Shop", "Shop.spec"], names
+
+
+@check("live: a malformed Rojo project is a structured push error, not a traceback")
+def _():
+    from rbforge import live
+    from rbforge.errors import ForgeError
+    with tempdir() as d:
+        proj = os.path.join(d, "default.project.json")
+        for body in ("{not json", json.dumps({"name": "x"}), json.dumps([1, 2])):
+            open(proj, "w").write(body)
+            try:
+                live.rojo_targets(proj)
+            except ForgeError as exc:
+                assert exc.code == "RBF-ARG-002", exc
+            else:
+                raise AssertionError("accepted %r" % body)
+
+
+def _push_fixture(d, body="return 1\n"):
+    os.makedirs(os.path.join(d, "src"), exist_ok=True)
+    json.dump({"tree": {"ServerScriptService": {"$path": "src"}}},
+              open(os.path.join(d, "default.project.json"), "w"))
+    open(os.path.join(d, "src", "A.luau"), "w").write(body)
+    return os.path.join(d, "default.project.json")
+
+
+class _Recorder:
+    """A Studio double that records the Luau it was sent and answers from a queue."""
+    sent, answers = [], []
+
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def luau(self, code, dm="Edit"):
+        _Recorder.sent.append(code)
+        return _Recorder.answers.pop(0)
+
+
+@check("live: push records what it wrote and guards the next write with it")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with _isolated_home(), tempdir() as d:
+        proj = _push_fixture(d)
+        want = live.adler("return 1\n")
+        try:
+            live.Session = _Recorder
+            _Recorder.sent, _Recorder.answers = [], [
+                "SYNCED %s {\"place\":\"0:Place1\"}" % want,
+                "SYNCED %s {\"place\":\"0:Place1\"}" % want]
+            first = live.push(["ALL"], proj)
+            assert first["pushed"] == 1, first
+            assert '"0:Place1"' not in _Recorder.sent[0], "a first push already had an expectation"
+            second = live.push(["ALL"], proj)
+            assert second["pushed"] == 1, second
+            assert ('"0:Place1": "%s"' % want) in _Recorder.sent[1], "the ledger stamp was not sent"
+            ledger = json.load(open(live._ledger_path()))
+            entry = list(ledger["projects"].values())[0]["0:Place1"]["ServerScriptService.A"]
+            assert entry["stamp"] == want and entry["file"].endswith("A.luau"), entry
+        finally:
+            live.Session = orig
+
+
+@check("live: a script edited in Studio since the last push is a conflict until --force")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with _isolated_home(), tempdir() as d:
+        proj = _push_fixture(d)
+        try:
+            live.Session = _Recorder
+            _Recorder.sent = []
+            _Recorder.answers = ["CONFLICT 9:12345 {\"place\":\"77\",\"expect\":\"8:999\"}"]
+            r = live.push(["ALL"], proj)
+            assert r["pushed"] == 0 and len(r["conflicts"]) == 1, r
+            assert "edited in Studio" in r["conflicts"][0]["why"], r["conflicts"]
+            assert "--force" in r["conflict_hint"], r
+            assert "local force = false" in _Recorder.sent[0]
+            want = live.adler("return 1\n")
+            _Recorder.answers = ["SYNCED %s {\"place\":\"77\",\"backup\":\"A_rbforge_1\"}" % want]
+            forced = live.push(["ALL"], proj, force=True)
+            assert "local force = true" in _Recorder.sent[1]
+            assert forced["pushed"] == 1, forced
+            assert forced["backed_up"] == [{"file": forced["results"][0]["file"],
+                                            "backup": "ServerStorage.rbforge_backups.A_rbforge_1"}], forced
+        finally:
+            live.Session = orig
+
+
+@check("live: a synced stamp must match whole, not as a suffix")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with _isolated_home(), tempdir() as d:
+        proj = _push_fixture(d)
+        want = live.adler("return 1\n")
+        try:
+            live.Session = _fake_session("SYNCED 1" + want)
+            r = live.push(["ALL"], proj)
+            assert r["pushed"] == 0 and r["results"][0]["state"] == "unverified", r["results"][0]
+        finally:
+            live.Session = orig
+
+
+@check("live: generated push code with a guard and force still parses as Luau")
+def _():
+    with tempdir() as d:
+        cfg = os.path.join(d, "selene.toml")
+        open(cfg, "w").write('std = "lua51"\n')
+        for i, code in enumerate([
+                _generated_push_code(expects={"0:Place1": "9:123", "42": "1:1"}),
+                _generated_push_code(expects={"0:Wei]]rd": "9:1"}, force=True)]):
+            assert "CONFLICT" in code and "rbforge_backups" in code and ":Clone()" in code
+            path = os.path.join(d, "guard%d.luau" % i)
+            open(path, "w", encoding="utf-8").write(code)
+            ok, detail = _parse_luau(path, cfg)
+            assert ok, "guarded push code does not parse:\n%s" % detail
+
+
+@check("live: the push guard, executed under Lune, refuses Studio edits and backs up before overwriting")
+def _():
+    import shutil as _shutil
+    import subprocess as _sub
+    from rbforge import live
+    lune = _shutil.which("lune")
+    if not lune:
+        if os.environ.get("CI"):
+            raise AssertionError("lune is required in CI (scripts/install_lune.py)")
+        return "skip: lune not installed (rokit add lune-org/lune)"
+    here = os.path.dirname(os.path.abspath(__file__))
+    prelude = open(os.path.join(here, "lune", "mock_datamodel.luau"), encoding="utf-8").read()
+    new_src = "return 2\n"
+    old, edited = live.adler("return 1\n"), live.adler("return 9\n")
+
+    def run(studio_source, expects=None, force=False):
+        setup = ""
+        if studio_source is not None:
+            setup = ("local f = Instance.new('Folder') f.Name = 'Systems' "
+                     "f.Parent = game:GetService('ServerScriptService')\n"
+                     "local s = Instance.new('Script') s.Name = 'Main' s.Source = %s s.Parent = f\n"
+                     % live.long_string(studio_source))
+        code = live._push_code("ServerScriptService.Systems", "Main", "Script", new_src, {},
+                               expects=expects, force=force)
+        probe = ("local sys =game:GetService('ServerScriptService'):FindFirstChild('Systems')\n"
+                 "local main = sys and sys:FindFirstChild('Main')\n"
+                 "local b = game:GetService('ServerStorage'):FindFirstChild('rbforge_backups')\n"
+                 "local kept = {}\n"
+                 "if b then for _, c in b:GetChildren() do table.insert(kept, c.Source) end end\n"
+                 "print(game:GetService('HttpService'):JSONEncode({reply = __reply, "
+                 "source = main and main.Source, backups = kept}))\n")
+        with tempdir() as d:
+            path = os.path.join(d, "case.luau")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(prelude + "\n" + setup + "local function __push()\n" + code + "\nend\n"
+                         + "__reply = __push()\n" + probe)
+            done = _sub.run([lune, "run", path], capture_output=True, text=True, timeout=60)
+        assert done.returncode == 0, done.stdout + done.stderr
+        out = json.loads(done.stdout.strip().splitlines()[-1])
+        out["backups"] = out.get("backups") or []  # an empty Luau table encodes as {}
+        return out
+
+    created = run(None)
+    assert created["reply"].startswith("SYNCED " + live.adler(new_src)), created  # stamp parity
+    assert created["source"] == new_src and created["backups"] == [], created
+
+    first = run("return 1\n")  # no ledger entry: a Source this tool never wrote is kept first
+    assert first["source"] == new_src and first["backups"] == ["return 1\n"], first
+
+    ours = run("return 1\n", {"0:Place1": old})  # Studio still holds what we pushed: no backup
+    assert ours["source"] == new_src and ours["backups"] == [], ours
+
+    conflict = run("return 9\n", {"0:Place1": old})
+    word, stamp, meta = live._parse_reply(conflict["reply"])
+    assert (word, stamp, meta.get("expect")) == ("CONFLICT", edited, old), conflict
+    assert conflict["source"] == "return 9\n" and conflict["backups"] == [], "a conflict wrote anyway"
+
+    forced = run("return 9\n", {"0:Place1": old}, force=True)
+    assert forced["source"] == new_src and forced["backups"] == ["return 9\n"], forced
+
+    other_place = run("return 9\n", {"555": old})  # the ledger names another place: first-push rules
+    assert other_place["source"] == new_src and other_place["backups"] == ["return 9\n"], other_place
+
+
+@check("scaffold: a fresh project ships a unit spec that runs, and fails when the rule breaks")
+def _():
+    import shutil as _shutil
+    from rbforge import check, scaffold
+    with tempdir() as d:
+        root = os.path.join(d, "game")
+        files = scaffold.scaffold(root, "obby")["files"]
+        assert "tests/Config.spec.luau" in files, files
+        if not _shutil.which("lune"):
+            if os.environ.get("CI"):
+                raise AssertionError("lune is required in CI (scripts/install_lune.py)")
+            return "skip: lune not installed"
+        good = check.rung_unit(root)["checks"]
+        assert [c["status"] for c in good] == ["pass"], good
+        config = os.path.join(root, "src", "shared", "Config.lua")
+        text = open(config, encoding="utf-8").read().replace('Genre = "obby"', 'Genre = "tycoon"')
+        open(config, "w", encoding="utf-8").write(text)
+        bad = check.rung_unit(root)["checks"]
+        assert [c["status"] for c in bad] == ["fail"], "the spec cannot fail, so it proves nothing: %r" % bad
+
+
+@check("verification: evidence collection opens one session for identity and one for console+capture")
+def _():
+    from rbforge import verification
+    base = _fake_studio(console="[Server] ready")
+    opened = []
+
+    class Counting(base):
+        def __init__(self, *a, **k):
+            opened.append(1)
+
+    with _isolated_home():
+        from rbforge import live
+        orig = live.server_test
+        live.server_test = lambda *a, **k: {"result": "PASS", "passed": True, "outcome": "pass"}
+        try:
+            obs = verification.collect_evidence(session_factory=Counting, project="p", scenario="s",
+                                                capture_screenshot=True, test_path=__file__)
+        finally:
+            live.server_test = orig
+    assert len(opened) == 2, "sessions opened: %d" % len(opened)
+    assert obs["console_logged"] and obs["screenshots"], obs
+
+
+@check("verification: expired observations are pruned when a new one is recorded")
+def _():
+    from rbforge import verification
+    with _isolated_home():
+        path = verification._observations_path()
+        verification._write_json(path, {"obs-old": {"recorded_at": 1.0}, "obs-bad": {"recorded_at": "x"},
+                                        "obs-junk": [1]})
+        new_id = verification._record_observation({"studio_id": "s"})
+        store = json.load(open(path))
+    assert set(store) == {new_id}, sorted(store)
+    assert verification.load_observation("obs-bad") is None
+
+
+@check("cli: exec and servertest on a missing file return a JSON error, not a traceback")
+def _():
+    for argv in (("exec", "definitely-missing.luau"), ("servertest", "definitely-missing.luau", "X")):
+        code, out = _cli(*argv)
+        assert code == 2 and isinstance(out, dict) and out["error"]["code"] == "RBF-ARG-001", (argv, code, out)
+
+
+@check("cli: skills status with an unknown agent is an error, not an empty object")
+def _():
+    code, out = _cli("skills", "status", "notanagent")
+    assert code == 2 and out["error"]["code"] == "RBF-ARG-001", (code, out)
+
+
+@check("skills: Kimi Code's ~/.kimi-code/skills root is searched before the legacy ~/.kimi")
+def _():
+    from rbforge import skills
+    _env, candidates = skills._ROOTS["kimi"]
+    assert candidates[0] == "~/.kimi-code/skills" and "~/.kimi/skills" in candidates, candidates
+
+
+@check("plugins: the community Studio MCP bridge (Roqer) is recognised and pointed at the official MCP")
+def _():
+    from rbforge import plugins
+    with tempdir() as d:
+        old = os.environ.get("LOCALAPPDATA")
+        os.makedirs(os.path.join(d, "Roblox", "Plugins"))
+        open(os.path.join(d, "Roblox", "Plugins", "MCPPlugin.rbxmx"), "w").write("<roblox/>")
+        os.environ["LOCALAPPDATA"] = d
+        try:
+            info = plugins.status()
+        finally:
+            if old is None:
+                os.environ.pop("LOCALAPPDATA", None)
+            else:
+                os.environ["LOCALAPPDATA"] = old
+    hit = [k for k in info["known"] if k["id"] == "robloxstudio_mcp"]
+    assert hit and "official Studio MCP" in hit[0]["free_alternative"], info
+
+
+def _mcp_session():
+    import subprocess as _sub
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, RBFORGE_HOME=tempfile.mkdtemp(prefix="rbf-mcp-"))
+    return _sub.Popen([sys.executable, os.path.join(root, "mcp_server", "server.py")],
+                      stdin=_sub.PIPE, stdout=_sub.PIPE, text=True, env=env)
+
+
+@check("mcp: version negotiation, parse errors and non-object arguments follow the protocol")
+def _():
+    proc = _mcp_session()
+    try:
+        def init(version):
+            return _mcp_rpc(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                   "params": {"protocolVersion": version, "capabilities": {},
+                                              "clientInfo": {"name": "t", "version": "1"}}})["result"]
+        legacy = init("2024-11-05")
+        assert legacy["protocolVersion"] == "2024-11-05" and "instructions" not in legacy, legacy
+        modern = init("2025-06-18")
+        assert modern["protocolVersion"] == "2025-06-18" and "rb_check" in modern["instructions"], modern
+        future = init("2099-01-01")
+        assert future["protocolVersion"] == "2025-06-18", future
+        proc.stdin.write("{not json\n")
+        proc.stdin.flush()
+        parse = json.loads(proc.stdout.readline())
+        assert parse["error"]["code"] == -32700 and parse["id"] is None, parse
+        bad = _mcp_rpc(proc, {"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                              "params": {"name": "rb_plugins", "arguments": [1]}})
+        assert bad["error"]["code"] == -32602, bad
+    finally:
+        proc.kill()
+
+
+@check("mcp: every tool is annotated and the catalog stays inside its token budget")
+def _():
+    proc = _mcp_session()
+    try:
+        tools = _mcp_rpc(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
+    finally:
+        proc.kill()
+    for t in tools:
+        ann = t.get("annotations") or {}
+        assert isinstance(ann.get("readOnlyHint"), bool), t["name"]
+        assert len(t["description"]) <= 400, (t["name"], len(t["description"]))
+    by_name = {t["name"]: t for t in tools}
+    assert by_name["rb_studio_push"]["annotations"]["destructiveHint"] is True
+    assert "force" in by_name["rb_studio_push"]["inputSchema"]["properties"]
+    assert by_name["rb_docs_search"]["annotations"]["readOnlyHint"] is True
+    size = len(json.dumps(tools))
+    # The catalog is loaded into every Roblox session that enables this server. Growing it is an
+    # explicit decision: raise this number in the same change, and say why.
+    assert size <= 10600, "tools/list is %d chars; the budget is 10600" % size
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed, %d skipped" % (len(PASS), len(FAIL), len(SKIPPED)))
     for name, why in SKIPPED:

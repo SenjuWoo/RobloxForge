@@ -25,17 +25,33 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from rbforge.errors import ForgeError
 
-PROTOCOL_VERSION = "2024-11-05"
 from rbforge import __version__ as _forge_version
+
+# Newest first. The server answers with the client's version when it is one of these, otherwise
+# with the newest, and the client decides whether to continue (MCP lifecycle negotiation). Every
+# version here shares what this server uses: tools/list, tools/call and text content.
+SUPPORTED_PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
+PROTOCOL_VERSION = SUPPORTED_PROTOCOLS[-1]  # what older callers and tests were written against
 
 SERVER_INFO = {"name": "robloxforge", "version": _forge_version}
 
+# Sent once at initialize (2025-03-26+), so tool descriptions do not each repeat the workflow.
+INSTRUCTIONS = (
+    "RobloxForge plans, checks and verifies Roblox work; the official Roblox Studio MCP owns the live "
+    "place. Start with rb_doctor and rb_capabilities. Run rb_check after every edit batch and before a "
+    "playtest. A claim of 'working' needs rb_collect_evidence then rb_verify_receipt with its "
+    "observation_id. Prefer rb_studio_push over pasting large scripts into execute_luau.")
+
 TOOLS = {}
 
+# Behaviour hints for clients that auto-approve or label tools (MCP tool annotations).
+READ_ONLY = {"readOnlyHint": True, "openWorldHint": False}
+LOCAL_WRITE = {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False}
 
-def tool(name, schema, desc):
+
+def tool(name, schema, desc, annotations=None):
     def deco(fn):
-        TOOLS[name] = (fn, schema, desc)
+        TOOLS[name] = (fn, schema, desc, annotations or READ_ONLY)
         return fn
     return deco
 
@@ -54,7 +70,9 @@ def _doctor(a):
                           host_vision=a.get("host_vision"))
 
 
-@tool("rb_capabilities", {"type": "object", "properties": {}},
+@tool("rb_capabilities", {"type": "object", "properties": {
+    "host_vision": {"type": "boolean",
+                    "description": "true if you (the calling model) can inspect images"}}},
       "Honest capability matrix derived from live probes. Never assume a "
       "status; ask this before attempting anything.")
 def _capabilities(a):
@@ -84,7 +102,8 @@ def _docs_read(a):
 
 @tool("rb_docs_update", {"type": "object", "properties": {}},
       "Refresh the creator-docs cache via git. Offline failure keeps the "
-      "cached copy and reports honestly.")
+      "cached copy and reports honestly.",
+      {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True})
 def _docs_update(a):
     from rbforge import docs
     return docs.ensure(refresh=True)
@@ -147,7 +166,8 @@ def _sec_review(a):
                               "description": "attestation that the captured image was looked at"},
     "untested": {"type": ["string", "array"], "items": {"type": "string"}}}},
       "Ask Studio for the observations a receipt needs and record them. Returns an opaque "
-      "observation_id; only ids this tool recorded can produce a verified_playtest receipt.")
+      "observation_id; only ids this tool recorded can produce a verified_playtest receipt.",
+      LOCAL_WRITE)
 def _collect_evidence(a):
     from rbforge import verification
     args = dict(a)
@@ -188,7 +208,8 @@ def _collect_evidence(a):
     "limitations": {"type": ["string", "array"], "items": {"type": "string"}}}},
       "Record a verification receipt for completed work. Claims alone are UNVERIFIED; a receipt "
       "reaches verified_playtest only by referencing an observation_id recorded by "
-      "rb_collect_evidence.")
+      "rb_collect_evidence.",
+      LOCAL_WRITE)
 def _verify_receipt(a):
     from rbforge import verification
     return verification.receipt(**a)
@@ -220,10 +241,8 @@ def _check(a):
 
 
 @tool("rb_plugins", {"type": "object", "properties": {}},
-      "Which optional Studio plugins (ForgeGUI, GuiForge, UI Labs, Moon "
-      "Animator, ...) are actually installed, what each changes about the "
-      "workflow, and the free alternative if it is missing. Nothing here is "
-      "ever required: every workflow has a $0 path.")
+      "Which optional Studio plugins are installed, what each changes, and its free alternative. "
+      "None is ever required.")
 def _plugins(a):
     from rbforge import plugins
     return plugins.status()
@@ -232,10 +251,8 @@ def _plugins(a):
 @tool("rb_assets", {"type": "object", "properties": {
     "action": {"type": "string", "enum": ["status", "check"], "default": "status"},
     "path": {"type": "string", "description": "export to inspect when action=check"}}},
-      "Optional 3D asset route: is Blender installed and which version, is Roblox's "
-      "\"Upload to Roblox\" add-on present, and does a finished .glb/.fbx fit Roblox's "
-      "20,000-triangle-per-mesh cap. Detection and validation only - it never uploads, "
-      "logs in or touches an account.")
+      "Optional 3D route: Blender and Roblox add-on detection, and whether a .glb fits the "
+      "20,000-triangle-per-mesh cap. Never uploads or logs in.")
 def _assets(a):
     from rbforge import assets
     if a.get("action") == "check":
@@ -254,13 +271,11 @@ def _assets(a):
     "run": {"type": "boolean", "description": "run it in Studio now and return the output"},
     "datamodel": {"type": "string", "enum": ["Edit", "Client", "Server"]},
     "studio_id": {"type": "string"}}},
-      "Ready-made, reviewed Luau diagnostics to pass to the Roblox Studio MCP's execute_luau: "
-      "gui-overflow (SurfaceGui content painting outside its part), ray-all (sight line incl. CanQuery=false "
-      "parts), box-scan (area really clear?), hide/restore (bisect a visual artefact), scene-audit, console "
-      "(deduped errors), camera-pin/camera-free (comparable captures), goto (stream an area in around the "
-      "character), capture-quality (full draw distance for a capture, reports fps), sound-audit (sound ids that "
-      "do not load or exist only in this Studio install), perf, whereis, ui-audit, player-state, remotes. "
-      "Returns code plus the datamodel to run it in. Prefer these over writing inspection code.")
+      "Reviewed Luau diagnostics for the Studio MCP's execute_luau: sight lines, area clearance, SurfaceGui "
+      "overflow, scene/UI/perf audits, deduped console, comparable camera captures, sound ids. Omit name to "
+      "list them; run=true executes one now. Prefer these over writing inspection code.",
+      # hide/restore and camera-pin change the edit session (reversibly), so this is not read-only.
+      {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
 def _studio_probe(a):
     from rbforge import probes
     if not a.get("name"):
@@ -275,23 +290,26 @@ def _studio_probe(a):
     "paths": {"type": "array", "items": {"type": "string"},
               "description": "source files mapped by the Rojo project (absolute or relative to project), or [\"ALL\"]"},
     "project": {"type": "string", "description": "path to default.project.json"},
-    "studio_id": {"type": "string", "description": "omit when one Studio is open"}}, "required": ["paths", "project"]},
-      "Copy script sources from disk into the open Studio place through the official MCP and verify each one "
-      "with a checksum computed inside Studio. Use this instead of pasting big scripts through execute_luau: "
-      "no tokens spent on the source, no whitespace damage, and a proof of what landed.")
+    "studio_id": {"type": "string", "description": "omit when one Studio is open"},
+    "force": {"type": "boolean", "default": False,
+              "description": "overwrite scripts edited in Studio since the last push (backed up first)"}},
+     "required": ["paths", "project"]},
+      "Copy script sources from disk into Studio via the official MCP, checksum-verified inside Studio. "
+      "Use instead of pasting scripts into execute_luau. A script edited in Studio since the last push is "
+      "refused as a conflict unless force=true.",
+      {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False})
 def _studio_push(a):
     from rbforge import live
     proj = a["project"]
     base = os.path.dirname(os.path.abspath(proj))
     paths = [p if p == "ALL" or os.path.isabs(p) else os.path.join(base, p) for p in a["paths"]]
-    return live.push(paths, proj, a.get("studio_id"))
+    return live.push(paths, proj, a.get("studio_id"), force=bool(a.get("force")))
 
 
 @tool("rb_traps_review", {"type": "object", "properties": {
     "path": {"type": "string", "description": "project root; omit for cwd"}}},
-      "Engine-trap lint over Luau sources: patterns that compile but break a Roblox game "
-      "(unclipped SurfaceGuis, LocalPlayer on the server, client-created remotes, DataStore calls without "
-      "pcall, per-frame remote spam, deprecated APIs). Each finding has file, line, why, fix and a reference.")
+      "Engine-trap lint: Luau that compiles but breaks a Roblox game (LocalPlayer on the server, "
+      "client-created remotes, unprotected DataStore calls, deprecated APIs). Findings carry file, line and fix.")
 def _traps_review(a):
     from rbforge import traps
     return traps.review(a.get("path") or ".")
@@ -310,25 +328,34 @@ def handle(req):
     if "id" not in req:
         return None  # notification: never answered, per JSON-RPC 2.0 / MCP
     if method == "initialize":
-        return {"jsonrpc": "2.0", "id": req.get("id"),
-                "result": {"protocolVersion": PROTOCOL_VERSION,
-                           "capabilities": {"tools": {}}, "serverInfo": SERVER_INFO}}
+        params = req.get("params") if isinstance(req.get("params"), dict) else {}
+        asked = params.get("protocolVersion")
+        version = asked if asked in SUPPORTED_PROTOCOLS else SUPPORTED_PROTOCOLS[0]
+        result = {"protocolVersion": version, "capabilities": {"tools": {}}, "serverInfo": SERVER_INFO}
+        if version != "2024-11-05":
+            result["instructions"] = INSTRUCTIONS  # field introduced in 2025-03-26
+        return {"jsonrpc": "2.0", "id": req.get("id"), "result": result}
     if method == "notifications/initialized":
         return None  # already handled above; kept for clarity
     if method == "ping":
         return {"jsonrpc": "2.0", "id": req.get("id"), "result": {}}
     if method == "tools/list":
         return {"jsonrpc": "2.0", "id": req.get("id"),
-                "result": {"tools": [{"name": n, "description": d, "inputSchema": s}
-                                     for n, (f, s, d) in sorted(TOOLS.items())]}}
+                "result": {"tools": [{"name": n, "description": d, "inputSchema": s, "annotations": ann}
+                                     for n, (f, s, d, ann) in sorted(TOOLS.items())]}}
     if method == "tools/call":
-        name = (req.get("params") or {}).get("name")
-        args = (req.get("params") or {}).get("arguments") or {}
+        params = req.get("params") if isinstance(req.get("params"), dict) else {}
+        name = params.get("name")
+        args = params.get("arguments") or {}
         entry = TOOLS.get(name)
         if not entry:
             return {"jsonrpc": "2.0", "id": req.get("id"),
                     "error": {"code": -32602, "message": "unknown tool %r" % name}}
-        fn, _, _ = entry
+        if not isinstance(args, dict):
+            return {"jsonrpc": "2.0", "id": req.get("id"),
+                    "error": {"code": -32602, "message": "arguments must be an object, got %s"
+                              % type(args).__name__}}
+        fn = entry[0]
         try:
             out = fn(args)
             return {"jsonrpc": "2.0", "id": req.get("id"),
@@ -357,6 +384,11 @@ def serve():
         try:
             req = json.loads(line)
         except ValueError:
+            # JSON-RPC 2.0: unparseable input gets a Parse error with a null id, not silence that
+            # leaves the client waiting for a reply until it times out.
+            resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}}
+            sys.stdout.write(json.dumps(resp) + "\n")
+            sys.stdout.flush()
             continue
         resp = handle(req)
         if resp is not None:

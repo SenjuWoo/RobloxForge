@@ -28,6 +28,7 @@ jobs:
         run: |
           python scripts/install_selene.py
           python scripts/install_stylua.py
+          python scripts/install_lune.py
 
       - name: Gate the tag (never publish a tree that fails its own tests)
         run: python tests/run_tests.py

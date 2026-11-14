@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.16.3 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.17.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -19,8 +19,10 @@ claim checkable.
 | CLI surface | `check <path>`, `check --root <path>` and `check <path> --scope static` are run from a cwd that is **not** the project, and each report's `root` and `rungs_run` are asserted; a positional/`--root` conflict exits 2 (tests `cli: ...`) |
 | Luau semantic examples | extracted from `typing-luau.md` and re-analysed by pinned luau-lsp 1.70.1; CI job `luau-semantics` runs them with `RBFORGE_REQUIRE_LUAU_LSP=1` |
 | Diagnostic map | keyed by the whole project-relative path, so `src/Server/init.luau` and `tests/Server/init.luau` are two files; containment is `commonpath`, so a sibling `proj2` is not inside `proj` (tests `check: same-named files at different depths...`, `check: a sibling directory...`) |
-| Offline gate (`check`, traps, probes, review) | 148 automated tests + fixture projects |
+| Offline gate (`check`, traps, probes, review) | 186 automated tests + fixture projects |
 | Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
+| Push guard (0.17.0) | the exact push code is executed under Lune against `tests/lune/mock_datamodel.luau`: new script, first push (backup), unchanged ledger (no backup), Studio edit (`CONFLICT`, source untouched), `force` (backup + write), other place (first-push rules); Luau stamp equals Python `adler` |
+| MCP wire | negotiation (2025-06-18/2025-03-26/2024-11-05), parse error -32700, non-object arguments -32602, annotations on every tool, catalog <= 10,600 chars |
 | Receipts / observations | unit tests, including omission, mismatch, expiry, replay and tamper cases |
 | Skill installer | 31 tests: manifest path traversal refused, foreign/legacy/modified dirs preserved, empty+corrupt manifests never `current`, transactional staging and activation rollback, backup-name uniqueness, per-profile `current`, backup instead of delete, preflight abort, idempotent re-run, root dedupe; live across 10 Hermes roots + claude/codex/grok |
 | Release artifact | `smoke_artifact.py` checks all 25 skills, frontmatter and the 18-tool MCP handshake |
@@ -34,20 +36,30 @@ claim checkable.
 | Live Studio: rollback | engine refused a 210 KB `Source`; existing-script, new-script and class-change pushes all `rolled_back` with the previous state verified afterwards |
 | Live typecheck | `rbforge types fetch` + `luau-lsp analyze --platform=roblox` with a generated Rojo sourcemap; real diagnostics on the Haven project |
 | Unit-only | `ROLLBACK_FAILED` (a restore that itself fails) — not reachable through the documented API |
-| Unverified | published-place path, multiplayer, mobile, weak-model benchmark |
+| Unverified | push conflict guard in live Studio (Lune-proven only), published-place path, multiplayer, mobile, weak-model benchmark |
 
 ## Gaps to close (next session)
 
 1. **Weak-model E2E benchmark** (`tests/agent-benchmarks`) has not been run — the 1.0.0 gate.
+1a. **Re-run the push guard in live Studio**: push a script, edit it in Studio, push again (expect `conflict`),
+    then `--force` (expect a clone in `ServerStorage.rbforge_backups`). Proven under Lune only.
 2. **Published-place and multiplayer paths** are untested; the live work used an unpublished disposable place.
 3. **`luau-lsp` runs** since 0.14.0: `rbforge types fetch` caches the pinned definitions and the rung generates a Rojo sourcemap, so it produces real diagnostics (measured on the Haven project). Remaining gap: the pinned definitions are 1.70.1 until the pin is bumped.
-4. **The test suite needs a Luau parser** (`stylua` and/or `selene`); CI and the release install a pinned selene.
+4. **The test suite needs a Luau parser** (`stylua` and/or `selene`) and Lune for the push-guard run; CI and the
+   release install pinned selene, StyLua and Lune (`scripts/install_*.py`).
 5. **Provenance is an id, not a signature.** An observation proves RobloxForge recorded a run; an agent with write
    access to the receipts directory can still forge files. Documented, not hidden.
 6. **`ROLLBACK_FAILED` is unit-only** — forcing Studio to reject a *restore* of a small source is not possible
    through the documented API.
 
 ## Done (verified)
+
+- 0.17.0: audit fixes (StudioMCP leak on a failed Session, `check` silently auditing zero files under a
+  `*Packages*` path, comment/string false positives, missing-directory `incomplete`, `Foo.spec.luau` pushed into
+  `Foo`, suffix-matched checksums, tracebacks on missing files, an idle evidence session, Kimi Code skill root)
+  and two Roqer-derived ideas written fresh: push conflict guard with backup-before-overwrite, and MCP
+  annotations/instructions/catalog budget; `rbforge new` ships a Lune spec so a fresh project can gate `pass`. 186 tests. StudioMCP measured exiting 0.16 s after stdin EOF, so the
+  new tree-kill fallback adds no latency.
 
 - 0.16.2: three more silent-failure entries (overhead shadows, vertical `lookAt`, scatter reshuffle) and step 7 of
   the art-direction pass.
@@ -212,7 +224,7 @@ python src\rbforge_cli.py doctor
 python src\rbforge_cli.py check . [--scope static unit structure] [--json]
 python src\rbforge_cli.py scaffold <dir> --genre obby
 python tests\run_tests.py
-python mcp_server\server.py        # stdio MCP, 12 tools
+python mcp_server\server.py        # stdio MCP, 18 tools
 ```
 
 ## Log

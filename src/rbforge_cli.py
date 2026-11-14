@@ -76,7 +76,7 @@ def main(argv=None):
 
     p_agents = sub.add_parser("agent", help="agent MCP wiring + skills")
     p_agents.add_argument("action", choices=["status", "connect", "disconnect"])
-    p_agents.add_argument("name", nargs="?", help="hermes|claude|codex (or 'all')")
+    p_agents.add_argument("name", nargs="?", help="hermes|claude|codex|grok|kimi (or 'all')")
 
     p_scaf = sub.add_parser("scaffold", help="create a project from a genre template")
     p_scaf.add_argument("path")
@@ -112,6 +112,8 @@ def main(argv=None):
     p_push.add_argument("paths", nargs="+", help="source files mapped by the Rojo project, or ALL")
     p_push.add_argument("--project", default="default.project.json")
     p_push.add_argument("--studio")
+    p_push.add_argument("--force", action="store_true",
+                        help="overwrite scripts edited in Studio since the last push (backed up first)")
 
     p_exec = sub.add_parser("exec", help="run a Luau file in Studio (official MCP) and print what it returns")
     p_exec.add_argument("file")
@@ -142,6 +144,10 @@ def main(argv=None):
         return _dispatch(args)
     except ForgeError as exc:
         return _fail(exc)
+    except OSError as exc:
+        # Backstop for a file the caller named: every failure is JSON with a code, never a traceback.
+        return _fail(ForgeError("RBF-ARG-001", "%s: %s" % (type(exc).__name__, exc),
+                                hint="check the path you passed"))
 
 
 def _dispatch(args):
@@ -269,7 +275,11 @@ def _dispatch(args):
     if args.cmd == "skills":
         names = None if (not args.name or args.name == "all") else [args.name]
         if args.action == "status":
-            # status() covers every agent at once; filter client-side
+            # status() covers every agent at once; filter client-side, but a typo is an error,
+            # not an empty object that reads like "nothing installed".
+            if names and names[0] not in skills._ROOTS:
+                raise ForgeError("RBF-ARG-001", "unknown agent %r" % names[0],
+                                 hint="one of: %s, or all" % ", ".join(sorted(skills._ROOTS)))
             st = skills.status()
             _emit(st if names is None else {k: v for k, v in st.items()
                                             if k in names})
@@ -328,7 +338,7 @@ def _dispatch(args):
 
     if args.cmd == "push":
         from rbforge import live
-        res = live.push(args.paths, args.project, args.studio)
+        res = live.push(args.paths, args.project, args.studio, force=args.force)
         _emit(res)
         return ExitCode.OK if not res["failed"] else 1
 

@@ -43,6 +43,19 @@ return {
 }
 '''
 
+# A fresh project must be able to reach `pass`: with no spec, rung 2 is a skip and every first check
+# reads "incomplete". Lune runs this without Studio, so it can only test modules that touch no Roblox
+# globals - which is the reason to keep rules and numbers in such modules.
+_CONFIG_SPEC = '''--!strict
+-- Pure-Luau unit spec, run by `rbforge check` through Lune (no Studio needed).
+-- Add one per rule module: anything that does not touch game, workspace or Instance can be proven here.
+local Config = require("../src/shared/Config")
+
+assert(Config.Genre == "{genre}", "Config.Genre must match the scaffolded genre")
+assert(string.match(Config.Version, "^%d+%.%d+%.%d+$") ~= nil, "Config.Version must be semver")
+print("Config.spec: ok")
+'''
+
 _CHECKLIST = """# Verification checklist ({genre})
 
 Run `rbforge check .` first - it catches syntax, types, missing Rojo paths and
@@ -114,8 +127,10 @@ def scaffold(path, genre="generic"):
         os.path.join(path, "src", "server"): None,
         os.path.join(path, "src", "shared"): None,
         os.path.join(path, "src", "client"): None,
+        os.path.join(path, "tests"): None,
     }
     files = {
+        os.path.join(path, "tests", "Config.spec.luau"): _CONFIG_SPEC,
         os.path.join(path, "src", "server", "Main.server.lua"): _SERVER,
         os.path.join(path, "src", "shared", "Config.lua"): _CONFIG,
         os.path.join(path, "src", "client", "Hud.client.lua"): _CLIENT,

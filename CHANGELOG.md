@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.17.0 - 2026-11-14
+
+A full audit of the CLI, the MCP server and the live Studio path, plus two ideas taken from the Roqer
+project (written fresh here; see `docs/INTEGRATIONS.md`).
+
+### Added
+- **Push refuses to overwrite Studio edits.** `rbforge push` / `rb_studio_push` remember what they last wrote
+  for each project, place and script. A script whose Studio source is neither that nor the new file was edited
+  in Studio, and comes back as `conflict` with nothing written; `--force` (`force=true`) overwrites it.
+  Any overwrite of a source RobloxForge did not write - a first push, or a forced one - clones the Studio copy
+  into `ServerStorage.rbforge_backups` first, and the report lists it under `backed_up`. The guard needs no
+  extra Studio round trip: Studio picks its own place key from the expectations sent with the script.
+- The generated push code is now **executed** under Lune against a mock DataModel in the test suite (new,
+  first push, unchanged, conflict, forced, other place), not only parsed; CI installs the pinned Lune.
+- MCP: protocol negotiation (2025-06-18, 2025-03-26, 2024-11-05), server `instructions` for 2025 clients,
+  `readOnlyHint`/`destructiveHint` annotations on every tool, and a catalog budget test (10,600 characters).
+- `rbforge plugins` recognises the community `robloxstudio-mcp` bridge (also used by Roqer) and says which
+  MCP RobloxForge's live commands drive.
+- `rbforge new` / `scaffold` ship `tests/Config.spec.luau`, so a fresh project can reach `pass`: with no spec
+  the unit rung always skipped and every first `rbforge check` read `incomplete`. A test proves the spec
+  fails when the rule it checks breaks.
+
+### Fixed
+- A `Session` whose setup failed - most often "two Studios open, pass --studio" - left its StudioMCP process
+  running. On Windows the launcher is now stopped as a process tree when it does not exit on its own.
+- `rbforge check` audited zero files for a project stored under any folder whose path contained `Packages`,
+  and reported the empty audit as `incomplete`. A directory that does not exist is now an argument error
+  (exit 2) instead of an `incomplete` report.
+- `loadstring`, `getfenv`/`setfenv` and `require(<id>)` in a comment or a string no longer fail the gate;
+  client `DataStoreService` is judged on code, so a comment that names it is not a finding.
+- Rojo script names keep every dot before the script suffix: `Shop.spec.luau` is `Shop.spec`, not `Shop`,
+  which used to push a spec file into its own module.
+- A push reply is matched on its whole checksum token (`SYNCED 13:123` no longer matches `3:123`), and push
+  reports name files as they are spelled on disk instead of lowercased.
+- `exec`, `servertest` and a malformed Rojo project return a JSON error with a code instead of a traceback;
+  `skills status <typo>` is an error instead of an empty object.
+- `rb_collect_evidence` opened one StudioMCP session it never used and two more than it needed; it now uses
+  one for the place identity and one for console plus capture. Expired observations are pruned.
+- The MCP server answers unparseable input with a JSON-RPC parse error, rejects non-object arguments, and
+  advertises `host_vision` on `rb_capabilities`, which it already accepted.
+- Kimi Code skills install into `~/.kimi-code/skills` (the legacy `~/.kimi/skills` is still searched).
+- Hardened against non-object JSON in Studio MCP replies and AssistantSettings files.
+
 ## 0.16.3 - 2026-11-12
 
 ### Fixed

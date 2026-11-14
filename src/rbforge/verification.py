@@ -162,9 +162,22 @@ def _record_observation(payload):
                 store = json.load(fh)
         except (OSError, ValueError):
             store = {}
+        if not isinstance(store, dict):
+            store = {}
+        # Expired observations can never verify anything again; dropping them keeps the store small.
+        now = record["recorded_at"]
+        store = {k: v for k, v in store.items()
+                 if isinstance(v, dict) and now - _recorded_at(v) <= OBSERVATION_MAX_AGE}
         store[obs_id] = record
         _write_json(path, store)
     return obs_id
+
+
+def _recorded_at(record):
+    try:
+        return float(record.get("recorded_at") or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def load_observation(obs_id, max_age=OBSERVATION_MAX_AGE):
@@ -176,10 +189,10 @@ def load_observation(obs_id, max_age=OBSERVATION_MAX_AGE):
             store = json.load(fh)
     except (OSError, ValueError):
         return None
-    record = store.get(obs_id)
+    record = store.get(obs_id) if isinstance(store, dict) else None
     if not isinstance(record, dict):
         return None
-    if time.time() - float(record.get("recorded_at") or 0) > max_age:
+    if time.time() - _recorded_at(record) > max_age:
         return None
     return record
 
@@ -285,9 +298,9 @@ def collect_evidence(studio_id=None, test_path=None, test_attr="RbforgeTest",
 
     tests = []
     if test_path:
-        runner = session_factory or (lambda: live.Session(studio_id, timeout=180))
-        with runner() as session:
-            result = live.server_test(test_path, test_attr, studio_id=sid)
+        # server_test opens its own session; a second one opened around it here only spawned a
+        # StudioMCP process that sat idle for the whole test.
+        result = live.server_test(test_path, test_attr, studio_id=sid)
         tests.append({
             "name": os.path.basename(test_path),
             "expected": "PASS",
@@ -296,31 +309,34 @@ def collect_evidence(studio_id=None, test_path=None, test_attr="RbforgeTest",
         })
 
     console_text, console_logged, console_status = "", False, "unknown"
-    try:
-        with factory() as session:
-            console_text = session.call("get_console_output", {"studio_id": sid}) or ""
-        console_logged = True
-        console_status, console_errors, console_warnings = classify_console(console_text)
-    except Exception:  # noqa: BLE001 - the tool may not exist in this Studio build
-        console_logged, console_status = False, "unknown"
-        console_errors = console_warnings = 0
-
+    console_errors = console_warnings = 0
     # A caller-supplied path is a claim. Only image bytes that Studio returned, or a text reference
     # the tool itself produced, are recorded as captures - and only images can be inspected.
     claimed_shots = _as_list(screenshots)
     shots = []
-    if capture_screenshot:
-        try:
-            with factory() as session:
-                # The real tool requires a capture_id; without it the call fails with
-                # "Missing required argument: capture_id".
-                blocks, is_error, text = session.call_content(
-                    "screen_capture", {"studio_id": sid,
-                                       "capture_id": "rbforge-%s" % uuid.uuid4().hex[:12]})
-            if not is_error:
-                shots = _save_capture(blocks, text)
-        except Exception:  # noqa: BLE001 - capture is best effort, never a claim
-            shots = []
+    # One session reads the console and takes the capture: each session is a StudioMCP spawn.
+    try:
+        with factory() as session:
+            try:
+                console_text = session.call("get_console_output", {"studio_id": sid}) or ""
+                console_logged = True
+                console_status, console_errors, console_warnings = classify_console(console_text)
+            except Exception:  # noqa: BLE001 - the tool may not exist in this Studio build
+                console_text, console_logged, console_status = "", False, "unknown"
+                console_errors = console_warnings = 0
+            if capture_screenshot:
+                try:
+                    # The real tool requires a capture_id; without it the call fails with
+                    # "Missing required argument: capture_id".
+                    blocks, is_error, text = session.call_content(
+                        "screen_capture", {"studio_id": sid,
+                                           "capture_id": "rbforge-%s" % uuid.uuid4().hex[:12]})
+                    if not is_error:
+                        shots = _save_capture(blocks, text)
+                except Exception:  # noqa: BLE001 - capture is best effort, never a claim
+                    shots = []
+    except Exception:  # noqa: BLE001 - no session at all: nothing observed, recorded as such
+        pass
 
     inspection = None
     if screenshots_inspected and shots:

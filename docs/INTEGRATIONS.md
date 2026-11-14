@@ -1,10 +1,11 @@
 # External integrations — what was evaluated, what was taken
 
-Two upstream projects were evaluated for this repository. Both were cloned and read at source; neither is
+Three upstream projects were evaluated for this repository. Each was cloned and read at source; none is
 vendored here. This file records the classification and the reasons, so a later session does not redo the
 work or quietly re-add something that was rejected.
 
-Evaluated: `Roblox/roblox-blender-plugin` (MIT) and `SyphoDev-yt/roblox-ai-skills` (custom free licence).
+Evaluated: `Roblox/roblox-blender-plugin` (MIT), `SyphoDev-yt/roblox-ai-skills` (custom free licence) and
+`S4US/Roqer` (AGPL-3.0-or-later since 0.1.7; MIT up to 0.1.6).
 
 ## The line this repository keeps
 
@@ -125,6 +126,30 @@ detected path.
 add-on search looks in the folder Blender actually writes), the add-on's state reported honestly rather than
 guessed, and GLB validation exercised on generated fixtures: per-mesh pass and fail, two 16k meshes passing
 at 32k total, mixed files, all three triangle modes, and eight malformed inputs that must not crash.
+
+## Roqer
+
+A desktop agent for Roblox Studio (Electron) built on its own Studio MCP bridge and plugin
+(`robloxstudio-mcp`, a fork of chrrxs/robloxstudio-mcp), with an approval policy, a Blender worker, an image
+tool, an animation pipeline and a bundled skill pack. It overlaps RobloxForge less than it looks: Roqer is a
+harness that owns its model loop and its own Studio bridge; RobloxForge serves whichever agent the user
+already runs and leaves the live place to Roblox's official MCP.
+
+**Licence.** Current Roqer is AGPL-3.0-or-later. This repository is MIT, so no Roqer code or text is copied
+here. What follows was taken as **ideas**, and the implementations below were written for this repository.
+
+| Roqer feature | Class | What RobloxForge does with it |
+|---|---|---|
+| A script edit is refused when the script changed after the agent read it | **ADAPT** (idea) | `rbforge push` keeps a ledger of what it last wrote per project, place and script. A Studio source that is neither the ledger's stamp nor the new file is a `conflict`; `--force` overwrites, and every overwrite of a source RobloxForge did not write clones the Studio copy into `ServerStorage.rbforge_backups` first. Studio picks its place key itself, so the guard costs no extra round trip. Executed under Lune in the test suite. |
+| MCP catalog as a budgeted public API (size caps, behaviour annotations, server instructions) | **ADAPT** (idea) | Every `rb_*` tool carries `readOnlyHint`/`destructiveHint`; 2025 clients get one `instructions` string instead of each description repeating the workflow; a test caps `tools/list` at 10,600 characters, so growth is a deliberate change. |
+| `robloxstudio-mcp` bridge + Studio plugin | **DETECT** | A second MCP into the same place. `rbforge plugins` recognises its `MCPPlugin`/`MCPInspectorPlugin` and states that RobloxForge's live commands drive the official MCP only, so an agent does not mix the two tool sets in one plan. |
+| Desktop agent: providers, approvals, Full-auto, chat UI | **SKIP** | A competing harness. RobloxForge's job is to make the user's existing agent better, not to be the agent. |
+| Multi-client playtests, micro-profiler, Rojo write-back | **REFERENCE** | Each needs Roqer's bridge. RobloxForge stays on the official MCP; adopt when the official MCP exposes the same capability. |
+| Blender worker, image generation and measurement, R15 animation checks, VFX references | **REFERENCE** | Asset production stays with external generators, the line this file keeps for SyphoDev too. |
+| Skill pack: `roblox-brain` 2.2.0 by TabooHarmony (MIT), partly edited by Roqer | **REFERENCE** | Covers topics this catalog lacks (lighting, localization, camera, publish checklist, game design and player psychology). If adopted, take them from upstream `roblox-brain` under its MIT licence, never Roqer's edited copies, which are AGPL. |
+
+To use Roqer itself, install it beside RobloxForge; nothing here depends on it, and `rbforge plugins` only
+reports its bridge when the plugin file is present.
 
 ## Rejected or deferred
 

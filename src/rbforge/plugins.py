@@ -86,6 +86,19 @@ KNOWN = {
         "free_alternative": "Atmosphere/Clouds/lighting presets in "
                             "worldbuilding-lighting.md",
     },
+    "robloxstudio_mcp": {
+        "label": "robloxstudio-mcp bridge (Roqer / community Studio MCP)",
+        "price": "free",
+        # Installed as MCPPlugin / MCPInspectorPlugin by robloxstudio-mcp and by the Roqer desktop agent.
+        "match": ("mcpplugin", "mcpinspectorplugin", "roqer", "robloxstudio mcp"),
+        "gives": "a second, third-party MCP into Studio with its own tool names (instances, scripts, "
+                 "multi-client playtests, profiling)",
+        "bridge": "Two MCPs can reach the same place. RobloxForge's live commands (push, probe --run, "
+                  "servertest, rb_collect_evidence) speak only to the official Studio MCP: do not mix the "
+                  "two tool sets in one plan, and treat an edit made through the bridge as unverified until "
+                  "RobloxForge has read it back or a receipt covers it.",
+        "free_alternative": "the official Studio MCP built into Roblox Studio (rbforge agent connect)",
+    },
     "f3x": {
         "label": "F3X (building tools)",
         "price": "free",

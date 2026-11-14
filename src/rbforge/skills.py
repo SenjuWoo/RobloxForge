@@ -64,7 +64,8 @@ _ROOTS = {
     "claude": ("RBFORGE_CLAUDE_SKILLS", ("~/.claude/skills",)),
     "codex": ("RBFORGE_CODEX_SKILLS", ("~/.codex/skills",)),
     "grok": ("RBFORGE_GROK_SKILLS", ("~/.grok/skills",)),
-    "kimi": ("RBFORGE_KIMI_SKILLS", ("~/.kimi/skills",)),
+    # Kimi Code keeps its home in ~/.kimi-code; older Kimi CLI builds used ~/.kimi.
+    "kimi": ("RBFORGE_KIMI_SKILLS", ("~/.kimi-code/skills", "~/.kimi/skills")),
 }
 
 

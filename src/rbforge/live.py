@@ -14,8 +14,10 @@ import os
 import re
 import subprocess
 import threading
+import time
 import zlib
 
+from . import luau_text
 from . import studio as studio_mod
 from .errors import ForgeError
 
@@ -43,10 +45,16 @@ class Session:
                                      bufsize=1)
         self.lines, self.next_id = [], 0
         threading.Thread(target=self._read, daemon=True).start()
-        self.request("initialize", {"protocolVersion": studio_mod.PROTOCOL_VERSION, "capabilities": {},
-                                    "clientInfo": {"name": "rbforge-live", "version": "1"}})
-        self._send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
-        self.studio_id = studio_id or self._only_studio()
+        try:
+            self.request("initialize", {"protocolVersion": studio_mod.PROTOCOL_VERSION, "capabilities": {},
+                                        "clientInfo": {"name": "rbforge-live", "version": "1"}})
+            self._send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+            self.studio_id = studio_id or self._only_studio()
+        except BaseException:
+            # The constructor failed, so `with` never reaches __exit__: without this, every
+            # "two Studios open, pass --studio" answer left a StudioMCP process running.
+            self.close()
+            raise
 
     def _read(self):
         try:
@@ -120,12 +128,28 @@ class Session:
 
 # ------------------------------------------------------------------ rojo mapping
 
-def rojo_targets(project_file):
-    """file path (normcase) -> (dotted parent path in the DataModel, instance name, class)."""
+def rojo_targets(project_file, spellings=None):
+    """file path (normcase) -> (dotted parent path in the DataModel, instance name, class).
+
+    `spellings`, when given, is filled with normcase path -> the path as spelled on disk, so reports
+    can name `src/Shop.luau` instead of the lowercased key.
+    """
     root = os.path.dirname(os.path.abspath(project_file))
-    with open(project_file, encoding="utf-8") as fh:
-        tree = json.load(fh)["tree"]
+    try:
+        with open(project_file, encoding="utf-8") as fh:
+            tree = json.load(fh).get("tree")
+    except (OSError, ValueError, AttributeError) as exc:
+        raise ForgeError("RBF-ARG-002", "cannot read Rojo project %s: %s" % (project_file, exc),
+                         hint="run `rbforge check` on the project; it names the malformed field")
+    if not isinstance(tree, dict) or not tree:
+        raise ForgeError("RBF-ARG-002", "Rojo project %s has no 'tree' object" % project_file,
+                         hint="Rojo needs a non-empty tree; `rbforge check` validates the project")
     out = {}
+
+    def put(path, value):
+        out[os.path.normcase(path)] = value
+        if spellings is not None:
+            spellings[os.path.normcase(path)] = path
 
     def klass(fname):
         if ".server." in fname:
@@ -136,7 +160,7 @@ def rojo_targets(project_file):
 
     def walk(node, path):
         p = node.get("$path")
-        if p:
+        if isinstance(p, str) and p and path:
             full = os.path.normpath(os.path.join(root, p))
             if os.path.isdir(full):
                 for dirpath, _dirs, files in os.walk(full):
@@ -147,20 +171,36 @@ def rojo_targets(project_file):
                     init = _init_file(files)
                     if init:
                         node_path = path + sub
-                        out[os.path.normcase(os.path.join(dirpath, init))] = (
-                            ".".join(node_path[:-1]), node_path[-1], klass(init))
+                        put(os.path.join(dirpath, init),
+                            (".".join(node_path[:-1]), node_path[-1], klass(init)))
                     for f in files:
                         if f.endswith((".luau", ".lua")) and not f.startswith("init."):
-                            out[os.path.normcase(os.path.join(dirpath, f))] = (
-                                ".".join(path + sub), f.split(".")[0], klass(f))
+                            put(os.path.join(dirpath, f),
+                                (".".join(path + sub), script_name(f), klass(f)))
             elif full.endswith((".luau", ".lua")):
-                out[os.path.normcase(full)] = (".".join(path[:-1]), path[-1], klass(os.path.basename(full)))
+                put(full, (".".join(path[:-1]), path[-1], klass(os.path.basename(full))))
         for k, v in node.items():
             if not k.startswith("$") and isinstance(v, dict):
                 walk(v, path + [k])
 
     walk(tree, [])
     return out
+
+
+_SCRIPT_SUFFIXES = (".server.luau", ".server.lua", ".client.luau", ".client.lua", ".luau", ".lua")
+
+
+def script_name(filename):
+    """The instance name Rojo gives a script file: the name minus its script suffix only.
+
+    `Foo.spec.luau` is the ModuleScript `Foo.spec`, not `Foo` - cutting at the first dot pushed a spec
+    file into its own module and made the two overwrite each other.
+    """
+    low = filename.lower()
+    for suffix in _SCRIPT_SUFFIXES:
+        if low.endswith(suffix):
+            return filename[:-len(suffix)]
+    return filename
 
 
 def rojo_parent_classes(project_file):
@@ -233,17 +273,25 @@ def _init_file(files):
     return None
 
 
-def _push_code(parent, name, klass, text, parent_classes=None):
+def _push_code(parent, name, klass, text, parent_classes=None, expects=None, force=False):
     """Luau that applies one script and reports what actually happened.
 
-    States: SYNCED, HIERARCHY, ROLLED_BACK, ROLLBACK_FAILED, MISMATCH, UNVERIFIED.
+    States: SYNCED, HIERARCHY, CONFLICT, BACKUP_FAILED, ROLLED_BACK, ROLLBACK_FAILED, MISMATCH,
+    UNVERIFIED.
 
     Every string is embedded with `long_string` (JSON escapes are not Luau escapes, and the class
     map used to be pasted as JSON, which is not a table literal). A rollback is only reported as
     ROLLED_BACK after the previous source, or the previous instance, has been read back and
     compared - a successful `pcall` is not proof of restoration.
+
+    `expects` maps a place key to the stamp this tool last wrote there. Studio picks its own key, so
+    the guard needs no extra round trip: when the script's current Source is neither that stamp nor
+    the new text, someone edited it in Studio since the last push and the write is refused
+    (CONFLICT) unless `force`. Any overwrite of a Source this tool did not write - a first push, or a
+    forced one - clones the Studio copy into ServerStorage.rbforge_backups before writing.
     """
     classes_json = json.dumps(parent_classes or {}, ensure_ascii=False)
+    expects_json = json.dumps(expects or {}, ensure_ascii=False)
     instantiate = ("Instance.new('%s')" % klass if klass in ("ModuleScript", "Script", "LocalScript")
                    else "Instance.new(%s)" % long_string(klass))
     return (
@@ -287,6 +335,29 @@ def _push_code(parent, name, klass, text, parent_classes=None):
         % (instantiate, long_string(name))
         + "local okPrev, prev = pcall(function() return target.Source end)\n"
         "if not okPrev or type(prev) ~= 'string' then prev = nil end\n"
+        "local src = %s\n" % long_string(text)
+        + "local placeKey = game.PlaceId ~= 0 and tostring(game.PlaceId) or ('0:' .. game.Name)\n"
+        "local expect = Http:JSONDecode(%s)[placeKey] or ''\n" % long_string(expects_json)
+        + "local force = %s\n" % ("true" if force else "false")
+        + "local copied = nil\n"
+        "if prev ~= nil and not created and prev ~= src then\n"
+        "  local prevStamp = stamp(prev)\n"
+        "  local ours = expect ~= '' and prevStamp == expect\n"
+        "  if expect ~= '' and not ours and not force then\n"
+        "    return 'CONFLICT ' .. prevStamp .. ' ' .. Http:JSONEncode({place = placeKey, expect = expect})\n"
+        "  end\n"
+        "  if not ours then\n"
+        "    -- Not a Source this tool wrote: keep the Studio copy before replacing it.\n"
+        "    local store = game:GetService('ServerStorage')\n"
+        "    local backups = store:FindFirstChild('rbforge_backups')\n"
+        "    if not backups then backups = Instance.new('Folder') backups.Name = 'rbforge_backups' backups.Parent = store end\n"
+        "    local okc, copy = pcall(function() return target:Clone() end)\n"
+        "    if not okc or not copy then return 'BACKUP_FAILED ' .. prevStamp end\n"
+        "    copy.Name = target.Name .. '_rbforge_' .. tostring(os.time() * 1000)\n"
+        "    copy.Parent = backups\n"
+        "    copied = copy.Name\n"
+        "  end\n"
+        "end\n"
         "local function restore(reason)\n"
         "  -- A class change also creates a stand-in, so the backup must win: put the original\n"
         "  -- back first, then remove whatever temporary instance this push made.\n"
@@ -315,27 +386,147 @@ def _push_code(parent, name, klass, text, parent_classes=None):
         "  end\n"
         "  return 'ROLLBACK_FAILED ' .. reason .. ' (nothing to restore)'\n"
         "end\n"
-        "local src = %s\n" % long_string(text)
-        + "local wrote = pcall(function() target.Source = src end)\n"
+        "local wrote = pcall(function() target.Source = src end)\n"
         "if not wrote then return restore('write failed') end\n"
         "local ok, got = pcall(function() return target.Source end)\n"
         "if not ok or type(got) ~= 'string' then return restore('source unreadable') end\n"
         "if got ~= src then return restore('readback mismatch ' .. stamp(got)) end\n"
-        "return 'SYNCED ' .. stamp(got)"
+        "return 'SYNCED ' .. stamp(got) .. ' ' .. Http:JSONEncode({place = placeKey, backup = copied})"
     )
 
 
-def push(paths, project_file="default.project.json", studio_id=None):
-    """Set each mapped script's Source from disk and verify it inside Studio."""
+# ------------------------------------------------------------------ push ledger
+#
+# What push last wrote, per project, place and target. It is the "read" half of a read-then-write
+# guard: a Studio copy whose stamp is neither the ledger's nor the new file's was edited in Studio.
+
+def _ledger_path():
+    from . import paths as paths_mod
+    return os.path.join(paths_mod.home(), "push-ledger.json")
+
+
+def _ledger_load():
+    try:
+        with open(_ledger_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {"version": 1, "projects": {}}
+    if not isinstance(data, dict) or not isinstance(data.get("projects"), dict):
+        return {"version": 1, "projects": {}}
+    return data
+
+
+def _ledger_expects(ledger, project_key, target):
+    """{place key: stamp} this tool last wrote for `target`, across every place it has seen."""
+    places = ledger["projects"].get(project_key)
+    out = {}
+    if isinstance(places, dict):
+        for place, entries in places.items():
+            entry = entries.get(target) if isinstance(entries, dict) else None
+            if isinstance(entry, dict) and isinstance(entry.get("stamp"), str):
+                out[place] = entry["stamp"]
+    return out
+
+
+def _ledger_save(project_key, updates):
+    """Merge `updates` [(place, target, stamp, file)] under the lock; never loses other projects."""
+    if not updates:
+        return
+    from .verification import _FileLock, _write_json
+    path = _ledger_path()
+    with _FileLock(path + ".lock"):
+        ledger = _ledger_load()
+        places = ledger["projects"].setdefault(project_key, {})
+        if not isinstance(places, dict):
+            places = ledger["projects"][project_key] = {}
+        for place, target, stamp, file in updates:
+            if not isinstance(places.get(place), dict):
+                places[place] = {}
+            places[place][target] = {
+                "stamp": stamp, "file": file, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        _write_json(path, ledger)
+
+
+def _parse_reply(got):
+    """(word, stamp, meta) from 'WORD <stamp> {json}'; meta is {} when absent or unreadable."""
+    word, _, rest = got.partition(" ")
+    stamp, _, tail = rest.partition(" ")
+    meta = {}
+    if tail.strip().startswith("{"):
+        try:
+            meta = json.loads(tail)
+        except ValueError:
+            meta = {}
+    return word, stamp, meta if isinstance(meta, dict) else {}
+
+
+def push(paths, project_file="default.project.json", studio_id=None, force=False):
+    """Set each mapped script's Source from disk and verify it inside Studio.
+
+    A script edited in Studio since this tool last pushed it is refused (`conflict`) unless
+    `force`; any overwrite of a Source this tool did not write is backed up first.
+    """
     if not os.path.isfile(project_file):
         raise ForgeError("RBF-ARG-001", "no Rojo project file at %s" % project_file,
                          hint="run from the project root or pass --project")
-    targets = rojo_targets(project_file)
+    spelled = {}
+    targets = rojo_targets(project_file, spelled)
     project_root = os.path.dirname(os.path.abspath(project_file))
+    project_key = os.path.normcase(os.path.abspath(project_file))
     parent_classes = rojo_parent_classes(project_file)
-    files = list(targets) if paths == ["ALL"] else [os.path.normcase(os.path.abspath(p)) for p in paths]
+    if paths == ["ALL"]:
+        files = list(targets)
+    else:
+        files = []
+        for p in paths:
+            key = os.path.normcase(os.path.abspath(p))
+            spelled.setdefault(key, os.path.abspath(p))
+            files.append(key)
+
+    def show(f):
+        # Keys are normcased for matching; reports use the on-disk spelling.
+        return _rel(spelled.get(f, f), project_root)
+
     allowed_places = _project_place_ids(project_file)
+    ledger = _ledger_load()
+    updates = []
     results = []
+    try:
+        stop_reason = _push_files(studio_id, allowed_places, files, targets, show,
+                                  project_file, parent_classes, ledger, project_key, force,
+                                  results, updates)
+    finally:
+        # Persist what landed even when a later file raised (Studio entered Play, pipe closed).
+        _ledger_save(project_key, updates)
+    if stop_reason:
+        attempted = {r["file"] for r in results}
+        for f in files:
+            name = show(f)
+            if name not in attempted:
+                results.append({"file": name, "target": None, "state": "not_attempted",
+                                "ok": False, "got": None, "want": None, "why": stop_reason})
+    synced = [r for r in results if r["state"] == "synced"]
+    out = {"pushed": len(synced), "failed": len(results) - len(synced)}
+    for key, state in (("mismatched", "mismatch"), ("unverified", "unverified"),
+                       ("unmapped", "unmapped"), ("unreadable", "unreadable"),
+                       ("hierarchy", "hierarchy"), ("conflicts", "conflict"),
+                       ("backup_failed", "backup_failed"), ("rolled_back", "rolled_back"),
+                       ("rollback_failed", "rollback_failed"), ("not_attempted", "not_attempted")):
+        out[key] = [r for r in results if r["state"] == state]
+    out["backed_up"] = [{"file": r["file"], "backup": "ServerStorage.rbforge_backups." + r["backup"]}
+                        for r in results if r.get("backup")]
+    out["results"] = results
+    out["note"] = "Edit-mode sources changed; stop/start Play to run them, and the owner saves the place"
+    if out["conflicts"]:
+        out["conflict_hint"] = ("these scripts were edited in Studio after the last push: copy the "
+                                "Studio change into the file, or push again with --force (the Studio "
+                                "copy is cloned into ServerStorage.rbforge_backups first)")
+    return out
+
+
+def _push_files(studio_id, allowed_places, files, targets, show, project_file,
+                parent_classes, ledger, project_key, force, results, updates):
+    """The Studio half of `push`; fills `results` and `updates`, returns a stop reason or None."""
     with Session(studio_id) as s:
         if allowed_places:
             # Wrong-place protection runs before any source is touched.
@@ -353,7 +544,7 @@ def push(paths, project_file="default.project.json", studio_id=None):
             if f not in targets:
                 # Every result carries the same keys: an unmapped path used to produce a row without
                 # "state", and the aggregation below then raised KeyError on a mixed batch.
-                results.append({"file": _rel(f, project_root), "target": None,
+                results.append({"file": show(f), "target": None,
                                 "state": "unmapped", "ok": False, "got": None, "want": None,
                                 "why": "not mapped by %s" % project_file})
                 continue
@@ -361,53 +552,56 @@ def push(paths, project_file="default.project.json", studio_id=None):
             try:
                 with open(f, encoding="utf-8") as fh:
                     text = fh.read().replace("\r\n", "\n")
-            except OSError as exc:
-                results.append({"file": _rel(f, project_root), "target": None,
+            except (OSError, UnicodeDecodeError) as exc:
+                results.append({"file": show(f), "target": None,
                                 "state": "unreadable", "ok": False, "got": None, "want": None,
                                 "why": str(exc)})
                 continue
             want = adler(text)
-            got = s.luau(_push_code(parent, name, klass, text, parent_classes)).strip()
-            state = ("synced" if got.startswith("SYNCED") and got.endswith(want) else
-                     "mismatch" if got.startswith("MISMATCH") else
-                     "hierarchy" if got.startswith("HIERARCHY") else
-                     "rolled_back" if got.startswith("ROLLED_BACK") else
-                     "rollback_failed" if got.startswith("ROLLBACK_FAILED") else "unverified")
-            results.append({"file": _rel(f, project_root), "target": "%s.%s" % (parent, name),
-                            "state": state, "ok": state == "synced", "got": got, "want": want,
-                            "why": got if state in ("hierarchy", "rollback_failed") else None})
+            target = "%s.%s" % (parent, name)
+            expects = _ledger_expects(ledger, project_key, target)
+            got = s.luau(_push_code(parent, name, klass, text, parent_classes,
+                                    expects=expects, force=force)).strip()
+            word, stamp, meta = _parse_reply(got)
+            # The stamp is compared as a whole token: `endswith` let "SYNCED 13:123" match "3:123".
+            state = ("synced" if word == "SYNCED" and stamp == want else
+                     "mismatch" if word == "MISMATCH" else
+                     "hierarchy" if word == "HIERARCHY" else
+                     "conflict" if word == "CONFLICT" else
+                     "backup_failed" if word == "BACKUP_FAILED" else
+                     "rolled_back" if word == "ROLLED_BACK" else
+                     "rollback_failed" if word == "ROLLBACK_FAILED" else "unverified")
+            row = {"file": show(f), "target": target,
+                   "state": state, "ok": state == "synced", "got": got, "want": want,
+                   "why": got if state in ("hierarchy", "rollback_failed", "backup_failed") else None}
+            if state == "conflict":
+                row["why"] = ("Studio copy (%s) differs from the last push (%s) and from the file; "
+                              "it was edited in Studio" % (stamp, meta.get("expect") or "?"))
+            if meta.get("backup"):
+                row["backup"] = str(meta["backup"])
+            results.append(row)
+            if state == "synced" and isinstance(meta.get("place"), str):
+                updates.append((meta["place"], target, want, row["file"]))
             if state == "rollback_failed":
                 # The place may be damaged or hold an orphaned original: stop writing and say which
                 # files were never attempted instead of compounding the failure.
-                stop_reason = ("%s left unrecovered; check ServerStorage.rbforge_backups before "
-                               "pushing again" % _rel(f, project_root))
-                break
-        else:
-            stop_reason = None
-    if stop_reason:
-        attempted = {r["file"] for r in results}
-        for f in files:
-            name = _rel(f, project_root)
-            if name not in attempted:
-                results.append({"file": name, "target": None, "state": "not_attempted",
-                                "ok": False, "got": None, "want": None, "why": stop_reason})
-    synced = [r for r in results if r["state"] == "synced"]
-    return {"pushed": len(synced), "failed": len(results) - len(synced),
-            "mismatched": [r for r in results if r["state"] == "mismatch"],
-            "unverified": [r for r in results if r["state"] == "unverified"],
-            "unmapped": [r for r in results if r["state"] == "unmapped"],
-            "unreadable": [r for r in results if r["state"] == "unreadable"],
-            "hierarchy": [r for r in results if r["state"] == "hierarchy"],
-            "rolled_back": [r for r in results if r["state"] == "rolled_back"],
-            "rollback_failed": [r for r in results if r["state"] == "rollback_failed"],
-            "not_attempted": [r for r in results if r["state"] == "not_attempted"],
-            "results": results,
-            "note": "Edit-mode sources changed; stop/start Play to run them, and the owner saves the place"}
+                return ("%s left unrecovered; check ServerStorage.rbforge_backups before "
+                        "pushing again" % show(f))
+    return None
+
+
+def _read_source(path, what):
+    """File text, or a structured error instead of a traceback for a missing or unreadable file."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ForgeError("RBF-ARG-001", "cannot read %s %s: %s" % (what, path, exc),
+                         hint="pass the path of an existing UTF-8 .luau file")
 
 
 def run_file(path, datamodel="Edit", studio_id=None):
-    with open(path, encoding="utf-8") as fh:
-        code = fh.read()
+    code = _read_source(path, "Luau file")
     with Session(studio_id) as s:
         return s.luau(code, datamodel)
 
@@ -421,61 +615,14 @@ def run_probe(name, overrides=None, datamodel=None, studio_id=None):
 
 
 def _lua_code_only(src):
-    """Strip comments and string literals so a mention cannot masquerade as a call.
-
-    Luau allows long brackets at any level (`[[`, `[=[`, `[==[`, ...) for both strings and comments,
-    and `--` starts a comment unless it opens a long bracket. Anything that is not executable text is
-    dropped; dynamic code survives untouched, because only comments and literals are removed.
-    """
-    s_ = src
-    out = []
-    i, n = 0, len(src)
-
-    def long_bracket(at):
-        """(level, end_index) for a `[=*[` opener at `at`, else (None, at)."""
-        j = at + 1
-        while j < n and src[j] == "=":
-            j += 1
-        if j < n and src[j] == "[":
-            return j - at - 1, j + 1
-        return None, at
-
-    while i < n:
-        ch = src[i]
-        if s_.startswith("--", i):
-            level, after = long_bracket(i + 2)
-            if level is not None:
-                close = "]" + "=" * level + "]"
-                end = s_.find(close, after)
-                i = n if end == -1 else end + len(close)
-            else:
-                end = s_.find("\n", i)
-                i = n if end == -1 else end
-        elif ch == "[":
-            level, after = long_bracket(i)
-            if level is not None:
-                close = "]" + "=" * level + "]"
-                end = s_.find(close, after)
-                i = n if end == -1 else end + len(close)
-            else:
-                out.append(ch)
-                i += 1
-        elif ch in "\"'":
-            quote, i = ch, i + 1
-            while i < n and s_[i] != quote:
-                i += 2 if s_[i] == "\\" else 1
-            i += 1
-        else:
-            out.append(ch)
-            i += 1
-    return "".join(out)
+    """Executable text only: comments and string literals removed (see `luau_text.code_only`)."""
+    return luau_text.code_only(src)
 
 
 def server_test(path, attr, timeout=120, studio_id=None):
     """Run a test file as a temporary server Script in a running Play session, so it shares the game's module
     cache (execute_luau has its own). The test must set workspace:SetAttribute(attr, "PASS ..." | "FAIL ...")."""
-    with open(path, encoding="utf-8") as fh:
-        src = fh.read().replace("\r\n", "\n")
+    src = _read_source(path, "test file").replace("\r\n", "\n")
     # A test that never writes the attribute cannot report: the runner would sit for the full timeout
     # and call it TIMEOUT, which hides the real mistake. Only executable text counts - a mention in a
     # comment or a string is not a report - and a dynamically built attribute name is fine, because

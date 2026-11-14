@@ -35,6 +35,10 @@ first; references carry the detail.
 
 - `synced` - bytes match what Studio stored.
 - `hierarchy` - the project declares a class the place does not have; fix it, never force it.
+- `conflict` - someone edited that script in Studio after the last push; nothing was written. Read the
+  Studio source (`script_read`), carry the change into the file, push again. Use `--force` only when the
+  Studio edit should be discarded; the Studio copy is cloned into `ServerStorage.rbforge_backups` first.
+- `backed_up` - push replaced a source it had not written (a first push, or `--force`) and kept the old one.
 - `rolled_back` / `rollback_failed` - the write failed and the previous source was (or was not) restored.
   A `rollback_failed` means **stop**: the original may sit in `ServerStorage.rbforge_backups`.
 - A per-file result is not a transaction: a batch can be partly applied. Push, then verify the ones

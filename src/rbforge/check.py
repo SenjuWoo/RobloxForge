@@ -23,6 +23,9 @@ import shutil
 import subprocess
 import tempfile
 
+from . import luau_text
+from .errors import ForgeError
+
 # Rung 1 tools: each absent one lowers coverage instead of failing the run.
 STATIC_TOOLS = {
     "stylua": "formatter (rokit add JohnnyMorganz/StyLua)",
@@ -356,7 +359,10 @@ def rung_unit(root):
 def rung_structure(root):
     """Offline source/DataModel sanity that needs no Roblox install."""
     rung = {"id": "structure", "name": "Rung 3 - offline structure audit", "checks": []}
-    files = [f for f in _luau_files(root) if "Packages" not in f]
+    # Judge the path inside the project only: a project stored under a folder whose absolute path
+    # merely contains "Packages" used to have every file dropped, and an empty audit read as a skip.
+    files = [f for f in _luau_files(root)
+             if not any(seg.endswith("Packages") for seg in _rel(root, f).split("/")[:-1])]
     if not files:
         # Not a reason to stop: a project can be all project.json + models, and
         # the $path audit below is exactly what catches that state.
@@ -372,8 +378,11 @@ def rung_structure(root):
             problems.append("%s: unreadable (%s)" % (_rel(root, path), exc))
             continue
         where = _rel(root, path)
+        # A call is code: a comment or a string that names loadstring is not a backdoor, and failing
+        # the gate on it taught agents to ignore the gate.
+        code = luau_text.code_only(text)
         for pattern, name, _, why in DANGEROUS:
-            if pattern.search(text):
+            if pattern.search(code):
                 problems.append("%s: %s - %s" % (where, name, why))
 
         if not re.match(r"\s*--!", text):
@@ -381,8 +390,9 @@ def rung_structure(root):
                                    "detail": "no --!strict / --!nonstrict header"})
 
         # Client scripts must never touch server-only services.
-        if where.endswith(".client.luau") or "StarterPlayerScripts" in where:
-            if "DataStoreService" in text:
+        if where.endswith((".client.luau", ".client.lua")) or "StarterPlayerScripts" in where:
+            # The service name is a string literal in real code, so strings stay; comments go.
+            if "DataStoreService" in luau_text.code_only(text, keep_strings=True):
                 problems.append("%s: DataStoreService in a client script - "
                                 "client has no authority and no access" % where)
 
@@ -487,6 +497,10 @@ def _validate_project(project_file, root):
 def run(root=".", scope=None, changed_only=False, base_ref="HEAD"):
     """Run the ladder over a project. `scope` limits rungs; `changed_only` limits the linters."""
     root = os.path.abspath(root)
+    if not os.path.isdir(root):
+        # A typo must not come back as "incomplete: no Luau sources" - that reads like a real audit.
+        raise ForgeError("RBF-ARG-001", "project directory %s does not exist" % root,
+                         hint="pass the project root: `rbforge check <dir>`")
     changed = changed_files(root, base_ref) if changed_only else None
     rungs = [rung_static, rung_unit, rung_structure]
     if scope:

@@ -30,6 +30,7 @@ jobs:
         run: |
           python scripts/install_selene.py
           python scripts/install_stylua.py
+          python scripts/install_lune.py
 
       - name: Byte-compile every module (catches syntax errors before tests)
         run: python -m compileall -q src mcp_server tests
@@ -119,6 +120,7 @@ jobs:
         run: |
           python scripts/install_luau_lsp.py
           python scripts/install_stylua.py
+          python scripts/install_lune.py
           echo "$PWD/.ci-tools" >> "$GITHUB_PATH"
 
       - name: Confirm the analyzer is the pinned build
