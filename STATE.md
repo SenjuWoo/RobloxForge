@@ -19,7 +19,7 @@ claim checkable.
 | CLI surface | `check <path>`, `check --root <path>` and `check <path> --scope static` are run from a cwd that is **not** the project, and each report's `root` and `rungs_run` are asserted; a positional/`--root` conflict exits 2 (tests `cli: ...`) |
 | Luau semantic examples | extracted from `typing-luau.md` and re-analysed by pinned luau-lsp 1.70.1; CI job `luau-semantics` runs them with `RBFORGE_REQUIRE_LUAU_LSP=1` |
 | Diagnostic map | keyed by the whole project-relative path, so `src/Server/init.luau` and `tests/Server/init.luau` are two files; containment is `commonpath`, so a sibling `proj2` is not inside `proj` (tests `check: same-named files at different depths...`, `check: a sibling directory...`) |
-| Offline gate (`check`, traps, probes, review) | 186 automated tests + fixture projects |
+| Offline gate (`check`, traps, probes, review) | 187 automated tests + fixture projects |
 | Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
 | Push guard (0.17.0) | the exact push code is executed under Lune against `tests/lune/mock_datamodel.luau`: new script, first push (backup), unchanged ledger (no backup), Studio edit (`CONFLICT`, source untouched), `force` (backup + write), other place (first-push rules); Luau stamp equals Python `adler` |
 | MCP wire | negotiation (2025-06-18/2025-03-26/2024-11-05), parse error -32700, non-object arguments -32602, annotations on every tool, catalog <= 10,600 chars |
@@ -58,7 +58,7 @@ claim checkable.
   `*Packages*` path, comment/string false positives, missing-directory `incomplete`, `Foo.spec.luau` pushed into
   `Foo`, suffix-matched checksums, tracebacks on missing files, an idle evidence session, Kimi Code skill root)
   and two Roqer-derived ideas written fresh: push conflict guard with backup-before-overwrite, and MCP
-  annotations/instructions/catalog budget; `rbforge new` ships a Lune spec so a fresh project can gate `pass`. 186 tests. StudioMCP measured exiting 0.16 s after stdin EOF, so the
+  annotations/instructions/catalog budget; `rbforge new` ships a Lune spec so a fresh project can gate `pass`; Hermes `.deleted` profile no longer an install root. 187 tests. StudioMCP measured exiting 0.16 s after stdin EOF, so the
   new tree-kill fallback adds no latency.
 
 - 0.16.2: three more silent-failure entries (overhead shadows, vertical `lookAt`, scatter reshuffle) and step 7 of

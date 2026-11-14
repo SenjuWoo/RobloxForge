@@ -4253,6 +4253,27 @@ def _():
     assert candidates[0] == "~/.kimi-code/skills" and "~/.kimi/skills" in candidates, candidates
 
 
+@check("skills: Hermes' .deleted profile trash is not an install root")
+def _():
+    from rbforge import skills
+    with tempdir() as d:
+        for name in (".deleted", "code"):
+            os.makedirs(os.path.join(d, "hermes", "profiles", name, "skills"))
+        saved = {k: os.environ.get(k) for k in ("LOCALAPPDATA", "RBFORGE_HERMES_SKILLS")}
+        os.environ["LOCALAPPDATA"] = d
+        os.environ.pop("RBFORGE_HERMES_SKILLS", None)
+        try:
+            roots = skills.roots_for("hermes")
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+    assert any(r.replace("\\", "/").endswith("profiles/code/skills") for r in roots), roots
+    assert not any(".deleted" in r for r in roots), roots
+
+
 @check("plugins: the community Studio MCP bridge (Roqer) is recognised and pointed at the official MCP")
 def _():
     from rbforge import plugins

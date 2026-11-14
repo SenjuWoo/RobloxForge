@@ -41,6 +41,7 @@ project (written fresh here; see `docs/INTEGRATIONS.md`).
 - The MCP server answers unparseable input with a JSON-RPC parse error, rejects non-object arguments, and
   advertises `host_vision` on `rb_capabilities`, which it already accepted.
 - Kimi Code skills install into `~/.kimi-code/skills` (the legacy `~/.kimi/skills` is still searched).
+- Skills are no longer installed into Hermes' `profiles/.deleted` trash, which no session loads.
 - Hardened against non-object JSON in Studio MCP replies and AssistantSettings files.
 
 ## 0.16.3 - 2026-11-12

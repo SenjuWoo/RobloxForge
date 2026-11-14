@@ -157,7 +157,7 @@ docs > verified community practice > model memory.
 | `src/rbforge/mapkit.py` | optional adapter for an external map prover: discovers it, checks its deps, returns its own report (never touches Studio) |
 | `mcp_server/server.py` | 18-tool MCP server (doctor, capabilities, docs, check, plugins, assets, planning, reviews, receipts, probes, traps, evidence) |
 | `skills/` | 25 agent skills (2 first-party + 23 adopted MIT topic skills), installed into Hermes/Claude/Codex/Grok/Kimi |
-| `tests/run_tests.py` | 186 checks, no Roblox required |
+| `tests/run_tests.py` | 187 checks, no Roblox required |
 
 Register the MCP server manually (all agents, disabled) instead:
 

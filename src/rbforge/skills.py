@@ -106,6 +106,10 @@ def roots_for(agent):
         profiles = os.path.join(_expand("%LOCALAPPDATA%"), "hermes", "profiles")
         if os.path.isdir(profiles):
             for name in sorted(os.listdir(profiles)):
+                # `.deleted` is where Hermes parks removed profiles; no session loads it, so
+                # installing there only made "current" claims about a profile nobody runs.
+                if name.startswith("."):
+                    continue
                 add(os.path.join(profiles, name, "skills"))
     return out
 
