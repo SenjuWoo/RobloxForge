@@ -103,7 +103,9 @@ def roots_for(agent):
     for cand in candidates:
         add(_expand(cand))
     if agent == "hermes":
-        profiles = os.path.join(_expand("%LOCALAPPDATA%"), "hermes", "profiles")
+        # paths.local_appdata(), not "%LOCALAPPDATA%": expandvars leaves %VAR% untouched off Windows,
+        # so the literal string became a relative path and the profile scan found nothing.
+        profiles = os.path.join(paths.local_appdata(), "hermes", "profiles")
         if os.path.isdir(profiles):
             for name in sorted(os.listdir(profiles)):
                 # `.deleted` is where Hermes parks removed profiles; no session loads it, so
