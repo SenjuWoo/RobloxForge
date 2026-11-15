@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.17.2 - 2026-11-15
+
+### Fixed
+- **Live commands failed with "0 Studio instances open" while Studio showed "MCP Ready".** Every CLI
+  command starts its own StudioMCP, and a new one lists no Studio until Studio registers it - measured
+  2.7-3.6 s after spawn, against a first answer at ~0.5 s. `push`, `exec`, `probe --run`, `servertest`
+  and evidence collection asked once and gave up; a session now polls until the Studio appears
+  (`RBFORGE_STUDIO_WAIT` seconds, default 15), and an explicit `--studio` id waits for that id.
+- `doctor` reported "(none - open a place)" beside an open place for the same reason; its probe polls
+  while a Studio process is running and returns at once when none is.
+
+### Verified live
+- The push conflict guard, in a disposable unpublished place: new script `synced` with no backup;
+  unchanged and file-only re-pushes `synced`; a Studio edit then push is `conflict` with the Studio
+  source untouched; `--force` writes and clones the edited copy into `ServerStorage.rbforge_backups`;
+  the next push is `synced` with no backup. A source ending in `]=` reads back byte-exact (the 0.17.1
+  `long_string` fix).
+
 ## 0.17.1 - 2026-11-15
 
 A whole-project audit. Every fix below was reproduced first and has a test that failed before it.

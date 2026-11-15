@@ -298,9 +298,24 @@ def probe_mcp(timeout=25.0, list_studios=True):
         result["tool_count"] = len(tools)
         result["tools"] = sorted(t.get("name", "?") for t in tools)
         if list_studios and "list_roblox_studios" in result["tools"]:
-            _send(proc, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
-                         "params": {"name": "list_roblox_studios", "arguments": {}}})
-            result["studios"] = _parse_studios(_await_id(lines, 3, proc, timeout))
+            # A new StudioMCP lists nothing until Studio registers it (seconds after spawn), so one
+            # early call reported "no place open" next to an open place. Poll while a Studio process
+            # exists; with no Studio running an empty list is the true answer and returns at once.
+            try:
+                wait = float(os.environ.get("RBFORGE_STUDIO_WAIT") or 15)
+            except ValueError:
+                wait = 15.0
+            deadline = time.time() + wait
+            rid = 3
+            while True:
+                _send(proc, {"jsonrpc": "2.0", "id": rid, "method": "tools/call",
+                             "params": {"name": "list_roblox_studios", "arguments": {}}})
+                result["studios"] = _parse_studios(_await_id(lines, rid, proc, timeout))
+                if result["studios"] or time.time() >= deadline or \
+                        studio_running().get("running") is not True:
+                    break
+                rid += 1
+                time.sleep(0.5)
     finally:
         _terminate(proc)
     return result

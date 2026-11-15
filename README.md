@@ -164,7 +164,7 @@ docs > verified community practice > model memory.
 | `src/rbforge/mapkit.py` | optional adapter for an external map prover: discovers it, checks its deps, returns its own report (never touches Studio) |
 | `mcp_server/server.py` | 18-tool MCP server (doctor, capabilities, docs, check, plugins, assets, planning, reviews, receipts, probes, traps, evidence) |
 | `skills/` | 25 agent skills (2 first-party + 23 adopted MIT topic skills), installed into Hermes/Claude/Codex/Grok/Kimi |
-| `tests/run_tests.py` | 202 checks, no Roblox required |
+| `tests/run_tests.py` | 204 checks, no Roblox required |
 
 Register the MCP server manually (all agents, disabled) instead:
 
@@ -182,7 +182,7 @@ it. Whenever push replaces a source it did not write itself, the Studio copy is 
 
 ## Status
 
-0.17.1. Only what was observed is listed as verified.
+0.17.2. Only what was observed is listed as verified.
 
 | Area | Status |
 |---|---|
@@ -191,7 +191,7 @@ it. Whenever push replaces a source it did not write itself, the Studio copy is 
 | `rbforge check` offline gate (static / unit / structure) | verified; skips reported as `incomplete`, never `pass` |
 | `rbforge new` one-command project + plan | verified |
 | `rbforge push`: checksum readback, rollback, class-change backup | verified against a live Studio place |
-| `rbforge push` conflict guard and backup-before-overwrite (0.17.0) | executed under Lune against a mock DataModel; not yet re-run in live Studio |
+| `rbforge push` conflict guard and backup-before-overwrite | verified against a live Studio place (0.17.2): conflict, `--force` backup, ledger re-push |
 | Plugin detection with a free alternative for every entry | verified (filename-based) |
 | Doctor, capabilities matrix | verified |
 | Skill install into every Hermes profile, Claude/Codex/Grok/Kimi | verified; manifest-backed, per-profile status, non-destructive reinstall |

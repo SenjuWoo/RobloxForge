@@ -4633,6 +4633,68 @@ def _():
     assert report["capabilities"]["rojo"]["status"] == "optional"
 
 
+
+def _fake_mcp_with_late_studio(d, empty_answers):
+    """A stdio MCP double whose list_roblox_studios is empty for the first `empty_answers` calls,
+    like a real StudioMCP in the seconds before Studio registers it."""
+    fake = os.path.join(d, "late_mcp.py")
+    open(fake, "w").write(
+        "import json, sys\n"
+        "lists = 0\n"
+        "for line in sys.stdin:\n"
+        "    msg = json.loads(line)\n"
+        "    if 'id' not in msg: continue\n"
+        "    if msg['method'] == 'initialize': result = {'protocolVersion': '2024-11-05'}\n"
+        "    else:\n"
+        "        lists += 1\n"
+        "        studios = [] if lists <= %d else [{'id': 'a', 'name': 'Place1'}]\n"
+        "        result = {'content': [{'type': 'text', 'text': json.dumps({'studios': studios})}]}\n"
+        "    print(json.dumps({'jsonrpc': '2.0', 'id': msg['id'], 'result': result}), flush=True)\n"
+        % empty_answers)
+    return fake
+
+
+@check("live: a new Session waits for Studio to register instead of reporting 0 Studios")
+def _():
+    from rbforge import live
+    with tempdir() as d:
+        fake = _fake_mcp_with_late_studio(d, 3)
+        orig = live.studio_mod.mcp_command
+        live.studio_mod.mcp_command = lambda: [sys.executable, fake]
+        try:
+            with live.Session(timeout=20) as s:
+                assert s.studio_id == "a", s.studio_id
+            with live.Session(studio_id="a", timeout=20) as s:   # an explicit id waits too
+                assert s.studio_id == "a"
+        finally:
+            live.studio_mod.mcp_command = orig
+
+
+@check("live: a Studio that never registers fails after the wait, and says how long it waited")
+def _():
+    from rbforge import live
+    from rbforge.errors import ForgeError
+    with tempdir() as d:
+        fake = _fake_mcp_with_late_studio(d, 10 ** 6)
+        orig = live.studio_mod.mcp_command
+        old_wait = os.environ.get("RBFORGE_STUDIO_WAIT")
+        os.environ["RBFORGE_STUDIO_WAIT"] = "1"
+        live.studio_mod.mcp_command = lambda: [sys.executable, fake]
+        try:
+            try:
+                live.Session(timeout=20)
+            except ForgeError as exc:
+                assert exc.code == "RBF-STUDIO-001" and "waited" in exc.message, exc
+            else:
+                raise AssertionError("no Studio was accepted")
+        finally:
+            live.studio_mod.mcp_command = orig
+            if old_wait is None:
+                os.environ.pop("RBFORGE_STUDIO_WAIT", None)
+            else:
+                os.environ["RBFORGE_STUDIO_WAIT"] = old_wait
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed, %d skipped" % (len(PASS), len(FAIL), len(SKIPPED)))
     for name, why in SKIPPED:

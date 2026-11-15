@@ -50,7 +50,7 @@ class Session:
             self.request("initialize", {"protocolVersion": studio_mod.PROTOCOL_VERSION, "capabilities": {},
                                         "clientInfo": {"name": "rbforge-live", "version": "1"}})
             self._send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
-            self.studio_id = studio_id or self._only_studio()
+            self.studio_id = self._pick_studio(studio_id)
         except BaseException:
             # The constructor failed, so `with` never reaches __exit__: without this, every
             # "two Studios open, pass --studio" answer left a StudioMCP process running.
@@ -105,14 +105,41 @@ class Session:
             raise ForgeError("RBF-STUDIO-002", text.strip()[:600] or "tool error", hint=hint)
         return text
 
-    def _only_studio(self):
-        studios = studio_mod._parse_studios({"result": self.request(
+    def _list_studios(self):
+        return studio_mod._parse_studios({"result": self.request(
             "tools/call", {"name": "list_roblox_studios", "arguments": {}})}) or []
+
+    def _pick_studio(self, wanted=None):
+        """The Studio to address: `wanted`, or the only one open.
+
+        A freshly started StudioMCP lists no Studio until Studio registers it - measured 2.7-3.6 s on
+        Windows, against a first answer at ~0.5 s. Asking once made every command that opened its own
+        session fail with "0 Studio instances open" while Studio sat at "MCP Ready", so the list is
+        polled until it answers (RBFORGE_STUDIO_WAIT seconds, default 15).
+        """
+        try:
+            wait = float(os.environ.get("RBFORGE_STUDIO_WAIT") or 15)
+        except ValueError:
+            wait = 15.0
+        deadline = time.time() + wait
+        studios = self._list_studios()
+        while (not studios or (wanted and not any(s.get("id") == wanted for s in studios))) \
+                and time.time() < deadline:
+            time.sleep(0.25)
+            studios = self._list_studios()
+        listing = "; ".join("%s = %s" % (s.get("id"), s.get("name")) for s in studios)
+        if wanted:
+            if any(s.get("id") == wanted for s in studios):
+                return wanted
+            raise ForgeError("RBF-STUDIO-001", "Studio %s is not connected (waited %.0fs)" % (wanted, wait),
+                             hint=listing or "open the place in Studio and enable the MCP server")
         if len(studios) == 1:
             return studios[0].get("id")
+        if not studios:
+            raise ForgeError("RBF-STUDIO-001", "no Studio registered with the MCP server (waited %.0fs)" % wait,
+                             hint="open the place in Studio and enable the MCP server; `rbforge doctor`")
         raise ForgeError("RBF-STUDIO-001", "%d Studio instances open; pass --studio" % len(studios),
-                         hint="; ".join("%s = %s" % (s.get("id"), s.get("name")) for s in studios) or
-                              "open the place in Studio and enable the MCP server")
+                         hint=listing)
 
     def luau(self, code, datamodel="Edit"):
         return self.call("execute_luau", {"code": code, "datamodel_type": datamodel, "studio_id": self.studio_id})
