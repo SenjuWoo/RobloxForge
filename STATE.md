@@ -244,6 +244,8 @@ rbforge.cmd <command>              # same CLI, from the checkout
 ## Log
 
 - 2026-11-15 — 0.17.1: audit fixes (see Done), 202 tests green.
+  Released v0.17.1 from 3fc5aab (CI + CodeQL green on that SHA, 0 open alerts); published zip
+  sha256-verified, smoke-tested, doctor run from it; skills updated and `current` in all five agents.
 
 - 2026-11-01 — 0.3.0: $0 guarantee (`free-stack.md`), beginner playbook,
   `rbforge new`, plugin detection with free alternatives, procedural prop kits,
