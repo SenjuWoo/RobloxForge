@@ -42,7 +42,8 @@ def installed_version():
     if not shutil.which("luau-lsp"):
         return None
     try:
-        out = subprocess.run(["luau-lsp", "--version"], capture_output=True, text=True, timeout=20)
+        out = subprocess.run(["luau-lsp", "--version"], capture_output=True, stdin=subprocess.DEVNULL,
+                             text=True, encoding="utf-8", errors="replace", timeout=20)
     except (OSError, subprocess.SubprocessError):
         return None
     text = (out.stdout or out.stderr).strip().splitlines()

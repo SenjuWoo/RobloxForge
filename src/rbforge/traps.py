@@ -120,8 +120,10 @@ def scan_text(rel, text):
         add("T023", "medium", n,
             "the engine also owns the local head's LocalTransparencyModifier; restoring a saved value leaves the head invisible",
             "restore hidden parts to 0 explicitly and never touch HumanoidRootPart", REF + "animation.md")
-    if re.search(r"ImageTransparency\s*=\s*1\b", text) and "IsLoaded" in text:
-        n = next(i for i, l in enumerate(lines, 1) if re.search(r"ImageTransparency\s*=\s*1\b", l))
+    m = re.search(r"ImageTransparency\s*=\s*1\b", text)
+    if m and "IsLoaded" in text:
+        # Line of the match itself: the assignment may span lines, so no single line has to match.
+        n = text.count("\n", 0, m.start()) + 1
         add("T014", "low", n, "an ImageLabel at ImageTransparency = 1 never reports IsLoaded",
             "start the fade at 0.99 or check ContentProvider:GetAssetFetchStatus", REF + "live-iteration.md")
     return findings

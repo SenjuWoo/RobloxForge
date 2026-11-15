@@ -37,11 +37,12 @@ def _cap(status, note=None, **extra):
     return entry
 
 
-def compute(studio_snapshot=None, probe=True, host_vision=None):
+def compute(studio_snapshot=None, probe=True, host_vision=None, toolchain=None):
     """Build the matrix from real evidence.
 
     host_vision: whether the *calling model* can actually look at an image.
     RobloxForge cannot detect this, so it stays None unless the caller says.
+    toolchain: a `tooling.status()` result the caller already has (each call spawns every tool).
     """
     snap = studio_snapshot or studio_mod.snapshot(probe=probe)
     mcp = snap.get("mcp_probe") or {}
@@ -131,7 +132,8 @@ def compute(studio_snapshot=None, probe=True, host_vision=None):
         "available", "filesystem projects; live-only places need the official MCP")
 
     # --- optional toolchain ---------------------------------------------
-    for name, info in tooling_mod.status().items():
+    tools = toolchain if toolchain is not None else tooling_mod.status()
+    for name, info in tools.items():
         if info["found"]:
             matrix[name] = _cap("installed", "%s at %s" % (info.get("version") or "version unknown",
                                                            info["path"]))
@@ -140,7 +142,7 @@ def compute(studio_snapshot=None, probe=True, host_vision=None):
                                             "source-controlled workflow")
 
     matrix["source_controlled_workflow"] = (
-        _cap("installed", "rojo present") if tooling_mod.status().get("rojo", {}).get("found")
+        _cap("installed", "rojo present") if tools.get("rojo", {}).get("found")
         else _cap("optional", "install rojo to sync a filesystem project into Studio"))
 
     return matrix

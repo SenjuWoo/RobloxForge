@@ -52,7 +52,7 @@ ANCHOR_WINDOW = 600
 def _run(argv, cwd, timeout=180):
     """Run one check command. Returns (code, output). Never raises."""
     try:
-        done = subprocess.run(argv, cwd=cwd, capture_output=True, text=True,
+        done = subprocess.run(argv, cwd=cwd, capture_output=True, stdin=subprocess.DEVNULL, text=True,
                               timeout=timeout, errors="replace")
         return done.returncode, ((done.stdout or "") + (done.stderr or "")).strip()
     except (OSError, subprocess.SubprocessError) as exc:
@@ -79,13 +79,18 @@ def _rel(root, path):
 def changed_files(root, base_ref="HEAD"):
     """Luau files changed since `base_ref` (default HEAD means the working tree), plus untracked."""
     try:
-        done = subprocess.run(["git", "-C", root, "diff", "--name-only", "--diff-filter=ACMR", base_ref],
-                              capture_output=True, text=True, timeout=30)
+        # --relative: `git diff` names files from the repository top, so a project in a subfolder of
+        # a repo joined those names onto its own root, found nothing, and skipped format/lint.
+        # ls-files already answers relative to -C.
+        done = subprocess.run(["git", "-C", root, "diff", "--name-only", "--relative", "--diff-filter=ACMR",
+                               base_ref], capture_output=True, stdin=subprocess.DEVNULL, text=True,
+                              encoding="utf-8", errors="replace", timeout=30)
         others = subprocess.run(["git", "-C", root, "ls-files", "--others", "--exclude-standard"],
-                                capture_output=True, text=True, timeout=30)
+                                capture_output=True, stdin=subprocess.DEVNULL, text=True,
+                                encoding="utf-8", errors="replace", timeout=30)
     except (OSError, subprocess.SubprocessError):
         return None
-    if done.returncode != 0:
+    if done.returncode != 0 or others.returncode != 0:
         return None
     names = [n.strip() for n in (done.stdout + "\n" + others.stdout).splitlines() if n.strip()]
     files = []
@@ -216,10 +221,11 @@ def rung_static(root, changed=None):
         rung["checks"].append({"id": "luau-lsp", "status": "skip",
                                "detail": STATIC_TOOLS["luau-lsp"]})
     elif not defs:
+        # discover() says why (a stale cached file is not the same fix as no file at all).
         rung["checks"].append({
             "id": "luau-lsp", "status": "skip",
-            "detail": "no Roblox type definitions: run `rbforge types fetch` (offline: set "
-                      "RBFORGE_LUAU_DEFINITIONS to a globalTypes.d.luau)"})
+            "detail": defs_source or ("no Roblox type definitions: run `rbforge types fetch` (offline: "
+                                      "set RBFORGE_LUAU_DEFINITIONS to a globalTypes.d.luau)")})
     else:
         argv = ["luau-lsp", "analyze", "--platform=roblox", "--definitions=@roblox=%s" % defs,
                 "--ignore=artifacts/**", "--ignore=backups/**", "--ignore=.git/**"]

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.17.1 - 2026-11-15
+
+A whole-project audit. Every fix below was reproduced first and has a test that failed before it.
+
+### Fixed
+- **`agent connect` / `agent disconnect` crashed when Hermes or Claude Code was not installed**
+  (`TypeError` from a `None` executable), and with `all` the crash stopped the loop - so `Uninstall.ps1`
+  left every later agent wired. An absent agent is now reported as `skipped` and the rest carry on; Codex
+  and Grok are skipped when their config folder does not exist instead of raising on a missing directory.
+- A repeat `agent connect` is now a no-op for Hermes and Claude Code (it re-ran `mcp add`).
+- `~/.claude.json` and the Codex/Grok configs are replaced atomically after a backup, never rewritten in
+  place while the agent may be writing them.
+- **`docs update` deleted the creator-docs cache before re-cloning it**, so an offline update of a cache
+  without `.git` destroyed it. The clone now lands in a staging folder and is swapped in only when it
+  succeeded; a failed refresh keeps the old cache and records the error.
+- **Non-ASCII text on Windows without UTF-8 mode**: the MCP server decoded requests with the ANSI code
+  page (`jogo_é` arrived as `jogo_Ã©`, so every path tool reported "not found"), and CLI text output
+  raised `UnicodeEncodeError` on a path outside cp1252. stdio is UTF-8 in both now.
+- `check --changed-only` found no changed files in a project nested inside a git repository (git printed
+  repo-relative paths), so format and lint silently skipped.
+- `long_string` closed early on text ending in `]` plus the bracket level's `=` signs, so `push` and
+  `servertest` could send broken Luau.
+- The traps review crashed (`StopIteration`) on an `ImageTransparency =` assignment split across lines.
+- The security review reported `.Health == 0` and `coins == 5` comparisons as client writes.
+- `rbforge types fetch` failing offline exits 4 (dependency), like every other download, instead of 1.
+- A typecheck skipped because the cached definitions no longer match the pin now says so, instead of
+  "no definitions".
+- `servertest` rejects an attribute name Roblox would refuse before opening Studio, instead of waiting out
+  the timeout.
+
+### Changed
+- `doctor` asks the agent CLIs concurrently and probes the toolchain once per report (it ran every tool's
+  `--version` three times). `--no-probe` went from 15.6 s to 5.2 s on the measuring machine.
+- Child processes get a closed stdin and decode output as UTF-8 with replacement, so a tool cannot read the
+  MCP server's request stream or raise a decode error past its caller.
+- `rbforge.cmd` in the checkout runs the CLI, so the documented `rbforge ...` commands work on a machine
+  where nothing else put `rbforge` on PATH; it ships in the release archive.
+- `Uninstall.ps1` names the state folder (`%LOCALAPPDATA%\RobloxForge`), keeps it by default and removes it
+  with `-RemoveState`. The README and the old uninstall message said that state lived in the checkout.
+- The installers require Python 3.11 (the standard-library `tomllib`); they said 3.10.
+
 ## 0.17.0 - 2026-11-14
 
 A full audit of the CLI, the MCP server and the live Studio path, plus two ideas taken from the Roqer

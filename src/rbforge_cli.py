@@ -23,7 +23,18 @@ def _fail(exc):
     return exc.exit_code
 
 
+def _utf8_output():
+    """Print UTF-8 whatever the console code page: a path outside cp1252 (a Cyrillic user name)
+    used to raise UnicodeEncodeError from `print` and turn a finished check into a traceback."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv=None):
+    _utf8_output()
     parser = argparse.ArgumentParser(prog="rbforge",
                                      description="RobloxForge - AI-operable Roblox development workbench")
     sub = parser.add_subparsers(dest="cmd")
@@ -156,8 +167,6 @@ def _dispatch(args):
     if args.cmd == "doctor":
         report = doctor.collect(probe=not args.no_probe,
                                 host_vision={"yes": True, "no": False}.get(args.vision))
-        if args.no_probe:
-            pass  # render handles missing probe gracefully
         print(doctor.render(report))
         return ExitCode.OK
 

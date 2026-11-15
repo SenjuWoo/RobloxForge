@@ -17,7 +17,10 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
+import sys
+import tempfile
 import time
 
 from . import paths
@@ -86,8 +89,10 @@ def _git():
 
 
 def _run_git(args, cwd=None, timeout=600):
-    return subprocess.run([_git()] + args, cwd=cwd, capture_output=True,
-                          text=True, timeout=timeout)
+    # stdin is closed so git can never prompt (or read the MCP server's JSON-RPC stream), and
+    # localized git messages cannot raise UnicodeDecodeError past the callers' error handling.
+    return subprocess.run([_git()] + args, cwd=cwd, capture_output=True, stdin=subprocess.DEVNULL,
+                          text=True, encoding="utf-8", errors="replace", timeout=timeout)
 
 
 def _git_commit(cache):
@@ -132,24 +137,61 @@ def _cache_is_lean(cache):
     return not os.path.isdir(os.path.join(cache, CONTENT_SUBDIR, "assets"))
 
 
+def _rmtree(path):
+    """Remove a tree that may hold git's read-only object files (Windows refuses to delete those)."""
+    def retry(func, target, _exc):
+        try:
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+        except OSError:
+            pass
+    if os.path.isdir(path):
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(path, onexc=retry)
+        else:  # 3.11: onexc does not exist yet
+            shutil.rmtree(path, onerror=retry)
+
+
 def _clone_git(cache):
-    os.makedirs(os.path.dirname(cache), exist_ok=True)
-    if os.path.isdir(cache):
-        shutil.rmtree(cache, ignore_errors=True)
-    done = _run_git(["clone", "--filter=blob:none", "--no-checkout", "--depth", "1",
-                     "--single-branch", "--branch", BRANCH, REPO_URL, cache])
-    if done.returncode != 0:
-        raise ForgeError("RBF-DOCS-002", "git clone of creator-docs failed",
-                         hint="check network access to github.com",
-                         stderr=done.stderr.strip()[-800:])
-    _run_git(["sparse-checkout", "init", "--no-cone"], cwd=cache, timeout=120)
-    _write_sparse(cache)
-    done = _run_git(["checkout", BRANCH], cwd=cache)
-    if done.returncode != 0:
-        raise ForgeError("RBF-DOCS-002", "sparse checkout of creator-docs failed",
-                         hint="check disk space and that the cache path is writable",
-                         stderr=done.stderr.strip()[-800:])
-    return {"method": "git-sparse", "commit": _git_commit(cache)}
+    """Clone into a staging folder and swap it in only once the checkout succeeded.
+
+    The old cache is moved aside, never deleted first: an offline or failed clone leaves the
+    working cache exactly as it was.
+    """
+    parent = os.path.dirname(cache)
+    os.makedirs(parent, exist_ok=True)
+    stage = tempfile.mkdtemp(prefix=".creator-docs-stage-", dir=parent)
+    try:
+        done = _run_git(["clone", "--filter=blob:none", "--no-checkout", "--depth", "1",
+                         "--single-branch", "--branch", BRANCH, REPO_URL, stage])
+        if done.returncode != 0:
+            raise ForgeError("RBF-DOCS-002", "git clone of creator-docs failed",
+                             hint="check network access to github.com; the existing cache was kept",
+                             stderr=done.stderr.strip()[-800:])
+        _run_git(["sparse-checkout", "init", "--no-cone"], cwd=stage, timeout=120)
+        _write_sparse(stage)
+        done = _run_git(["checkout", BRANCH], cwd=stage)
+        if done.returncode != 0:
+            raise ForgeError("RBF-DOCS-002", "sparse checkout of creator-docs failed",
+                             hint="check disk space and that the cache path is writable",
+                             stderr=done.stderr.strip()[-800:])
+        commit = _git_commit(stage)
+        old = None
+        if os.path.isdir(cache):
+            old = "%s.old-%d" % (cache, os.getpid())
+            try:
+                os.replace(cache, old)
+            except OSError as exc:
+                raise ForgeError("RBF-DOCS-004", "cannot replace the creator-docs cache: %s" % exc,
+                                 hint="close anything holding files in %s and retry" % cache)
+        os.replace(stage, cache)
+        stage = None
+        if old:
+            _rmtree(old)
+    finally:
+        if stage:
+            _rmtree(stage)
+    return {"method": "git-sparse", "commit": commit}
 
 
 def _pull_git(cache):
@@ -198,10 +240,14 @@ def ensure(refresh=False, allow_network=True):
         # A checkout made without our sparse rules; replace it rather than
         # leave gigabytes of assets on disk.
         if allow_network and _git():
-            write_state(**_clone_git(cache))
-            write_state(fetched_at=time.time(), last_refresh_error=None)
-            build_index(force=True)
-            return freshness()
+            try:
+                write_state(fetched_at=time.time(), last_refresh_error=None, **_clone_git(cache))
+                build_index(force=True)
+                return freshness()
+            except ForgeError as exc:
+                # The clone failed, and _clone_git kept the old cache: use it and say so.
+                write_state(last_refresh_error={"code": exc.code, "message": exc.message,
+                                                "at": time.time()})
 
     if not cache_present():
         if not allow_network:

@@ -18,7 +18,10 @@ param(
   # hermes | claude | codex | grok | kimi -- or 'all' (default).
   [string]$Agent = 'all',
   # Report what would be removed and change nothing.
-  [switch]$WhatIfOnly
+  [switch]$WhatIfOnly,
+  # Also delete RobloxForge's machine state (docs cache, receipts, push ledger, type
+  # definitions, config backups). Off by default: receipts and backups are evidence.
+  [switch]$RemoveState
 )
 $ErrorActionPreference = 'Stop'
 
@@ -35,8 +38,13 @@ if (-not $py) {
   exit 4
 }
 
+# Machine state lives outside the checkout (RBFORGE_HOME, default %LOCALAPPDATA%\RobloxForge).
+# Ask the package for the path instead of guessing it.
+$stateDir = (& $py.Source -c "import sys; sys.path.insert(0, sys.argv[1]); from rbforge import paths; print(paths.home())" (Join-Path $root 'src')).Trim()
+
 Write-Host '== RobloxForge uninstall =='
 Write-Host "checkout: $root"
+Write-Host "state   : $stateDir"
 Write-Host ''
 
 Write-Host 'Currently wired:'
@@ -79,8 +87,19 @@ if ($failed) {
 
 Write-Host 'Agent wiring removed.'
 Write-Host ''
+if ($RemoveState) {
+  # Only the directory the package itself reports, and only when it is not the checkout.
+  if ($stateDir -and (Test-Path -LiteralPath $stateDir -PathType Container) -and
+      ((Resolve-Path -LiteralPath $stateDir).Path -ne (Resolve-Path -LiteralPath $root).Path)) {
+    Remove-Item -LiteralPath $stateDir -Recurse -Force
+    Write-Host "State removed: $stateDir"
+  }
+} else {
+  Write-Host 'Machine state was kept (docs cache, receipts, push ledger, config backups):'
+  Write-Host "    $stateDir"
+  Write-Host 'Delete it with -RemoveState, or by hand.'
+}
+Write-Host ''
 Write-Host 'The checkout itself was NOT deleted. Remove it yourself when you are ready:'
 Write-Host "    $root"
-Write-Host ''
-Write-Host 'The creator-docs cache, if you fetched one, lives with the checkout and goes with it.'
 exit 0

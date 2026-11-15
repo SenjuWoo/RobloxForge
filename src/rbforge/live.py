@@ -25,7 +25,8 @@ from .errors import ForgeError
 def long_string(text):
     """A Luau long-bracket literal that holds `text` exactly."""
     level = 1
-    while ("]" + "=" * level + "]") in text:
+    # `text + "]"`: text ending in `]=` plus the closer `]=]` reads as `]=]=]`, which closes early.
+    while ("]" + "=" * level + "]") in text + "]":
         level += 1
     eq = "=" * level
     # Luau drops a newline right after the opening bracket, so add one to keep the text exact.
@@ -614,14 +615,28 @@ def run_probe(name, overrides=None, datamodel=None, studio_id=None):
         return {"probe": name, "datamodel": dm, "output": s.luau(r["code"], dm)}
 
 
+def _quote(name):
+    """A validated attribute name as a Luau string literal (only [A-Za-z0-9_], so nothing to escape)."""
+    return '"%s"' % name
+
+
 def _lua_code_only(src):
     """Executable text only: comments and string literals removed (see `luau_text.code_only`)."""
     return luau_text.code_only(src)
 
 
+# Roblox attribute names: ASCII letters, digits and underscore, at most 100 characters, and the RBX
+# prefix is reserved. Anything else makes SetAttribute throw inside the test, which the runner could
+# only report as a TIMEOUT after the full wait.
+_ATTR_NAME = re.compile(r"^(?!RBX)[A-Za-z0-9_]{1,100}$")
+
+
 def server_test(path, attr, timeout=120, studio_id=None):
     """Run a test file as a temporary server Script in a running Play session, so it shares the game's module
     cache (execute_luau has its own). The test must set workspace:SetAttribute(attr, "PASS ..." | "FAIL ...")."""
+    if not isinstance(attr, str) or not _ATTR_NAME.match(attr):
+        raise ForgeError("RBF-ARG-002", "%r is not a valid Roblox attribute name" % (attr,),
+                         hint="use letters, digits and underscores (max 100), not starting with RBX")
     src = _read_source(path, "test file").replace("\r\n", "\n")
     # A test that never writes the attribute cannot report: the runner would sit for the full timeout
     # and call it TIMEOUT, which hides the real mistake. Only executable text counts - a mention in a
@@ -637,15 +652,15 @@ def server_test(path, attr, timeout=120, studio_id=None):
                       'workspace:SetAttribute("%s", "PASS ...") or "FAIL ..."' % attr,
         }
     code = (
-        "workspace:SetAttribute(%s, nil)\n" % json.dumps(attr)
+        "workspace:SetAttribute(%s, nil)\n" % _quote(attr)
         + "local s = Instance.new('Script')\n"
         "s.Name = 'RbforgeServerTest'\n"
         "s.Source = %s\n" % long_string(src)
         + "s.Parent = game:GetService('ServerScriptService')\n"
         "local t0 = os.clock()\n"
-        "while workspace:GetAttribute(%s) == nil and os.clock() - t0 < %d do task.wait(0.5) end\n" % (json.dumps(attr), timeout)
+        "while workspace:GetAttribute(%s) == nil and os.clock() - t0 < %d do task.wait(0.5) end\n" % (_quote(attr), timeout)
         + "s:Destroy()\n"
-        "return tostring(workspace:GetAttribute(%s) or 'TIMEOUT')\n" % json.dumps(attr)
+        "return tostring(workspace:GetAttribute(%s) or 'TIMEOUT')\n" % _quote(attr)
     )
     with Session(studio_id, timeout=timeout + 30) as s:
         out = s.luau(code, "Server")

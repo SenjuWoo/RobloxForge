@@ -376,7 +376,19 @@ def handle(req):
             "error": {"code": -32601, "message": "method not found: %r" % method}}
 
 
+def _utf8_stdio():
+    """MCP stdio is UTF-8 by spec. Without UTF-8 mode, Windows Python decodes a pipe with the ANSI
+    code page, which turned `C:\\Users\\Jos\u00e9` into `Jos\u00c3\u00a9` and every path-taking tool into
+    a not-found error."""
+    for stream, errors in ((sys.stdin, "replace"), (sys.stdout, "strict")):
+        try:
+            stream.reconfigure(encoding="utf-8", errors=errors)
+        except (AttributeError, ValueError):
+            pass
+
+
 def serve():
+    _utf8_stdio()
     for line in sys.stdin:
         line = line.strip()
         if not line:

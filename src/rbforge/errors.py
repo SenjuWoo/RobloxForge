@@ -8,6 +8,7 @@ Codes are stable strings; agents may branch on them.
     RBF-DOCS-*     creator-docs cache
     RBF-PROJECT-*  project detection / analysis
     RBF-TOOLS-*    optional Luau toolchain
+    RBF-TYPES-*    Roblox type definitions for luau-lsp (download / digest)
     RBF-VERIFY-*   verification contract / receipts
     RBF-AGENT-*    agent config + skill installation
     RBF-ARG-*      caller supplied bad input
@@ -31,6 +32,7 @@ _EXIT_BY_PREFIX = {
     "RBF-DOCS": ExitCode.DEPENDENCY,
     "RBF-PROJECT": ExitCode.NOT_FOUND,
     "RBF-TOOLS": ExitCode.DEPENDENCY,
+    "RBF-TYPES": ExitCode.DEPENDENCY,
     "RBF-VERIFY": ExitCode.VALIDATION,
     "RBF-AGENT": ExitCode.GENERIC,
 }

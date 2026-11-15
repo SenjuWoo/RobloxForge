@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.17.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.17.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -19,12 +19,14 @@ claim checkable.
 | CLI surface | `check <path>`, `check --root <path>` and `check <path> --scope static` are run from a cwd that is **not** the project, and each report's `root` and `rungs_run` are asserted; a positional/`--root` conflict exits 2 (tests `cli: ...`) |
 | Luau semantic examples | extracted from `typing-luau.md` and re-analysed by pinned luau-lsp 1.70.1; CI job `luau-semantics` runs them with `RBFORGE_REQUIRE_LUAU_LSP=1` |
 | Diagnostic map | keyed by the whole project-relative path, so `src/Server/init.luau` and `tests/Server/init.luau` are two files; containment is `commonpath`, so a sibling `proj2` is not inside `proj` (tests `check: same-named files at different depths...`, `check: a sibling directory...`) |
-| Offline gate (`check`, traps, probes, review) | 187 automated tests + fixture projects |
+| Offline gate (`check`, traps, probes, review) | 202 automated tests + fixture projects |
 | Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
 | Push guard (0.17.0) | the exact push code is executed under Lune against `tests/lune/mock_datamodel.luau`: new script, first push (backup), unchanged ledger (no backup), Studio edit (`CONFLICT`, source untouched), `force` (backup + write), other place (first-push rules); Luau stamp equals Python `adler` |
 | MCP wire | negotiation (2025-06-18/2025-03-26/2024-11-05), parse error -32700, non-object arguments -32602, annotations on every tool, catalog <= 10,600 chars |
 | Receipts / observations | unit tests, including omission, mismatch, expiry, replay and tamper cases |
 | Skill installer | 31 tests: manifest path traversal refused, foreign/legacy/modified dirs preserved, empty+corrupt manifests never `current`, transactional staging and activation rollback, backup-name uniqueness, per-profile `current`, backup instead of delete, preflight abort, idempotent re-run, root dedupe; live across 10 Hermes roots + claude/codex/grok |
+| Clean-machine lifecycle (0.17.1) | sandboxed profile (temp USERPROFILE/LOCALAPPDATA/RBFORGE_HOME, no agent CLIs on PATH, no UTF-8 mode): `Install.ps1` exit 0 and 25 skills into `~/.claude/skills`; `agent disconnect all` skips all five agents, exit 0; `Uninstall.ps1 -RemoveState` exit 0, 0 skills left, state dir removed |
+| Non-ASCII stdio (0.17.1) | MCP request with a `jogo_é_п` path and CLI text output for a Cyrillic path, both run with `-X utf8=0` |
 | Release artifact | `smoke_artifact.py` checks all 25 skills, frontmatter and the 18-tool MCP handshake |
 | Live Studio: push + readback | disposable place, 2026-11-06: `synced` digests matched, ModuleScript/Script classes correct |
 | Live Studio: hierarchy + `servePlaceIds` | `HIERARCHY … is Folder, expects Model`; `RBF-STUDIO-003`; `RBF-ARG-002` |
@@ -53,6 +55,17 @@ claim checkable.
    through the documented API.
 
 ## Done (verified)
+
+- 0.17.1 (2026-11-15): whole-project audit; every fix reproduced first and covered by a test that failed
+  before it. Agent connect/disconnect no longer crash on an absent Hermes/Claude (Uninstall left later agents
+  wired), repeat connect is a no-op, agent configs are replaced atomically; `docs update` no longer deletes the
+  cache before a clone succeeded; UTF-8 stdio in the MCP server and CLI; `--changed-only` in a repo
+  subfolder; `long_string` early close; traps T014 crash; security-review `==` false positives; `RBF-TYPES`
+  exit 4; stale-definitions skip reason; servertest attribute validation; doctor `--no-probe` 15.6 s -> 5.2 s
+  (concurrent agent status, one toolchain probe); `rbforge.cmd` launcher; `Uninstall.ps1 -RemoveState` and
+  the true state location in README/uninstall; installers require Python 3.11. 202 tests.
+  Note for test authors: an agent-wiring test must run under `_fake_user_home()` and `_isolated_home()` -
+  one that did not edited the real `~/.claude.json` during this audit (reverted entry by entry).
 
 - 0.17.0: audit fixes (StudioMCP leak on a failed Session, `check` silently auditing zero files under a
   `*Packages*` path, comment/string false positives, missing-directory `incomplete`, `Foo.spec.luau` pushed into
@@ -223,11 +236,14 @@ claim checkable.
 python src\rbforge_cli.py doctor
 python src\rbforge_cli.py check . [--scope static unit structure] [--json]
 python src\rbforge_cli.py scaffold <dir> --genre obby
-python tests\run_tests.py
+python tests\run_tests.py         # RBFORGE_TEST_ONLY=<substring> runs a subset locally
 python mcp_server\server.py        # stdio MCP, 18 tools
+rbforge.cmd <command>              # same CLI, from the checkout
 ```
 
 ## Log
+
+- 2026-11-15 — 0.17.1: audit fixes (see Done), 202 tests green.
 
 - 2026-11-01 — 0.3.0: $0 guarantee (`free-stack.md`), beginner playbook,
   `rbforge new`, plugin detection with free alternatives, procedural prop kits,

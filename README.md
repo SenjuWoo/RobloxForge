@@ -79,14 +79,21 @@ Or the scriptable lifecycle -- same work, no prompts, real exit codes:
 .\Update.ps1                     # git pull, then refresh the agent-side copies
 .\Uninstall.ps1                  # remove the wiring RobloxForge put in your agents
 .\Uninstall.ps1 -WhatIfOnly      # show what would be removed, change nothing
+.\Uninstall.ps1 -RemoveState     # also delete the machine state listed below
 ```
 
-RobloxForge runs from this checkout -- nothing is copied to `%LOCALAPPDATA%`.
-So `Uninstall.ps1` does the part that deleting the folder cannot: it un-wires
-the agents first, while the CLI that knows what it wrote still exists. Delete
-the folder without it and each agent keeps a skill for a tool that is gone and
-an MCP entry pointing at a path that no longer resolves. The checkout itself is
-left for you to remove.
+The code runs from this checkout; nothing is installed elsewhere. What it
+writes lives in one state folder outside the checkout, `%LOCALAPPDATA%\RobloxForge`
+(override with `RBFORGE_HOME`): the creator-docs cache, verification receipts,
+the push ledger, cached type definitions and backups of agent configs it edited.
+`Uninstall.ps1` un-wires the agents first, while the CLI that knows what it wrote
+still exists; delete the folder without it and each agent keeps a skill for a
+tool that is gone and an MCP entry pointing at a path that no longer resolves.
+It keeps the state folder unless you pass `-RemoveState`, and leaves the
+checkout for you to remove.
+
+`rbforge` below is `rbforge.cmd` in the checkout: run it from there, add the
+folder to `PATH`, or call `python src\rbforge_cli.py` directly. Python 3.11+.
 
 ```
 rbforge new mygame --genre obby --premise "dodge lasers and reach the end"
@@ -157,7 +164,7 @@ docs > verified community practice > model memory.
 | `src/rbforge/mapkit.py` | optional adapter for an external map prover: discovers it, checks its deps, returns its own report (never touches Studio) |
 | `mcp_server/server.py` | 18-tool MCP server (doctor, capabilities, docs, check, plugins, assets, planning, reviews, receipts, probes, traps, evidence) |
 | `skills/` | 25 agent skills (2 first-party + 23 adopted MIT topic skills), installed into Hermes/Claude/Codex/Grok/Kimi |
-| `tests/run_tests.py` | 187 checks, no Roblox required |
+| `tests/run_tests.py` | 202 checks, no Roblox required |
 
 Register the MCP server manually (all agents, disabled) instead:
 
@@ -175,7 +182,7 @@ it. Whenever push replaces a source it did not write itself, the Studio copy is 
 
 ## Status
 
-0.17.0. Only what was observed is listed as verified.
+0.17.1. Only what was observed is listed as verified.
 
 | Area | Status |
 |---|---|

@@ -89,8 +89,13 @@ def _isolated_home():
         shutil.rmtree(d, ignore_errors=True)
 
 
+_ONLY = os.environ.get("RBFORGE_TEST_ONLY")  # substring filter for a quick local loop; CI never sets it
+
+
 def check(name):
     def deco(fn):
+        if _ONLY and _ONLY not in name:
+            return fn
         try:
             # A test that cannot run its subject returns "skip: <why>". That is never counted as a
             # pass: an integration test that silently degrades to green is worse than no test.
@@ -4345,6 +4350,287 @@ def _():
     # The catalog is loaded into every Roblox session that enables this server. Growing it is an
     # explicit decision: raise this number in the same change, and say why.
     assert size <= 10600, "tools/list is %d chars; the budget is 10600" % size
+
+
+
+# ---------------------------------------------------------------- 0.17.1 audit regressions
+
+@contextlib.contextmanager
+def _fake_user_home():
+    """expanduser('~') -> a temp dir, so agent config tests never read or write the real profile."""
+    d = tempfile.mkdtemp(prefix="rbf-user-")
+    saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE")}
+    os.environ["HOME"] = os.environ["USERPROFILE"] = d
+    try:
+        yield d
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(d, ignore_errors=True)
+
+
+@check("agents: connect/disconnect skip an agent that is not installed and keep going")
+def _():
+    from rbforge import agents
+    old_which, old_run = agents.paths.which, agents._run
+    calls = []
+    agents.paths.which = lambda name: None          # no hermes, no claude on PATH
+    agents._run = lambda cmd, **k: calls.append(cmd) or type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    try:
+        with _fake_user_home() as home, _isolated_home():
+            os.makedirs(os.path.join(home, ".grok"))   # grok installed, codex not
+            out = agents.disconnect(None)
+            assert set(out) == set(agents.PROVIDERS), out
+            assert "skipped" in out["hermes"] and "skipped" in out["claude"], out
+            assert "skipped" in out["codex"], out
+            res = agents.connect(None)
+            assert "skipped" in res["hermes"] and "skipped" in res["codex"], res
+            assert not os.path.exists(os.path.join(home, ".codex")), "connect created a config for an absent agent"
+            assert "result" in res["grok"], res
+            cfg = os.path.join(home, ".grok", "config.toml")
+            assert agents._toml_enabled(open(cfg, encoding="utf-8").read(), "robloxforge") is False
+            assert calls == [], "a CLI was invoked for an agent that is not installed: %r" % calls
+    finally:
+        agents.paths.which, agents._run = old_which, old_run
+
+
+@check("agents: a repeat connect is a no-op for CLI-managed agents")
+def _():
+    from rbforge import agents
+    old_which, old_run = agents.paths.which, agents._run
+    calls = []
+
+    def fake_run(cmd, **k):
+        calls.append(cmd[1:3])
+        out = "robloxforge  python server.py" if cmd[1:3] == ["mcp", "list"] else ""
+        return type("R", (), {"returncode": 0, "stdout": out, "stderr": ""})()
+    agents.paths.which = lambda name: "/bin/" + name
+    agents._run = fake_run
+    try:
+        # Isolated homes: an implementation that regresses must not edit the real ~/.claude.json.
+        with _fake_user_home(), _isolated_home():
+            res = agents.connect(["claude", "hermes"])
+        assert "already" in res["claude"]["result"] and "already" in res["hermes"]["result"], res
+        assert ["mcp", "add"] not in calls, calls
+    finally:
+        agents.paths.which, agents._run = old_which, old_run
+
+
+@check("agents: ~/.claude.json is replaced atomically and keeps unrelated keys")
+def _():
+    from rbforge import agents
+    with _fake_user_home() as home, _isolated_home():
+        cfg = os.path.join(home, ".claude.json")
+        json.dump({"keep": 1, "projects": {"a": {}, "b": {"disabledMcpServers": ["robloxforge"]}}},
+                  open(cfg, "w", encoding="utf-8"))
+        n = agents._claude_disable_everywhere(cfg)
+        data = json.load(open(cfg, encoding="utf-8"))
+        assert n == 1 and data["keep"] == 1, (n, data)
+        assert data["projects"]["a"]["disabledMcpServers"] == ["robloxforge"]
+        assert data["projects"]["b"]["disabledMcpServers"] == ["robloxforge"]
+        assert not [f for f in os.listdir(home) if f.endswith(".tmp")], os.listdir(home)
+
+
+
+@check("docs: a refresh that cannot clone keeps the cache it had")
+def _():
+    from rbforge import docs, paths
+    with _isolated_home():
+        cache = paths.docs_cache_dir()
+        page = os.path.join(cache, "content", "en-us", "a.md")
+        os.makedirs(os.path.dirname(page))
+        open(page, "w", encoding="utf-8").write("# A\n")   # no .git: the re-clone path
+        old_url = docs.REPO_URL
+        docs.REPO_URL = os.path.join(tempfile.mkdtemp(), "missing.git")
+        try:
+            try:
+                docs.ensure(refresh=True)
+            except err_mod.ForgeError:
+                pass
+        finally:
+            docs.REPO_URL = old_url
+        assert os.path.isfile(page), "an offline refresh deleted the existing creator-docs cache"
+        assert docs.read_state().get("last_refresh_error"), "the failed refresh was not recorded"
+
+
+@check("mcp: non-ASCII arguments arrive intact without UTF-8 mode")
+def _():
+    import subprocess
+    with tempdir() as root:
+        proj = os.path.join(root, "jogo_é_п")
+        os.makedirs(proj)
+        req = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+               "params": {"name": "rb_check", "arguments": {"path": proj, "scope": ["structure"]}}}
+        env = dict(os.environ)
+        env.pop("PYTHONUTF8", None)
+        env.pop("PYTHONIOENCODING", None)
+        done = subprocess.run([sys.executable, "-X", "utf8=0", "mcp_server/server.py"],
+                              input=(json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"),
+                              capture_output=True, env=env, timeout=120)
+        reply = json.loads(done.stdout.decode("utf-8").splitlines()[0])
+        text = reply["result"]["content"][0]["text"]
+        assert not reply["result"].get("isError"), text[:300]
+        assert json.loads(text)["root"] == os.path.abspath(proj), text[:300]
+
+
+@check("cli: text output with a non-cp1252 path prints instead of raising")
+def _():
+    import subprocess
+    with tempdir() as root:
+        proj = os.path.join(root, "проект")
+        os.makedirs(proj)
+        env = dict(os.environ)
+        env.pop("PYTHONUTF8", None)
+        env.pop("PYTHONIOENCODING", None)
+        done = subprocess.run([sys.executable, "-X", "utf8=0", "src/rbforge_cli.py", "check", proj,
+                               "--scope", "structure"], capture_output=True, env=env, timeout=120)
+        err = done.stderr.decode("utf-8", "replace")
+        assert "Traceback" not in err, err[-400:]
+        assert "проект" in done.stdout.decode("utf-8"), done.stdout[:200]
+
+
+@check("check: --changed-only finds changes in a project nested inside a repository")
+def _():
+    import subprocess
+    from rbforge import check as check_mod
+    with tempdir() as repo:
+        proj = os.path.join(repo, "game")
+        os.makedirs(os.path.join(proj, "src"))
+        path = os.path.join(proj, "src", "a.luau")
+        open(path, "w").write("return 1\n")
+        git = ["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t"]
+        if subprocess.run(git + ["init", "-q"], capture_output=True).returncode != 0:
+            return "skip: git unavailable"
+        subprocess.run(git + ["add", "."], capture_output=True)
+        subprocess.run(git + ["commit", "-qm", "i"], capture_output=True)
+        open(path, "w").write("return 2\n")
+        open(os.path.join(proj, "src", "b.luau"), "w").write("return 3\n")
+        open(os.path.join(repo, "outside.luau"), "w").write("return 4\n")
+        got = sorted(os.path.basename(f) for f in check_mod.changed_files(proj))
+        assert got == ["a.luau", "b.luau"], got
+
+
+@check("live: long_string survives text that ends in a closing-bracket prefix")
+def _():
+    from rbforge import live
+    for text in ("x]=", "x]", "a]=]b]==", "]", "]=", "]]", "]=]]"):
+        lit = live.long_string(text)
+        level = lit.index("[", 1) - 1
+        close = "]" + "=" * level + "]"
+        body = lit[level + 2:]  # after the `[==[` opener; starts with the newline Luau drops
+        assert body.startswith("\n") and body.find(close) == len(body) - len(close), (text, lit)
+        assert body[1:-len(close)] == text, (text, lit)
+
+
+@check("traps: a multi-line ImageTransparency assignment does not crash the review")
+def _():
+    from rbforge import traps
+    found = traps.scan_text("ui.client.luau", "img.ImageTransparency =\n1\nif img.IsLoaded then end\n")
+    assert isinstance(found, list)
+
+
+@check("review: comparisons are not client writes")
+def _():
+    from rbforge import review
+    with tempdir() as root:
+        os.makedirs(os.path.join(root, "src"))
+        open(os.path.join(root, "src", "ui.client.luau"), "w").write(
+            "if hum.Health == 0 then end\nif coins == 5 then end\n")
+        res = review.security(path=root)
+        high = [f for f in res["findings"] if f["severity"] == "high"]
+        assert not high, high
+        open(os.path.join(root, "src", "cheat.client.luau"), "w").write("hum.Health = 0\ncoins += 5\n")
+        res = review.security(path=root)
+        whys = {f["why"] for f in res["findings"] if f["file"].endswith("cheat.client.luau")}
+        assert "client code sets Humanoid.Health directly" in whys, whys
+        assert "client code writes a currency-like variable" in whys, whys
+
+
+
+@check("errors: a failed type-definition download is a dependency failure (exit 4)")
+def _():
+    assert err_mod.ForgeError("RBF-TYPES-001", "x").exit_code == err_mod.ExitCode.DEPENDENCY
+
+
+@check("check: a stale cached definitions file is named as the reason the typecheck skipped")
+def _():
+    import shutil as _sh
+    from rbforge import check as check_mod, types as types_mod
+    if not _sh.which("luau-lsp"):
+        return "skip: luau-lsp not installed, the typecheck branch cannot run"
+    old_env = os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
+    try:
+        with _isolated_home(), tempdir() as root:
+            os.makedirs(types_mod.cache_dir(), exist_ok=True)
+            open(types_mod.cached_path(), "w").write("-- not the pinned file\n")
+            old_find = check_mod._find_definitions
+            check_mod._find_definitions = lambda r: None
+            try:
+                rung = check_mod.rung_static(root)
+            finally:
+                check_mod._find_definitions = old_find
+            lsp = [c for c in rung["checks"] if c["id"] == "luau-lsp"][0]
+            assert lsp["status"] == "skip" and "digest" in lsp["detail"], lsp
+    finally:
+        if old_env is not None:
+            os.environ["RBFORGE_LUAU_DEFINITIONS"] = old_env
+
+
+@check("live: servertest refuses an attribute name Roblox would reject, before opening Studio")
+def _():
+    from rbforge import live
+    with tempdir() as root:
+        test = os.path.join(root, "t.luau")
+        open(test, "w").write('workspace:SetAttribute("x", "PASS")\n')
+        for bad in ('a"b', "has space", "RBXThing", "", "x" * 101, "café"):
+            try:
+                live.server_test(test, bad)
+            except err_mod.ForgeError as exc:
+                assert exc.code == "RBF-ARG-002", exc.code
+            else:
+                raise AssertionError("accepted attribute name %r" % bad)
+
+
+@check("agents: status asks every agent CLI at once, not one after another")
+def _():
+    import time as _t
+    from rbforge import agents
+    saved = agents._hermes, agents._claude
+
+    def slow(name):
+        def factory():
+            def status(_cfg=None):
+                _t.sleep(0.6)
+                return {"configured": False}
+            return {"installed": lambda: True, "status": status, "connect": None, "disconnect": None}
+        return factory
+    agents._hermes, agents._claude = slow("hermes"), slow("claude")
+    try:
+        t0 = _t.time()
+        out = agents.status(["hermes", "claude"])
+        took = _t.time() - t0
+    finally:
+        agents._hermes, agents._claude = saved
+    assert list(out) == ["hermes", "claude"], out
+    assert took < 1.0, "agent status took %.2fs for two 0.6s probes" % took
+
+
+@check("doctor: the toolchain is probed once per report")
+def _():
+    from rbforge import doctor, tooling
+    calls = []
+    old = tooling.status
+    tooling.status = lambda: calls.append(1) or {"rojo": {"found": False, "purpose": "x"}}
+    try:
+        report = doctor.collect(probe=False)
+    finally:
+        tooling.status = old
+    assert len(calls) == 1, "tooling.status ran %d times" % len(calls)
+    assert report["toolchain"]["rojo"]["found"] is False
+    assert report["capabilities"]["rojo"]["status"] == "optional"
 
 
 if __name__ == "__main__":

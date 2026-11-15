@@ -209,8 +209,10 @@ def mcp_processes():
 def _process_names():
     try:
         if WINDOWS:
-            done = subprocess.run(["tasklist", "/fo", "csv", "/nh"],
-                                  capture_output=True, text=True, timeout=20)
+            # errors="replace": tasklist writes the OEM code page, Python decodes with ANSI, and a
+            # process name such as "Gr\u00fcn.exe" produced a byte cp1252 cannot decode.
+            done = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True,
+                                  stdin=subprocess.DEVNULL, text=True, errors="replace", timeout=20)
             if done.returncode != 0:
                 return None
             out = []
@@ -219,8 +221,8 @@ def _process_names():
                 if line.startswith('"'):
                     out.append(line[1:].split('"', 1)[0])
             return out
-        done = subprocess.run(["ps", "-A", "-o", "comm="],
-                              capture_output=True, text=True, timeout=20)
+        done = subprocess.run(["ps", "-A", "-o", "comm="], capture_output=True,
+                              stdin=subprocess.DEVNULL, text=True, errors="replace", timeout=20)
         if done.returncode != 0:
             return None
         return [os.path.basename(l.strip()) for l in done.stdout.splitlines() if l.strip()]

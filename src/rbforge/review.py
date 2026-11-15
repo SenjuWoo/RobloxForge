@@ -11,9 +11,10 @@ from .errors import ForgeError
 from . import project as project_mod
 
 _CLIENT_AUTHORITY = [
-    (re.compile(r"\.Health\s*=\s*(?!100\b)", re.I), "sets Humanoid.Health directly"),
+    # `=(?!=)`: `if hum.Health == 0` and `coins == 5` are reads, not client writes.
+    (re.compile(r"\.Health\s*=(?!=)\s*(?!100\b)", re.I), "sets Humanoid.Health directly"),
     (re.compile(r"TakeDamage\s*\("), "applies damage"),
-    (re.compile(r"(coins?|cash|money|gems?)\w*\s*[:+]?=\s*\+?", re.I), "writes a currency-like variable"),
+    (re.compile(r"(coins?|cash|money|gems?)\w*\s*[:+-]?=(?!=)", re.I), "writes a currency-like variable"),
     (re.compile(r"leaderstats", re.I), "touches leaderstats"),
     (re.compile(r"TeleportToPlaceInstance\s*\(", re.I), "requests a teleport"),
     (re.compile(r"PivotTo\s*\(\s*CFrame\.new\(", re.I), "teleports something"),

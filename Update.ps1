@@ -24,7 +24,13 @@ if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) {
 
 $py = (Get-Command python -ErrorAction SilentlyContinue)
 if (-not $py) {
-  Write-Error 'Python not found on PATH. Install Python 3.10+ and tick "Add python.exe to PATH".'
+  Write-Error 'Python not found on PATH. Install Python 3.11+ and tick "Add python.exe to PATH".'
+  exit 4
+}
+# 3.11 is the floor: the agent wiring parses TOML with the standard-library tomllib.
+& $py.Source -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"
+if ($LASTEXITCODE -ne 0) {
+  Write-Error ("RobloxForge needs Python 3.11+; found " + (& $py.Source --version 2>&1))
   exit 4
 }
 

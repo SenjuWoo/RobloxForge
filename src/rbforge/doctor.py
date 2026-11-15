@@ -15,8 +15,9 @@ def _line(label, value, fix=None):
 def collect(probe=True, host_vision=None):
     """Everything doctor knows. Machine-readable form."""
     snap = studio_mod.snapshot(probe=probe)
+    toolchain = tooling.status()
     caps = capabilities.compute(studio_snapshot=snap, probe=False,
-                                host_vision=host_vision)
+                                host_vision=host_vision, toolchain=toolchain)
     return {
         "version": _version(),
         "studio": {k: v for k, v in snap.items() if k != "mcp_probe"},
@@ -24,7 +25,7 @@ def collect(probe=True, host_vision=None):
         "capabilities": caps,
         "capabilities_by_status": capabilities.summarize(caps),
         "docs": docs_mod.freshness(),
-        "toolchain": tooling.status(),
+        "toolchain": toolchain,
         "agents": agents.status(),
     }
 

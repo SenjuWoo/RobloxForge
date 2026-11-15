@@ -35,16 +35,22 @@ def _mentions(text):
 # ------------------------------------------------------------------ helpers
 
 def _run(cmd, timeout=120, feed=None):
-    """feed: stdin text for CLIs that prompt (e.g. hermes mcp add's Y/n)."""
+    """feed: stdin text for CLIs that prompt (e.g. hermes mcp add's Y/n).
+
+    Without a feed, stdin is closed: inside the MCP server it is the JSON-RPC stream, and a child
+    that read it would swallow requests. Output is decoded as UTF-8 with replacement, so a CLI that
+    prints an emoji cannot raise UnicodeDecodeError past this function.
+    """
+    kwargs = {"input": feed} if feed is not None else {"stdin": subprocess.DEVNULL}
     try:
-        return subprocess.run(cmd, capture_output=True, text=True,
-                              input=feed, timeout=timeout)
+        return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=timeout, **kwargs)
     except (OSError, subprocess.SubprocessError) as exc:
         return type("R", (), {"returncode": 1, "stdout": "", "stderr": str(exc)})()
 
 
 # The forge's own MCP registration. Every provider wires it DISABLED so the
-# 11 rb_* tool schemas do not ride along in unrelated sessions; users flip
+# rb_* tool schemas do not ride along in unrelated sessions; users flip
 # it on for Roblox work (see README "Token discipline").
 FORGE_SERVER = "robloxforge"
 
@@ -101,10 +107,30 @@ def _which(name):
     return paths.which(name)
 
 
+def _atomic_write(path, text):
+    """Replace `path` with `text` through a sibling temp file.
+
+    Agent configs are rewritten by the agents themselves while they run (Claude Code rewrites
+    ~/.claude.json constantly), so an in-place `open(path, "w")` that is interrupted, or interleaved
+    with the agent's own write, leaves a truncated file. os.replace is all-or-nothing.
+    """
+    tmp = "%s.rbforge-%d.tmp" % (path, os.getpid())
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
 # ------------------------------------------------------------- provider CLIs
 
 def _hermes():
     exe = _which("hermes")
+
+    def installed():
+        return bool(exe)
 
     def status(_cfg=None):
         if not exe:
@@ -114,6 +140,9 @@ def _hermes():
                 "detail": (done.stdout or done.stderr).strip()[-300:]}
 
     def connect(_cfg=None):
+        st = status()
+        if st and st["configured"]:
+            return "already configured"
         argv = _forge_argv()
         # `hermes mcp add` prompts "Enable all tools? [Y/n]" interactively;
         # pipe 'y' or it cancels silently.
@@ -135,11 +164,14 @@ def _hermes():
         _run([exe, "mcp", "remove", FORGE_SERVER])
         return "removed via `hermes mcp remove`"
 
-    return {"status": status, "connect": connect, "disconnect": disconnect}
+    return {"installed": installed, "status": status, "connect": connect, "disconnect": disconnect}
 
 
 def _claude():
     exe = _which("claude")
+
+    def installed():
+        return bool(exe)
 
     def status(_cfg=None):
         if not exe:
@@ -149,6 +181,9 @@ def _claude():
                 "detail": (done.stdout or done.stderr).strip()[-300:]}
 
     def connect(_cfg=None):
+        st = status()
+        if st and st["configured"]:
+            return "already configured"
         argv = _forge_argv()
         # user scope so it is not tied to one project directory
         if not _run([exe, "mcp", "add", "--scope", "user", FORGE_SERVER,
@@ -161,15 +196,7 @@ def _claude():
         # New directories start enabled - documented in README.
         cfg_file = os.path.join(os.path.expanduser("~"), ".claude.json")
         try:
-            _backup(cfg_file)
-            data = json.load(open(cfg_file, encoding="utf-8"))
-            n = 0
-            for proj in (data.get("projects") or {}).values():
-                arr = proj.setdefault("disabledMcpServers", [])
-                if FORGE_SERVER not in arr:
-                    arr.append(FORGE_SERVER)
-                    n += 1
-            json.dump(data, open(cfg_file, "w", encoding="utf-8"), indent=2)
+            n = _claude_disable_everywhere(cfg_file)
             return ("added via `claude mcp add --scope user`; disabled in %d "
                     "known project(s) - toggle on per-session with /mcp" % n)
         except (OSError, ValueError):
@@ -179,11 +206,37 @@ def _claude():
         _run([exe, "mcp", "remove", "-s", "user", FORGE_SERVER])
         return "removed via `claude mcp remove`"
 
-    return {"status": status, "connect": connect, "disconnect": disconnect}
+    return {"installed": installed, "status": status, "connect": connect, "disconnect": disconnect}
+
+
+def _claude_disable_everywhere(cfg_file):
+    """Add the forge to every known project's disabledMcpServers; returns how many changed.
+
+    Backed up first, then replaced atomically: ~/.claude.json holds every project's history and
+    settings, and Claude Code writes it while it runs.
+    """
+    _backup(cfg_file)
+    with open(cfg_file, encoding="utf-8") as handle:
+        data = json.load(handle)
+    n = 0
+    for proj in (data.get("projects") or {}).values():
+        if not isinstance(proj, dict):
+            continue
+        arr = proj.setdefault("disabledMcpServers", [])
+        if FORGE_SERVER not in arr:
+            arr.append(FORGE_SERVER)
+            n += 1
+    if n:
+        _atomic_write(cfg_file, json.dumps(data, indent=2))
+    return n
 
 
 def _codex():
     cfg_path = os.path.join(os.path.expanduser("~"), ".codex", "config.toml")
+
+    def installed():
+        # The agent creates this folder on first run; no folder means no agent to wire.
+        return os.path.isdir(os.path.dirname(cfg_path))
 
     def status(cfg=None):
         cfg = cfg or cfg_path
@@ -215,10 +268,10 @@ def _codex():
         _backup(cfg)
         text = open(cfg, encoding="utf-8", errors="replace").read()
         out = _toml_remove(text, FORGE_SERVER)
-        open(cfg, "w", encoding="utf-8").write(out)
+        _atomic_write(cfg, out)
         return "removed robloxforge block from %s (official entries untouched; backup saved)" % cfg
 
-    return {"status": status, "connect": connect, "disconnect": disconnect}
+    return {"installed": installed, "status": status, "connect": connect, "disconnect": disconnect}
 
 
 def _generic_unsupported(name):
@@ -231,6 +284,10 @@ def _generic_unsupported(name):
 
 def _grok():
     cfg_path = os.path.join(os.path.expanduser("~"), ".grok", "config.toml")
+
+    def installed():
+        # The agent creates this folder on first run; no folder means no agent to wire.
+        return os.path.isdir(os.path.dirname(cfg_path))
 
     def status(cfg=None):
         cfg = cfg or cfg_path
@@ -259,10 +316,10 @@ def _grok():
         _backup(cfg)
         text = open(cfg, encoding="utf-8", errors="replace").read()
         out = _toml_remove(text, FORGE_SERVER)
-        open(cfg, "w", encoding="utf-8").write(out)
+        _atomic_write(cfg, out)
         return "removed robloxforge block from %s (backup saved)" % cfg
 
-    return {"status": status, "connect": connect, "disconnect": disconnect}
+    return {"installed": installed, "status": status, "connect": connect, "disconnect": disconnect}
 
 
 _kimi = lambda: _generic_unsupported("kimi")
@@ -296,14 +353,21 @@ def _as_names(provider):
 
 
 def status(provider=None):
-    out = {}
-    for name in _as_names(provider):
-        impl = globals()["_%s" % name]()
-        st = impl["status"]()
+    """Each agent's wiring. The CLI-backed checks take seconds each (`claude mcp list` health-checks
+    every server), so they run concurrently; the result keeps the provider order."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    names = _as_names(provider)
+
+    def one(name):
+        st = globals()["_%s" % name]()["status"]()
         entry = st or {"installed": False}
         entry.setdefault("agent_installed", st is not None)
-        out[name] = entry
-    return out
+        return entry
+
+    with ThreadPoolExecutor(max_workers=len(names) or 1) as pool:
+        entries = list(pool.map(one, names))
+    return dict(zip(names, entries))
 
 
 def connect(provider):
@@ -314,6 +378,11 @@ def connect(provider):
             results[name] = {"provider": name,
                              "error": "automatic connect for %r is not supported yet" % name,
                              "hint": "add the official MCP manually; see README"}
+            continue
+        if not impl["installed"]():
+            # Not an error: `all` wires (or un-wires) the agents that exist, and one absent agent
+            # must never stop the rest - Uninstall.ps1 runs `disconnect all`.
+            results[name] = {"provider": name, "skipped": "%s is not installed" % name}
             continue
         try:
             results[name] = {"provider": name, "result": impl["connect"](),
@@ -330,6 +399,11 @@ def disconnect(provider):
         if not impl.get("disconnect"):
             results[name] = {"provider": name,
                              "error": "disconnect for %r not supported" % name}
+            continue
+        if not impl["installed"]():
+            # Not an error: `all` wires (or un-wires) the agents that exist, and one absent agent
+            # must never stop the rest - Uninstall.ps1 runs `disconnect all`.
+            results[name] = {"provider": name, "skipped": "%s is not installed" % name}
             continue
         try:
             results[name] = {"provider": name, "result": impl["disconnect"]()}

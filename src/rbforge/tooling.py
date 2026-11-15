@@ -29,8 +29,8 @@ _VERSION = re.compile(r"([0-9]+\.[0-9]+[0-9a-zA-Z.\-]*)")
 def _probe_version(path):
     """First version-looking token from `<exe> --version`. Never raises."""
     try:
-        done = subprocess.run([path, "--version"], capture_output=True,
-                              text=True, timeout=15)
+        done = subprocess.run([path, "--version"], capture_output=True, stdin=subprocess.DEVNULL,
+                              text=True, encoding="utf-8", errors="replace", timeout=15)
         text = (done.stdout or "") + (done.stderr or "")
         match = _VERSION.search(text)
         return match.group(1) if match else None
