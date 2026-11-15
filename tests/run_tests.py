@@ -4695,6 +4695,36 @@ def _():
                 os.environ["RBFORGE_STUDIO_WAIT"] = old_wait
 
 
+
+@check("studio: the doctor probe waits briefly for a just-registered Studio's place name")
+def _():
+    from rbforge import studio
+    with tempdir() as d:
+        fake = os.path.join(d, "named_mcp.py")
+        open(fake, "w").write(
+            "import json, sys\n"
+            "lists = 0\n"
+            "for line in sys.stdin:\n"
+            "    msg = json.loads(line)\n"
+            "    if 'id' not in msg: continue\n"
+            "    m = msg['method']\n"
+            "    if m == 'initialize': result = {'protocolVersion': '2024-11-05'}\n"
+            "    elif m == 'tools/list': result = {'tools': [{'name': 'list_roblox_studios'}]}\n"
+            "    else:\n"
+            "        lists += 1\n"
+            "        entry = {'id': 'uuid-1'} if lists <= 2 else {'id': 'uuid-1', 'name': 'Haven (placeId: 7)'}\n"
+            "        result = {'content': [{'type': 'text', 'text': json.dumps({'studios': [entry]})}]}\n"
+            "    print(json.dumps({'jsonrpc': '2.0', 'id': msg['id'], 'result': result}), flush=True)\n")
+        orig_cmd, orig_run = studio.mcp_command, studio.studio_running
+        studio.mcp_command = lambda: [sys.executable, fake]
+        studio.studio_running = lambda: {"running": True}
+        try:
+            res = studio.probe_mcp(timeout=20)
+        finally:
+            studio.mcp_command, studio.studio_running = orig_cmd, orig_run
+        assert res["studios"] and res["studios"][0].get("name") == "Haven (placeId: 7)", res["studios"]
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed, %d skipped" % (len(PASS), len(FAIL), len(SKIPPED)))
     for name, why in SKIPPED:

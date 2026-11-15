@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.17.2 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.17.3 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
@@ -19,7 +19,7 @@ claim checkable.
 | CLI surface | `check <path>`, `check --root <path>` and `check <path> --scope static` are run from a cwd that is **not** the project, and each report's `root` and `rungs_run` are asserted; a positional/`--root` conflict exits 2 (tests `cli: ...`) |
 | Luau semantic examples | extracted from `typing-luau.md` and re-analysed by pinned luau-lsp 1.70.1; CI job `luau-semantics` runs them with `RBFORGE_REQUIRE_LUAU_LSP=1` |
 | Diagnostic map | keyed by the whole project-relative path, so `src/Server/init.luau` and `tests/Server/init.luau` are two files; containment is `commonpath`, so a sibling `proj2` is not inside `proj` (tests `check: same-named files at different depths...`, `check: a sibling directory...`) |
-| Offline gate (`check`, traps, probes, review) | 204 automated tests + fixture projects |
+| Offline gate (`check`, traps, probes, review) | 205 automated tests + fixture projects |
 | Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
 | Push guard (0.17.0) | the exact push code is executed under Lune against `tests/lune/mock_datamodel.luau`: new script, first push (backup), unchanged ledger (no backup), Studio edit (`CONFLICT`, source untouched), `force` (backup + write), other place (first-push rules); Luau stamp equals Python `adler` |
 | MCP wire | negotiation (2025-06-18/2025-03-26/2024-11-05), parse error -32700, non-object arguments -32602, annotations on every tool, catalog <= 10,600 chars |
@@ -31,6 +31,7 @@ claim checkable.
 | Live Studio: push + readback | disposable place, 2026-11-06: `synced` digests matched, ModuleScript/Script classes correct |
 | Live Studio: push conflict guard (2026-11-15, Place1, unpublished) | first push `synced`, no backup; unchanged and file-only re-push `synced`; Studio edit -> `conflict`, Studio source untouched; `--force` -> `synced` + `Guard_rbforge_<ms>` holding the Studio edit in `ServerStorage.rbforge_backups`; next push `synced`, no backup; a source ending in `]=` read back exact |
 | Live Studio: session discovery | a new StudioMCP lists 0 Studios for 2.7-3.6 s after spawn (4 sessions measured); sessions and the doctor probe now poll; three back-to-back `doctor` runs all saw Place1 |
+| Live Studio: published place, read-only (2026-11-15) | real PlaceId: `servePlaceIds` wrong id refused (`RBF-STUDIO-003`), real id passes as int and string, using unmapped files so nothing could be written (none was); evidence collection read console + a 310 KB JPEG, receipt `playtest_observed_partial`, mismatched scenario `unverified`; doctor names the place after the name wait |
 | Live Studio: hierarchy + `servePlaceIds` | `HIERARCHY … is Folder, expects Model`; `RBF-STUDIO-003`; `RBF-ARG-002` |
 | Live Studio: class-change backup | original preserved as `Swap_rbforge_<ms>` in `ServerStorage.rbforge_backups` |
 | Live Studio: `init.luau` nesting | `Nested` ModuleScript with `Child` beneath it |
@@ -40,12 +41,13 @@ claim checkable.
 | Live Studio: rollback | engine refused a 210 KB `Source`; existing-script, new-script and class-change pushes all `rolled_back` with the previous state verified afterwards |
 | Live typecheck | `rbforge types fetch` + `luau-lsp analyze --platform=roblox` with a generated Rojo sourcemap; real diagnostics on the Haven project |
 | Unit-only | `ROLLBACK_FAILED` (a restore that itself fails) — not reachable through the documented API |
-| Unverified | published-place path, multiplayer, mobile, weak-model benchmark |
+| Unverified | writes to a published place (deliberately not tested on a live project), Open Cloud publishing, multiplayer, mobile, weak-model benchmark |
 
 ## Gaps to close (next session)
 
 1. **Weak-model E2E benchmark** (`tests/agent-benchmarks`) has not been run — the 1.0.0 gate.
-2. **Published-place and multiplayer paths** are untested; the live work used an unpublished disposable place.
+2. **Writes to a published place and multiplayer** are untested. Published-place reads (place guard, evidence,
+   doctor) were verified read-only on 2026-11-15; pushes were exercised only in an unpublished disposable place.
 3. **`luau-lsp` runs** since 0.14.0: `rbforge types fetch` caches the pinned definitions and the rung generates a Rojo sourcemap, so it produces real diagnostics (measured on the Haven project). Remaining gap: the pinned definitions are 1.70.1 until the pin is bumped.
 4. **The test suite needs a Luau parser** (`stylua` and/or `selene`) and Lune for the push-guard run; CI and the
    release install pinned selene, StyLua and Lune (`scripts/install_*.py`).
@@ -55,6 +57,9 @@ claim checkable.
    through the documented API.
 
 ## Done (verified)
+
+- 0.17.3 (2026-11-15): doctor waits briefly for a just-registered Studio's place name. Published-place
+  read-only checks recorded above. 205 tests.
 
 - 0.17.2 (2026-11-15): live commands no longer fail with "0 Studio instances open" right after a session
   starts (StudioMCP registers with Studio 2.7-3.6 s after spawn; sessions and the doctor probe poll for it).
@@ -246,6 +251,8 @@ rbforge.cmd <command>              # same CLI, from the checkout
 ```
 
 ## Log
+
+- 2026-11-15 — 0.17.3: place-name wait; published place verified read-only; 205 tests.
 
 - 2026-11-15 — 0.17.2: Studio discovery wait; push guard verified live in Place1; 204 tests.
 

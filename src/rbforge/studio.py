@@ -306,13 +306,22 @@ def probe_mcp(timeout=25.0, list_studios=True):
             except ValueError:
                 wait = 15.0
             deadline = time.time() + wait
+            name_deadline = None
             rid = 3
             while True:
                 _send(proc, {"jsonrpc": "2.0", "id": rid, "method": "tools/call",
                              "params": {"name": "list_roblox_studios", "arguments": {}}})
                 result["studios"] = _parse_studios(_await_id(lines, rid, proc, timeout))
-                if result["studios"] or time.time() >= deadline or \
-                        studio_running().get("running") is not True:
+                studios = result["studios"] or []
+                if studios:
+                    # The first entry after registration can lack the place name (doctor then showed
+                    # the Studio's UUID); give it a few seconds, but an unsaved place may never have one.
+                    if all(isinstance(s, dict) and s.get("name") for s in studios):
+                        break
+                    name_deadline = name_deadline or time.time() + 3
+                    if time.time() >= name_deadline:
+                        break
+                if time.time() >= deadline or studio_running().get("running") is not True:
                     break
                 rid += 1
                 time.sleep(0.5)

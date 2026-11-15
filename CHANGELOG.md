@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.17.3 - 2026-11-15
+
+### Fixed
+- `doctor` named a place by its Studio UUID on the first run after the place was opened: the first
+  `list_roblox_studios` entry after registration can lack the name. The probe now waits up to 3 s more
+  for it (an unsaved place that never reports one costs at most those 3 s).
+
+### Verified live, read-only, on a published place
+- `servePlaceIds` against a real PlaceId: a wrong id is refused (`RBF-STUDIO-003`) before anything is
+  written; the real id passes as an integer or a string. Each push named an unmapped file, so nothing
+  could be written either way, and nothing was.
+- Evidence collection: console read, a real JPEG capture, a receipt at `playtest_observed_partial` (no test
+  ran), a mismatched scenario at `unverified`, an intact receipt chain.
+
 ## 0.17.2 - 2026-11-15
 
 ### Fixed
