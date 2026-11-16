@@ -105,7 +105,14 @@ rbforge docs search "ProcessReceipt"
 rbforge agent connect hermes        # wire the official Roblox MCP into an agent
 rbforge skills install all          # install all 25 RobloxForge skills, every profile
 rbforge capabilities                # honest capability matrix (probed, not assumed)
+rbforge servertest tests/Combat.server.luau CombatTest --ready "workspace.BootStage=players-wired"
+rbforge servertest --suite tests/suites.json   # exit code = number of failed suites
 ```
+
+`servertest` needs a running playtest (it refuses Edit mode with exit 4). The test reports by setting
+the attribute to `"PASS ..."` or `"FAIL ..."` on `workspace` or on its own Script. Cleanup destroys the
+test Script, which kills the threads it started; use `--grace <seconds>` when the test triggers deferred
+game work. Details: `skills/roblox-game-development/references/testing-debugging.md`.
 
 Nothing here costs money. Roblox Studio, the official MCP server, every
 recommended library and every asset path in the skill are free; `rbforge
@@ -164,7 +171,7 @@ docs > verified community practice > model memory.
 | `src/rbforge/mapkit.py` | optional adapter for an external map prover: discovers it, checks its deps, returns its own report (never touches Studio) |
 | `mcp_server/server.py` | 18-tool MCP server (doctor, capabilities, docs, check, plugins, assets, planning, reviews, receipts, probes, traps, evidence) |
 | `skills/` | 25 agent skills (2 first-party + 23 adopted MIT topic skills), installed into Hermes/Claude/Codex/Grok/Kimi |
-| `tests/run_tests.py` | 205 checks, no Roblox required |
+| `tests/run_tests.py` | 217 checks, no Roblox required |
 
 Register the MCP server manually (all agents, disabled) instead:
 
@@ -182,11 +189,12 @@ it. Whenever push replaces a source it did not write itself, the Studio copy is 
 
 ## Status
 
-0.17.3. Only what was observed is listed as verified.
+0.18.0. Only what was observed is listed as verified.
 
 | Area | Status |
 |---|---|
-| Studio + official MCP detection & live handshake probe | verified on Windows 11 (34 tools) |
+| Studio + official MCP detection & live handshake probe | verified on Windows 11 (38 tools, 2026-11-16) |
+| `rbforge servertest`: Play preflight, `--ready`, Client tests, `--grace`/`--keep`, `--suite` | verified against a live Studio place (0.18.0) |
 | creator-docs sparse cache + ranked search | verified (2,214 docs indexed) |
 | `rbforge check` offline gate (static / unit / structure) | verified; skips reported as `incomplete`, never `pass` |
 | `rbforge new` one-command project + plan | verified |

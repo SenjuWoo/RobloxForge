@@ -658,12 +658,149 @@ def _lua_code_only(src):
 _ATTR_NAME = re.compile(r"^(?!RBX)[A-Za-z0-9_]{1,100}$")
 
 
-def server_test(path, attr, timeout=120, studio_id=None):
-    """Run a test file as a temporary server Script in a running Play session, so it shares the game's module
-    cache (execute_luau has its own). The test must set workspace:SetAttribute(attr, "PASS ..." | "FAIL ...")."""
+_READY_SEGMENT = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+def parse_ready(spec):
+    """`workspace.BootStage=players-wired` -> (["workspace"], "BootStage", "players-wired").
+
+    The game is ready when the attribute on that instance, as a string, equals the value. Instance
+    names are matched with FindFirstChild from `game`, so they must be plain identifiers.
+    """
+    if not isinstance(spec, str) or "=" not in spec:
+        raise ForgeError("RBF-ARG-002", "--ready %r is not <instance path>.<Attribute>=<value>" % (spec,),
+                         hint='for example --ready "workspace.BootStage=players-wired"')
+    left, value = spec.split("=", 1)
+    parts = left.strip().split(".")
+    if len(parts) < 2 or not all(_READY_SEGMENT.match(p) for p in parts[:-1]) or not _ATTR_NAME.match(parts[-1]):
+        raise ForgeError("RBF-ARG-002", "--ready %r is not <instance path>.<Attribute>=<value>" % (spec,),
+                         hint="path segments are instance names (letters, digits, _); the last one is the attribute")
+    path = parts[:-1]
+    if path[0] == "game":
+        path = path[1:]
+    return path, parts[-1], value
+
+
+def available_datamodels(state_text):
+    """The datamodels `get_studio_state` lists as available, or None when its wording is unrecognised."""
+    m = re.search(r"Available DataModels:\s*([^\n]*)", state_text or "")
+    if not m:
+        return None
+    return {x.strip() for x in m.group(1).split(",") if x.strip()}
+
+
+def preflight_play(session, datamodels=("Server",)):
+    """Refuse before running anything when the needed Play datamodel is not up.
+
+    Without this a test started in Edit mode failed deep inside execute_luau with a datamodel error
+    that did not say "press Play". An unrecognised state text is not a refusal: the run goes ahead
+    and execute_luau gives its own answer.
+    """
+    state = session.call("get_studio_state", {"studio_id": session.studio_id})
+    have = available_datamodels(state)
+    if have is None:
+        return None
+    missing = [dm for dm in datamodels if dm not in have]
+    if missing:
+        raise ForgeError("RBF-PLAY-001",
+                         "start Play first: the %s datamodel is not running (available: %s)"
+                         % ("/".join(missing), ", ".join(sorted(have)) or "none"),
+                         hint="press Play in Studio, or call start_stop_play(is_start=true); "
+                              "servertest runs inside a live playtest")
+    return have
+
+
+_TEST_HOSTS = {
+    # datamodel -> (script class, Luau expression for the parent). A LocalScript runs from the local
+    # player's PlayerScripts; Studio lets execute_luau set its Source in the Client datamodel.
+    "Server": ("Script", "game:GetService('ServerScriptService')"),
+    "Client": ("LocalScript", "game:GetService('Players').LocalPlayer:WaitForChild('PlayerScripts')"),
+}
+
+
+def _server_test_code(src, attr, timeout, datamodel="Server", ready=None, grace=0.0, keep=False):
+    klass, parent = _TEST_HOSTS[datamodel]
+    a = _quote(attr)
+    code = "workspace:SetAttribute(%s, nil)\nlocal t0 = os.clock()\n" % a
+    if ready:
+        rpath, rattr, rvalue = ready
+        segs = ", ".join(_quote(x) for x in rpath)
+        code += (
+            "local function rbfReadyTarget()\n"
+            "  local inst = game\n"
+            "  for _, n in {%s} do\n"
+            "    if inst == game and n == 'workspace' then inst = workspace\n"
+            "    elseif inst then inst = inst:FindFirstChild(n) end\n"
+            "  end\n"
+            "  return inst\n"
+            "end\n"
+            "local rbfWant = %s\n"
+            "local function rbfReady()\n"
+            "  local inst = rbfReadyTarget()\n"
+            "  return inst ~= nil and tostring(inst:GetAttribute(%s)) == rbfWant\n"
+            "end\n"
+            "while not rbfReady() and os.clock() - t0 < %d do task.wait(0.25) end\n"
+            "if not rbfReady() then return 'NOT_READY ' .. %s end\n"
+            % (segs, long_string(rvalue), _quote(rattr), timeout,
+               _quote(".".join(rpath + [rattr]) + " never became the expected value"))
+        )
+    code += (
+        "local s = Instance.new('%s')\n" % klass
+        + "s.Name = 'RbforgeServerTest'\n"
+        "s.Source = %s\n" % long_string(src)
+        + "s.Parent = %s\n" % parent
+        # The test may report on workspace or on its own Script (script:SetAttribute), as many
+        # existing suites do; both count.
+        + "local function rbfResult() return workspace:GetAttribute(%s) or s:GetAttribute(%s) end\n" % (a, a)
+        + "while rbfResult() == nil and os.clock() - t0 < %d do task.wait(0.5) end\n" % timeout
+        + "local rbfOut = rbfResult()\n"
+    )
+    if grace and grace > 0:
+        # Destroying the Script kills every thread it started (so do Parent = nil and Disabled),
+        # including task.delay work the test triggered inside game code, such as a delayed body
+        # removal after a kill. A grace period lets that deferred work finish before cleanup.
+        code += "if rbfOut ~= nil then task.wait(%s) end\n" % repr(float(grace))
+    if not keep:
+        code += "s:Destroy()\n"
+    code += "return tostring(rbfOut or 'TIMEOUT')\n"
+    return code
+
+
+def _classify(out):
+    # The test writes "PASS ..." or "FAIL ..."; a substring test let NOT_PASS through as a pass.
+    first = next((line.strip() for line in (out or "").splitlines() if line.strip()), "")
+    outcome = "pass" if re.match(r"^PASS\b", first) else (
+        "fail" if re.match(r"^(FAIL|NOT_PASS|TIMEOUT|NOT_READY)\b", first) else "unknown")
+    return first, outcome
+
+
+def _check_test_args(attr, datamodel, grace):
     if not isinstance(attr, str) or not _ATTR_NAME.match(attr):
         raise ForgeError("RBF-ARG-002", "%r is not a valid Roblox attribute name" % (attr,),
                          hint="use letters, digits and underscores (max 100), not starting with RBX")
+    if datamodel not in _TEST_HOSTS:
+        raise ForgeError("RBF-ARG-002", "datamodel %r is not Server or Client" % (datamodel,))
+    try:
+        ok = not isinstance(grace, bool) and float(grace) >= 0
+    except (TypeError, ValueError):
+        ok = False
+    if not ok:
+        raise ForgeError("RBF-ARG-002", "grace %r is not a non-negative number of seconds" % (grace,))
+
+
+def server_test(path, attr, timeout=120, studio_id=None, datamodel="Server", ready=None, grace=0.0,
+                keep=False, session=None):
+    """Run a test file as a temporary Script in a running Play session, so it shares the game's module
+    cache (execute_luau has its own). The test sets `attr` to "PASS ..." or "FAIL ..." on workspace or on
+    its own Script.
+
+    `datamodel="Client"` runs it as a LocalScript in the local player's PlayerScripts. `ready` is a
+    `path.Attribute=value` spec waited for before the test starts. Cleanup destroys the test Script,
+    which kills every thread it started: `grace` waits that many seconds after the result first, and
+    `keep` leaves the Script in place (stopping Play discards it).
+    """
+    _check_test_args(attr, datamodel, grace)
+    ready_spec = parse_ready(ready) if ready else None
     src = _read_source(path, "test file").replace("\r\n", "\n")
     # A test that never writes the attribute cannot report: the runner would sit for the full timeout
     # and call it TIMEOUT, which hides the real mistake. Only executable text counts - a mention in a
@@ -672,28 +809,81 @@ def server_test(path, attr, timeout=120, studio_id=None):
     if "SetAttribute" not in _lua_code_only(src):
         return {
             "test": path,
-            "result": "INVALID: the test never calls SetAttribute for workspace:%s" % attr,
+            "result": "INVALID: the test never calls SetAttribute for %s" % attr,
             "outcome": "fail",
             "passed": False,
             "reason": "a test that cannot report cannot pass; end it with "
-                      'workspace:SetAttribute("%s", "PASS ...") or "FAIL ..."' % attr,
+                      'workspace:SetAttribute("%s", "PASS ...") or "FAIL ..." '
+                      "(script:SetAttribute works too)" % attr,
         }
-    code = (
-        "workspace:SetAttribute(%s, nil)\n" % _quote(attr)
-        + "local s = Instance.new('Script')\n"
-        "s.Name = 'RbforgeServerTest'\n"
-        "s.Source = %s\n" % long_string(src)
-        + "s.Parent = game:GetService('ServerScriptService')\n"
-        "local t0 = os.clock()\n"
-        "while workspace:GetAttribute(%s) == nil and os.clock() - t0 < %d do task.wait(0.5) end\n" % (_quote(attr), timeout)
-        + "s:Destroy()\n"
-        "return tostring(workspace:GetAttribute(%s) or 'TIMEOUT')\n" % _quote(attr)
-    )
-    with Session(studio_id, timeout=timeout + 30) as s:
-        out = s.luau(code, "Server")
-    # The test writes "PASS ..." or "FAIL ..."; a substring test let NOT_PASS through as a pass.
-    first = next((line.strip() for line in (out or "").splitlines() if line.strip()), "")
-    outcome = "pass" if re.match(r"^PASS\b", first) else (
-        "fail" if re.match(r"^(FAIL|NOT_PASS|TIMEOUT)\b", first) else "unknown")
+    code = _server_test_code(src, attr, timeout, datamodel, ready_spec, float(grace), keep)
+    if session is not None:
+        out = session.luau(code, datamodel)
+    else:
+        with Session(studio_id, timeout=timeout + float(grace) + 30) as s:
+            preflight_play(s, (datamodel,))
+            out = s.luau(code, datamodel)
+    first, outcome = _classify(out)
     return {"test": path, "result": first, "outcome": outcome, "passed": outcome == "pass"}
 
+
+def load_suite(manifest):
+    """Validated suite entries from a JSON manifest: a list, or {"suites": [...]}.
+
+    Each entry: file (relative to the manifest), attr, and optionally datamodel (Server/Client),
+    timeout (seconds, default 120), ready, grace, keep and name.
+    """
+    try:
+        with open(manifest, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise ForgeError("RBF-ARG-001", "cannot read suite manifest %s: %s" % (manifest, exc))
+    entries = data.get("suites") if isinstance(data, dict) else data
+    if not isinstance(entries, list) or not entries:
+        raise ForgeError("RBF-ARG-002", "suite manifest %s has no suites" % manifest,
+                         hint='{"suites": [{"file": "tests/Combat.server.luau", "attr": "CombatTest"}]}')
+    base = os.path.dirname(os.path.abspath(manifest))
+    out = []
+    for i, e in enumerate(entries):
+        if not isinstance(e, dict) or not isinstance(e.get("file"), str):
+            raise ForgeError("RBF-ARG-002", "suite #%d needs a \"file\"" % (i + 1))
+        dm = e.get("datamodel", "Server")
+        grace = e.get("grace", 0)
+        _check_test_args(e.get("attr"), dm, grace)
+        timeout = e.get("timeout", 120)
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
+            raise ForgeError("RBF-ARG-002", "suite #%d timeout %r is not a positive integer" % (i + 1, timeout))
+        if e.get("ready"):
+            parse_ready(e["ready"])
+        path = e["file"] if os.path.isabs(e["file"]) else os.path.join(base, e["file"])
+        out.append({"name": e.get("name") or e["file"], "file": path, "attr": e["attr"], "datamodel": dm,
+                    "timeout": timeout, "ready": e.get("ready"), "grace": float(grace),
+                    "keep": bool(e.get("keep"))})
+    return out
+
+
+def run_suite(manifest, studio_id=None, report=None):
+    """Run every suite in one Studio session. `report(line)` gets one line per suite as it finishes."""
+    suites = load_suite(manifest)
+    longest = max(s["timeout"] + s["grace"] for s in suites)
+    results = []
+    with Session(studio_id, timeout=longest + 30) as sess:
+        preflight_play(sess, sorted({s["datamodel"] for s in suites}))
+        for suite in suites:
+            t0 = time.time()
+            try:
+                r = server_test(suite["file"], suite["attr"], suite["timeout"], datamodel=suite["datamodel"],
+                                ready=suite["ready"], grace=suite["grace"], keep=suite["keep"], session=sess)
+            except ForgeError as exc:
+                # One broken suite (a script error, a missing file) is that suite's failure, not the run's.
+                r = {"test": suite["file"], "result": "ERROR %s: %s" % (exc.code, exc.message),
+                     "outcome": "error", "passed": False}
+            r["name"] = suite["name"]
+            r["datamodel"] = suite["datamodel"]
+            r["seconds"] = round(time.time() - t0, 2)
+            results.append(r)
+            if report:
+                report("%-5s %s (%s, %.1fs) %s" % (r["outcome"].upper(), r["name"], r["datamodel"],
+                                                   r["seconds"], r["result"]))
+    failed = sum(1 for r in results if not r["passed"])
+    return {"manifest": manifest, "suites": results, "passed": len(results) - failed, "failed": failed}

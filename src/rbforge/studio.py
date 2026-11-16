@@ -13,6 +13,7 @@ Ground truth used here (verified on Windows 11, Studio 0.735.x):
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -437,8 +438,45 @@ def snapshot(probe=True, timeout=25.0):
             str(s.get("name") or s.get("id") or "unnamed")
             for s in studios or [] if isinstance(s, dict)]
         out["multiple_studio_sessions"] = bool(studios and len(studios) > 1)
+        out["studio_sessions"] = [session_info(s) for s in studios or [] if isinstance(s, dict)]
     else:
         out["mcp_probe"] = {"responding": None, "note": "probe skipped"}
         out["active_places"] = []
+        out["studio_sessions"] = []
         out["multiple_studio_sessions"] = None
     return out
+
+
+_PLACE_SUFFIX = re.compile(r"\s*\(placeId:\s*\d+\)\s*$")
+
+
+def session_info(entry):
+    """One Studio from list_roblox_studios, with the fields that say WHICH place it is.
+
+    A cloud place reports placeId/universeId and persistedToCloud=true; a place opened from a .rbxl
+    reports `file` and persistedToCloud=false. Agents have edited a stale local copy while the owner
+    worked in the cloud place, so the doctor shows the difference instead of a bare name.
+    """
+    name = entry.get("name") or entry.get("file") or entry.get("id") or "unnamed"
+    return {
+        "id": entry.get("id"),
+        "name": _PLACE_SUFFIX.sub("", str(name)) or str(name),
+        "mode": entry.get("mode"),
+        "placeId": entry.get("placeId"),
+        "universeId": entry.get("universeId"),
+        "persistedToCloud": entry.get("persistedToCloud"),
+        "file": entry.get("file"),
+    }
+
+
+def describe_session(info):
+    """`Name - cloud place 123` / `Name - local file x.rbxl, not a cloud place` for the doctor."""
+    if info.get("persistedToCloud") is True:
+        where = "cloud place %s" % info["placeId"] if info.get("placeId") else "cloud place"
+    elif info.get("persistedToCloud") is False:
+        named = info.get("file") and info["file"] != info["name"]
+        where = "local file %s, not a cloud place" % info["file"] if named else "local file, not a cloud place"
+    else:
+        where = "placeId %s" % info["placeId"] if info.get("placeId") else "location unknown"
+    return "%s - %s" % (info["name"], where)
+

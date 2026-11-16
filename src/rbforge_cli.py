@@ -132,10 +132,19 @@ def main(argv=None):
     p_exec.add_argument("--studio")
 
     p_st = sub.add_parser("servertest", help="run a test as a temporary server Script in Play (shares module cache)")
-    p_st.add_argument("file")
-    p_st.add_argument("attr", help="workspace attribute the test sets to 'PASS ...' or 'FAIL ...'")
+    p_st.add_argument("file", nargs="?")
+    p_st.add_argument("attr", nargs="?",
+                      help="attribute the test sets to 'PASS ...' or 'FAIL ...' on workspace or its own Script")
     p_st.add_argument("--timeout", type=int, default=120)
     p_st.add_argument("--studio")
+    p_st.add_argument("--dm", default="Server", choices=["Server", "Client"],
+                      help="Client runs the test as a LocalScript in the local player's PlayerScripts")
+    p_st.add_argument("--ready", help="wait for <instance path>.<Attribute>=<value> before the test starts")
+    p_st.add_argument("--grace", type=float, default=0.0,
+                      help="seconds to wait after the result before destroying the test Script "
+                           "(destroying it kills the threads it started)")
+    p_st.add_argument("--keep", action="store_true", help="leave the test Script in place (stopping Play discards it)")
+    p_st.add_argument("--suite", help="JSON manifest of suites; exit code is the number of failed suites")
 
     p_proj = sub.add_parser("project", help="analyze an existing project layout")
     p_proj.add_argument("path", nargs="?", default=".")
@@ -358,7 +367,18 @@ def _dispatch(args):
 
     if args.cmd == "servertest":
         from rbforge import live
-        res = live.server_test(args.file, args.attr, args.timeout, args.studio)
+        if args.suite:
+            if args.file or args.attr:
+                raise ForgeError("RBF-ARG-001", "pass either --suite or FILE ATTR, not both")
+            # One progress line per suite on stderr; the JSON report stays the only stdout.
+            res = live.run_suite(args.suite, args.studio,
+                                 report=lambda line: print(line, file=sys.stderr, flush=True))
+            _emit(res)
+            return min(res["failed"], 100)
+        if not (args.file and args.attr):
+            raise ForgeError("RBF-ARG-001", "servertest needs FILE ATTR, or --suite MANIFEST")
+        res = live.server_test(args.file, args.attr, args.timeout, args.studio, datamodel=args.dm,
+                               ready=args.ready, grace=args.grace, keep=args.keep)
         _emit(res)
         return ExitCode.OK if res["passed"] else 1
 

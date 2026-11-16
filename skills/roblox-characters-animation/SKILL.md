@@ -165,6 +165,20 @@ and lifecycle callbacks. Enable it via **File → Beta Features** and **Avatar S
 Abilities**. Only use it when the project has opted in; APIs may change while in beta.
 Sketch: [references/character-controller-library.md](references/character-controller-library.md).
 
+## RobloxForge field notes (verified or reported 2026-11)
+
+- **AnimationConstraint avatars.** Current R15 avatars can join their parts with `AnimationConstraint`
+  instead of `Motor6D` (Root, Waist, Neck, Shoulders, Hips, Knees, ...). A default avatar checked live
+  had 15 of them and zero `Motor6D`s, so Motor6D-only code silently does nothing. `C0`/`C1` are
+  read-only: write offsets through `Attachment0.CFrame` and pose through `Transform`.
+- **IKControl vs. your own posing.** Posing the same joints in `PreSimulation` after the Animator
+  applied IK overwrites the solve. Solve those limbs analytically, or change the order.
+- **Ragdoll swap.** When a death hides the original and swaps in a ragdoll, also disable the
+  original's LayerCollectors (SurfaceGui decals/stencils), Lights, ParticleEmitters and Highlights.
+
+Code and detail: the RobloxForge `roblox-game-development` references `animation.md` and
+`sharp-edges.md`.
+
 ## Related skills
 
 `roblox-npc-ai` (NPC movement), `roblox-physics` (ragdolls, knockback), `roblox-input` (ability inputs),

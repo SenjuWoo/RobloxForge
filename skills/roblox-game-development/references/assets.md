@@ -200,6 +200,76 @@ Randomise with a **seeded** generator (`Random.new(seed)`), never `math.random`
 for layout: a re-run must reproduce the same world, or you cannot tell a
 regression from a reshuffle.
 
+## Uploading files as assets: Open Cloud through the Studio MCP
+
+`upload_image` only takes http(s) image URLs. For GLB, FBX, OGG, MP3, WAV, PNG
+and the other asset types, use `open_cloud_invoke` against the Assets API.
+Reported from a production game project (2026-11); the argument shapes match
+the live tool schema (2026-11-16).
+
+Create:
+
+```text
+open_cloud_invoke(
+  method: "POST", endpoint: "/assets/v1/assets",
+  scopes: ["asset:read", "asset:write"],
+  files: [{ name: "fileContent", path: "<absolute path>" }],
+  body: '{"request": {"assetType": "Audio", "displayName": "Siren",
+          "description": "Air-raid siren",
+          "creationContext": {"creator": {"userId": "<id>"}}}}')
+```
+
+- The body needs the `"request"` wrapper. A body with the fields at the top
+  level fails, and so does `files` given as a map instead of an array.
+- `creator` is `{"userId": ...}` or `{"groupId": ...}` for a group game.
+- The call returns an operation. Poll `GET /assets/v1/operations/<id>` until
+  `done` is true; the response then carries the asset id.
+- Audio then sits in moderation ("Reviewing", then "Approved"). It is not
+  shipped until it is approved: do not wire it into the game and call it done
+  while it is still under review.
+
+New revision of the same asset (ids in config stay put):
+
+```text
+open_cloud_invoke(
+  method: "PATCH", endpoint: "/assets/v1/assets/<id>",
+  scopes: ["asset:read", "asset:write"],
+  files: [{ name: "fileContent", path: "<absolute path>" }],
+  body: '{"request": {"assetId": "<id>"}}')
+```
+
+`InsertService:LoadAsset(id)` then serves the new revision, so the id in
+config does not churn.
+
+Limits: at most 5 files of 20 MB per call, and only from a directory the
+creator approved in Assistant Settings -> MCP Permissions. A rejected file means
+"ask for approval", never "copy it into an approved folder". An upload is a real
+write to the owner's account: ask before the first one and record the ids in the
+repo.
+
+## Blender -> Roblox rigged meshes
+
+Reported from a production game project (2026-11):
+
+- Export **one mesh per rig segment** (head, torso, upper arm, ...) and drive
+  them with `Motor6D`s from code. One skinned mesh per character is harder to
+  pose procedurally and to re-export.
+- Imported meshes face **+Z**; Roblox's forward is -Z. Place each segment with
+  a 180° yaw (`CFrame.Angles(0, math.pi, 0)`), or every limb points backwards.
+- Have the Blender script write the rig (segment names, joint pivots, sizes) to
+  JSON, and generate a Luau spec module from that JSON. The Luau side never
+  hand-copies numbers from Blender.
+- Seed randomness with fixed integers or `sum(map(ord, name))`, never Python's
+  `hash()`: string hashing is salted per process, so the geometry drifts
+  between two builds of the same file.
+- Keep baked **metalness at or below ~0.45**. At 0.8, metal reflects Roblox's
+  dull default sky and reads as black.
+- Gear worn on avatars (helmets, masks, pads) needs **superellipse shells**,
+  not sphere caps: avatar heads and limbs are rounded cubes, so a sphere lets
+  the corners poke through. An exponent of 3.4 or more fits most parts; about 8
+  for a tight balaclava. Scale per axis to the wearer's part
+  (`limb.Size / referenceSize`) and weld.
+
 ## Uploading generated images through the Studio MCP
 
 `upload_image` takes **http(s) URLs**, not file paths, and uploads into the

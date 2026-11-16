@@ -166,17 +166,67 @@ script is clean without dumping the whole Studio console into context.
 
 ## Server tests must report themselves
 
-`live.server_test` (and anything built on it) runs your file as a temporary `Script` in a live Play
-session and waits for an attribute. The file has to write the verdict:
+`rbforge servertest` (`live.server_test`, and anything built on it) runs your file as a temporary
+`Script` in a live Play session and waits for an attribute. The file has to write the verdict, on
+`workspace` or on its own Script:
 
 ```lua
 workspace:SetAttribute("RbforgeTest", ok and ("PASS " .. detail) or ("FAIL " .. detail))
+-- or
+script:SetAttribute("RbforgeTest", ok and ("PASS " .. detail) or ("FAIL " .. detail))
 ```
 
 A file that merely `return`s a value reports nothing: it was silently a 120 s `TIMEOUT`, which reads
-as "the test hung" instead of "the test never reported". Newer builds return
-`INVALID: the test never sets workspace:<attr>` immediately - if you see `TIMEOUT`, check that the
+as "the test hung" instead of "the test never reported". The runner returns
+`INVALID: the test never calls SetAttribute` immediately - if you see `TIMEOUT`, check that the
 attribute name in the test matches the one the runner passes (`test_attr`, default `RbforgeTest`).
+
+What the runner does (all verified live, 2026-11-16):
+
+- **Play first.** It asks `get_studio_state` before anything else; in Edit mode it refuses with
+  `RBF-PLAY-001 start Play first` (exit 4) instead of a datamodel error.
+- **Readiness.** `--ready "workspace.BootStage=players-wired"` waits until that attribute on that
+  instance equals the value before the test starts, inside the same timeout. Not reached ->
+  `NOT_READY ...`, a failure.
+- **Client tests.** `--dm Client` runs the file as a `LocalScript` in the local player's
+  `PlayerScripts`.
+- **Cleanup kills deferred work.** The runner destroys the test Script once the result is set.
+  Destroying a Script kills every thread it started - `task.delay`, `task.spawn`, and deferred work
+  the test triggered inside game code, such as a delayed body removal after a kill. `Parent = nil`
+  and `Disabled = true` kill them too (all checked live). Keep test cleanup synchronous, or pass
+  `--grace <seconds>` to wait after the result before destroying, or `--keep` to leave the Script
+  (stopping Play discards it).
+- **Suites.** `rbforge servertest --suite suites.json` runs every suite in one Studio session, prints
+  one line per suite on stderr, emits the JSON report on stdout, and exits with the number of failed
+  suites (a refused run, such as Edit mode, still exits with its error code):
+
+```json
+{"suites": [
+  {"file": "tests/Combat.server.luau", "attr": "CombatTest", "timeout": 60},
+  {"file": "tests/Hud.client.luau", "attr": "HudTest", "datamodel": "Client"},
+  {"file": "tests/Ragdoll.server.luau", "attr": "RagdollTest", "grace": 3,
+   "ready": "workspace.BootStage=players-wired", "name": "ragdoll cleanup"}
+]}
+```
+
+Paths are relative to the manifest. `datamodel` is `Server` (default) or `Client`; `timeout`
+defaults to 120.
+
+## Place test units at their own level
+
+A ground ray cast from high above a spawn point lands on whatever is on top: roofs, crane beams,
+canopies. A unit spawned there walks off the edge and falls out of the map, and the test fails in a
+way that looks like an AI bug. Cast a short ray at the unit's own level (start a few studs above the
+intended floor, not at the sky) and set `RespectCanCollide = true` so trigger volumes and decorative
+non-collidable parts are ignored:
+
+```lua
+local params = RaycastParams.new()
+params.FilterType = Enum.RaycastFilterType.Exclude
+params.FilterDescendantsInstances = { unit }
+params.RespectCanCollide = true
+local hit = workspace:Raycast(spawnPos + Vector3.new(0, 4, 0), Vector3.new(0, -12, 0), params)
+```
 
 
 ## The MCP sandbox has its own `require` cache
@@ -191,9 +241,11 @@ sandbox are invisible to the game. Two consequences:
 - Do not diagnose "the game is broken" from a sandbox read of module state. Cross-check with
   something the game writes: a `leaderstats` value, a workspace attribute, or the HUD text.
 
-Setting `Script.Source` from the sandbox is refused in Play mode
-(`cannot read 'Source' (lacking capability PluginOrOpenCloud)`), so a live test has to be pushed to
-the place from disk (Rojo mapping + `rb_studio_push`) before Play starts.
+An earlier Studio build refused `Script.Source` from the sandbox in Play mode
+(`cannot read 'Source' (lacking capability PluginOrOpenCloud)`). Re-checked 2026-11-16: creating a
+Script and reading or setting its `Source` in the Server datamodel works, which is how `servertest`
+injects a test. If your build refuses it, push the test from disk (Rojo mapping + `rb_studio_push`)
+before Play starts.
 
 ## A cold-start `NoPath` can be a navmesh bake - but it is still a failure if it persists
 

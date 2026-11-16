@@ -5,6 +5,7 @@ Codes are stable strings; agents may branch on them.
 
     RBF-STUDIO-*   Roblox Studio installation / process / settings
     RBF-MCP-*      official Studio MCP launcher / handshake
+    RBF-PLAY-*     a live playtest is needed and not running (servertest)
     RBF-DOCS-*     creator-docs cache
     RBF-PROJECT-*  project detection / analysis
     RBF-TOOLS-*    optional Luau toolchain
@@ -29,6 +30,7 @@ _EXIT_BY_PREFIX = {
     "RBF-ARG": ExitCode.VALIDATION,
     "RBF-STUDIO": ExitCode.NOT_FOUND,
     "RBF-MCP": ExitCode.DEPENDENCY,
+    "RBF-PLAY": ExitCode.DEPENDENCY,
     "RBF-DOCS": ExitCode.DEPENDENCY,
     "RBF-PROJECT": ExitCode.NOT_FOUND,
     "RBF-TOOLS": ExitCode.DEPENDENCY,

@@ -59,6 +59,22 @@ first build session.
   and respawn normally on death. Disable auto-load, build the world and assign a
   real `RespawnLocation`, then `LoadCharacterAsync`.
 
+## Character and test-world traps (2026-11)
+
+- **No `Motor6D` on the avatar.** Current R15 avatars can be joined by
+  `AnimationConstraint` (15 of them, zero `Motor6D`s on a default avatar,
+  verified live). Motor6D-only joint code silently does nothing; its `C0`/`C1`
+  are read-only, so offset through `Attachment0.CFrame` and pose through
+  `Transform`. Details: `animation.md`.
+- **IKControl loses to your own PreSimulation posing** of the same joints.
+- **Ragdoll swap leaves floating decals and lights** unless the hidden
+  original's LayerCollectors, Lights, ParticleEmitters and Highlights are
+  disabled.
+- **A ground ray from high up lands on roofs**, crane beams and canopies; a unit
+  spawned there falls off the map and the test fails like an AI bug. Cast short
+  rays at the unit's own level with `RespectCanCollide = true`
+  (`testing-debugging.md`).
+
 ## Workflow traps
 
 - Editing StarterGui at runtime does nothing for existing players - edit

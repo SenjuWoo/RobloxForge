@@ -177,8 +177,13 @@ def _claude():
         if not exe:
             return None
         done = _run([exe, "mcp", "list"])
-        return {"configured": _mentions(done.stdout),
-                "detail": (done.stdout or done.stderr).strip()[-300:]}
+        out = {"configured": _mentions(done.stdout),
+               "detail": (done.stdout or done.stderr).strip()[-300:]}
+        if not out["configured"]:
+            via = _claude_proxy(os.path.join(os.path.expanduser("~"), ".claude.json"))
+            if via:
+                out["reachable_via"] = via
+        return out
 
     def connect(_cfg=None):
         st = status()
@@ -207,6 +212,36 @@ def _claude():
         return "removed via `claude mcp remove`"
 
     return {"installed": installed, "status": status, "connect": connect, "disconnect": disconnect}
+
+
+def _claude_proxy(cfg_file):
+    """Name of a Claude MCP server that launches RobloxForge on demand, or None.
+
+    A tool-gateway server (one MCP entry that starts project tools when asked) can expose the forge
+    without a `robloxforge` entry, so `claude mcp list` alone reported "not configured" while the
+    18 tools were reachable. Such a gateway is recognised by the ROBLOX_FORGE_ROOT it is given, or
+    by launching a RobloxForge `mcp_server/server.py`. Read-only: the config is never written here.
+    """
+    try:
+        with open(cfg_file, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    tables = [data.get("mcpServers")]
+    tables += [p.get("mcpServers") for p in (data.get("projects") or {}).values() if isinstance(p, dict)]
+    for table in tables:
+        if not isinstance(table, dict):
+            continue
+        for name, cfg in table.items():
+            if name == FORGE_SERVER or not isinstance(cfg, dict):
+                continue
+            env = cfg.get("env") if isinstance(cfg.get("env"), dict) else {}
+            argv = " ".join(str(a) for a in [cfg.get("command") or ""] + list(cfg.get("args") or []))
+            if "ROBLOX_FORGE_ROOT" in env or "mcp_server/server.py" in argv.replace("\\", "/"):
+                return name
+    return None
 
 
 def _claude_disable_everywhere(cfg_file):

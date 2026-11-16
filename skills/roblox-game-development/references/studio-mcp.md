@@ -1,9 +1,11 @@
 # Studio MCP reference (official built-in server)
 
-Verified against a live handshake on Windows 11, Studio 0.735.x, 2026-11-01:
-**34 tools**. The surface moves with Studio updates - always confirm via
-`list_roblox_studios` + `rb_capabilities`, never from memory. A tool named here
-that is absent is absent; say so instead of pretending.
+Verified against a live handshake on Windows 11, 2026-11-16: **38 tools**
+(2026-11-01: 34; added since: `save_place`, `open_cloud_invoke`,
+`submit_feedback`, `generate_animation`; none removed). The surface moves with
+Studio updates - always confirm via `tools/list`, `list_roblox_studios` and
+`rb_capabilities`, never from memory. A tool named here that is absent is
+absent; say so instead of pretending.
 
 ## Tool map
 
@@ -14,12 +16,83 @@ that is absent is absent; say so instead of pretending.
 | Luau execution | `execute_luau` (datamodel_type: Edit / Client / Server) |
 | Playtest | `get_studio_state`, `start_stop_play`, `get_console_output`, `screen_capture` |
 | Input | `character_navigation`, `user_keyboard_input`, `user_mouse_input` |
-| Generative | `generate_procedural_model`, `generate_mesh`, `generate_texture`, `generate_material`, `generate_scene`, `generate_avatar`, `auto_setup_avatar`, `segment_mesh` |
+| Generative | `generate_procedural_model`, `generate_mesh`, `generate_texture`, `generate_material`, `generate_scene`, `generate_avatar`, `generate_animation`, `auto_setup_avatar`, `segment_mesh` |
 | Assets | `search_asset`, `insert_asset`, `store_image`, `upload_image` |
+| Open Cloud | `open_cloud_invoke` (authenticated Open Cloud requests, multipart file upload) |
+| Saving | `save_place` |
 | Async | `wait_job_finished` |
 | Docs/skills | `http_get`, `skill`, `list_skills`, `create_skill`, `edit_skill` |
-| Delegation | `subagent` (`explore`, `playtest`, `screen_capture`, `unit_test`) |
+| Delegation | `subagent` (`explore`, `playtest`; the argument also accepts `screen_capture`, `unit_test`) |
+| Feedback | `submit_feedback` |
 | Sessions | `list_roblox_studios` |
+
+## Which place is this?
+
+`list_roblox_studios` tells a cloud place from a local file. Check it before
+editing: agents have worked in a stale local `.rbxl` while the owner's real
+place was the cloud one.
+
+| Opened as | Entry fields |
+|---|---|
+| cloud place (incl. Team Create) | `id`, `mode`, `name` ("Name (placeId: N)"), `persistedToCloud: true`, `placeId`, `universeId` |
+| local `.rbxl` / `.rbxlx` | `id`, `mode`, `name`, `file`, `persistedToCloud: false`, `state` (no `placeId`) |
+
+`rbforge doctor` prints this as `Name - cloud place N` or
+`name.rbxl - local file, not a cloud place`. The first entry after Studio
+registers can arrive without `name` for a moment; ask again.
+
+`get_studio_state` answers in text, for example
+`- Current Studio Mode: Play` / `- Available DataModels: Client, Server`.
+`Server` is only listed during a playtest.
+
+## `save_place`: Ctrl+S, never publish
+
+Saves the open place the way File > Save does. A cloud place gets a new place
+version in version history; a local file is written back to disk. It never
+publishes, so players see nothing until the owner publishes.
+
+| status | Meaning / what to do |
+|---|---|
+| `Saved` | done; `version` (cloud) or `filePath` (local) |
+| `NotNeeded` | no unsaved changes; nothing written |
+| `NeedsUserAction` | Studio needs a dialog (never saved, Save As, script changes from a playtest); relay the message, the owner saves once by hand |
+| `Busy` | a playtest, save or publish is running; retry after it ends (stop the playtest first) |
+| `Failed` | `message` says why |
+
+Call it when the owner asks to save, or at the end of a change they asked to
+have saved. Not after every edit: each cloud save adds a version. `notes` labels
+the version only when asked; `notesSaved: false` does not mean the save failed,
+so do not save again to retry the notes.
+
+## `open_cloud_invoke`: Open Cloud with the Assistant's permissions
+
+Sends an authenticated request to `https://apis.roblox.com` + `endpoint` (a
+path starting with `/`, never a full URL). Auth is automatic, limited to the
+scopes the creator granted in Assistant Settings -> MCP Permissions; never pass
+an API key or auth header. Pass `scopes` so a missing grant fails with a precise
+error. A 403 or a denied scope is the creator's decision: ask them to grant it,
+do not work around it. A 401: retry once.
+
+`files` turns the request into multipart/form-data: an **array** of
+`{name, path, contentType?}` with absolute paths, at most 5 files of 20 MB.
+With `files`, `body` is a JSON object whose keys become form fields. Files must
+sit in a directory the creator approved in MCP Permissions; if one is
+rejected, ask for the directory to be approved, never copy the file somewhere
+else to get around the gate. The asset upload route is in `assets.md`.
+
+## `submit_feedback`
+
+Sends feedback about Studio and its MCP tools to the team that builds them: one
+specific issue per call (tool, what you tried, what happened, what would have
+worked). Never about the user's game or the user; no source code, personal data
+or credentials. Do not call it if the user has opted out, and after a send tell
+them in one sentence what it was about and that they can ask you to stop.
+
+## `generate_animation`
+
+Makes an R15 animation from `textPrompt` (pass the user's words unchanged) or
+upscales an R6 clip from `inputAssetId`. `instance_path` picks the rig;
+without it the selected rig is used, or a default rig is inserted.
 
 ## Argument quirks (these cost real retries)
 

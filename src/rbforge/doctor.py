@@ -57,9 +57,11 @@ def render(report):
     elif p.get("responding"):
         lines.append(_line("Studio MCP handshake", "responding (%d tools)" % p["tool_count"]))
         places = s.get("active_places") or []
+        sessions = s.get("studio_sessions") or []
         # str() because a Studio with an unsaved place can report no name at all;
         # that used to raise inside join() and take the whole report down.
-        lines.append(_line("Active place(s)", ", ".join(str(p) for p in places if p) if places else
+        shown = "; ".join(studio_mod.describe_session(x) for x in sessions) if sessions else             ", ".join(str(p) for p in places if p)
+        lines.append(_line("Active place(s)", shown if places else
                            "(none - open a place to build)",
                            "open a place in Studio" if not places else None))
         if s.get("multiple_studio_sessions"):
@@ -86,6 +88,8 @@ def render(report):
         conf = info.get("configured")
         note = info.get("note")
         val = {True: "configured", False: "not configured"}.get(conf, "?")
+        if conf is False and info.get("reachable_via"):
+            val = "reachable via %s" % info["reachable_via"]
         if info.get("installed") is False:
             val += " (agent not installed)"
         lines.append(_line("%s integration" % name, val, note))

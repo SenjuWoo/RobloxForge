@@ -90,6 +90,58 @@ code path the wheel uses.
 - Setting `Motor6D.Transform` on a joint that no animation touches is safe;
   writing `Motor6D.C0` fights the Animator and jitters.
 
+## Avatars joined by AnimationConstraint, not Motor6D
+
+Current R15 avatars can be built from `AnimationConstraint`s instead of
+`Motor6D`s (Root, Waist, Neck, Shoulders, Elbows, Wrists, Hips, Knees, Ankles),
+with `BallSocketConstraint`s beside them. Checked live 2026-11-16: a default
+player avatar in Play had 15 `AnimationConstraint`s, 14
+`BallSocketConstraint`s and **zero** `Motor6D`s.
+
+- Code that only searches for `Motor6D` (`FindFirstChildWhichIsA("Motor6D")`,
+  `IsA("Motor6D")`) silently does nothing on these avatars. Look for both.
+- `AnimationConstraint.C0` and `C1` are read-only ("Unable to assign property
+  C0. Property is read only", verified live). Write the joint offset through
+  `Attachment0.CFrame` (or `Attachment1.CFrame`) and pose through
+  `Transform`, which is writable.
+
+```lua
+local function joint(model, name)
+    local j = model:FindFirstChild(name, true)
+    if j and (j:IsA("Motor6D") or j:IsA("AnimationConstraint")) then
+        return j
+    end
+    return nil
+end
+-- offset: Motor6D -> j.C0 ; AnimationConstraint -> j.Attachment0.CFrame
+-- pose:   both    -> j.Transform
+```
+
+## IKControl and your own posing fight
+
+`IKControl` results are applied by the Animator. If your code then poses the
+same joints in `PreSimulation`, it overwrites the IK solve and the limb
+ignores the target (reported from a production game project, 2026-11). Either
+solve those limbs analytically yourself (two-bone IK is a few lines), or pose
+in an order where the IK result is applied after your write, and do not drive
+one joint from both.
+
+## Ragdoll leftovers
+
+When a death hides the original model and swaps in a ragdoll copy, hiding
+parts is not enough. Also disable the original's `LayerCollector`s
+(`SurfaceGui` decals and stencils), `Light`s, `ParticleEmitter`s and
+`Highlight`s, or they hang in mid-air where the body was (reported from a
+production game project, 2026-11).
+
+```lua
+for _, d in original:GetDescendants() do
+    if d:IsA("LayerCollector") or d:IsA("Light") or d:IsA("ParticleEmitter") or d:IsA("Highlight") then
+        d.Enabled = false
+    end
+end
+```
+
 ## Viewmodel traps that only show up in first person
 
 - **Kill the clone's joints.** An equipped weapon carries the welds that bind it to

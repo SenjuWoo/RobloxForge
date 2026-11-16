@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.18.0 - 2026-11-16
+
+### Added
+- `servertest` preflight: it asks `get_studio_state` first and refuses Edit mode with
+  `RBF-PLAY-001 start Play first` (exit 4), instead of failing inside `execute_luau` with a datamodel
+  error. An unrecognised state text does not block the run.
+- `servertest --ready "<instance path>.<Attribute>=<value>"` waits for the game to reach a boot stage
+  before the test starts; not reached -> `NOT_READY ...`, a failure.
+- `servertest --dm Client` runs the test as a LocalScript in the local player's PlayerScripts.
+- `servertest --grace <s>` waits after the result before cleanup, and `--keep` leaves the test Script
+  in place. Destroying the test Script kills every thread it started, including deferred work the
+  test triggered inside game code; this is now documented.
+- `servertest --suite <manifest.json>` runs many suites in one Studio session, prints one line per
+  suite on stderr, emits a JSON report and exits with the number of failed suites.
+- `doctor` shows whether each open place is a cloud place (with its placeId) or a local file, and the
+  report carries `studio_sessions` with `placeId`, `universeId`, `persistedToCloud` and `file`.
+- `doctor` reports Claude as `reachable via <gateway>` when a tool-gateway MCP server that is given
+  `ROBLOX_FORGE_ROOT` (or launches a RobloxForge server) exposes the forge, instead of "not configured".
+- References: the live Studio MCP surface is 38 tools (new: `save_place`, `open_cloud_invoke`,
+  `submit_feedback`, `generate_animation`; none removed), with `save_place` statuses, the Open Cloud
+  rules, cloud-vs-local session fields and the `get_studio_state` text. New knowledge from a production
+  game project: the Open Cloud Assets upload and revision route, a Blender rigged-mesh pipeline,
+  AnimationConstraint avatars, IKControl ordering, ragdoll leftovers, and test-unit placement.
+
+### Fixed
+- `servertest` read only `workspace:GetAttribute`; a test that reports with `script:SetAttribute`
+  timed out. Both are read now.
+- `testing-debugging.md` said Studio refuses `Script.Source` in Play mode; a live re-check shows a new
+  Script's Source can be read and set in the Server datamodel, which is what `servertest` relies on.
+
+### Verified live (disposable local place, 2026-11-16)
+- Edit mode refused with exit 4; `script:SetAttribute` result read; `--ready` unmet -> `NOT_READY`, met
+  -> PASS; Client test PASS; a 4-suite manifest -> 3 pass, 1 fail, exit 1.
+- Destroy, `Parent = nil` and `Disabled = true` each kill a test's `task.delay` thread, including one
+  started inside a required ModuleScript; `--grace 2` and `--keep` let it run.
+- A default R15 avatar in Play: 15 AnimationConstraints, 14 BallSocketConstraints, 0 Motor6Ds;
+  `AnimationConstraint.C0` is read-only and `Transform` is writable.
+- `doctor` printed `<file> - local file, not a cloud place` and `claude integration: reachable via toolbox`.
+
 ## 0.17.3 - 2026-11-15
 
 ### Fixed
@@ -504,7 +543,7 @@ The typecheck rung finally runs, and optimization advice is chosen instead of re
   disk and every require was unknown. The server template no longer declares an unused handle.
 
 ### Verified
-- On DEADZONE: HAVEN the rung now runs against 71 files with the cached definitions and reports real
+- On a production game project the rung now runs against 71 files with the cached definitions and reports real
   errors (e.g. `Viewmodel.luau(169,23): TypeError: Key 'lastYaw' not found`), where yesterday it
   reported nothing at all.
 

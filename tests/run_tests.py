@@ -207,7 +207,7 @@ def _():
 
 # ---------------------------------------------------------------- verification
 
-def _fake_studio(console="", place="Deadzome Haven", capture="C:/shots/smoke.png"):
+def _fake_studio(console="", place="Sample Place", capture="C:/shots/smoke.png"):
     """A Studio session double: tests exercise the real collector, not a fabricated record."""
     class FakeSession:
         studio_id = "fake-studio"
@@ -1893,6 +1893,11 @@ def _fake_session(out):
 
         def __exit__(self, *a):
             return False
+
+        studio_id = "s1"
+
+        def call(self, tool, args):  # servertest's preflight: a running playtest
+            return "- Current Studio Mode: Play\n- Available DataModels: Client, Server\n"
 
         def luau(self, code, dm="Edit"):
             return Fake.answer
@@ -4117,6 +4122,23 @@ def _():
             assert ok, "guarded push code does not parse:\n%s" % detail
 
 
+@check("live: generated servertest code parses as Luau in every variant (ready, client, grace, keep)")
+def _():
+    from rbforge import live
+    ready = live.parse_ready("game.ReplicatedStorage.Boot.Stage=wired]]=]")
+    with tempdir() as d:
+        cfg = os.path.join(d, "selene.toml")
+        open(cfg, "w").write('std = "lua51"\n')
+        for i, code in enumerate([
+                live._server_test_code('script:SetAttribute("A", "PASS ]=]")', "A", 30),
+                live._server_test_code("x", "A", 30, "Client", ready, 2.5, False),
+                live._server_test_code("x", "A", 30, "Server", ready, 0.0, True)]):
+            path = os.path.join(d, "st%d.luau" % i)
+            open(path, "w", encoding="utf-8").write(code)
+            ok, detail = _parse_luau(path, cfg)
+            assert ok, "servertest code does not parse:\n%s" % detail
+
+
 @check("live: the push guard, executed under Lune, refuses Studio edits and backs up before overwriting")
 def _():
     import shutil as _shutil
@@ -4712,7 +4734,7 @@ def _():
             "    elif m == 'tools/list': result = {'tools': [{'name': 'list_roblox_studios'}]}\n"
             "    else:\n"
             "        lists += 1\n"
-            "        entry = {'id': 'uuid-1'} if lists <= 2 else {'id': 'uuid-1', 'name': 'Haven (placeId: 7)'}\n"
+            "        entry = {'id': 'uuid-1'} if lists <= 2 else {'id': 'uuid-1', 'name': 'Sample (placeId: 7)'}\n"
             "        result = {'content': [{'type': 'text', 'text': json.dumps({'studios': [entry]})}]}\n"
             "    print(json.dumps({'jsonrpc': '2.0', 'id': msg['id'], 'result': result}), flush=True)\n")
         orig_cmd, orig_run = studio.mcp_command, studio.studio_running
@@ -4722,7 +4744,240 @@ def _():
             res = studio.probe_mcp(timeout=20)
         finally:
             studio.mcp_command, studio.studio_running = orig_cmd, orig_run
-        assert res["studios"] and res["studios"][0].get("name") == "Haven (placeId: 7)", res["studios"]
+        assert res["studios"] and res["studios"][0].get("name") == "Sample (placeId: 7)", res["studios"]
+
+
+
+def _play_session(state="- Current Studio Mode: Play\n- Available DataModels: Client, Server\n", answers=None):
+    """A Session double for servertest: answers get_studio_state and records every execute_luau."""
+    calls = []
+    queue = list(answers or ["PASS"])
+
+    class Fake:
+        studio_id = "s1"
+        opened = 0
+
+        def __init__(self, *a, **k):
+            Fake.opened += 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def call(self, tool, args):
+            calls.append(("call", tool))
+            return state
+
+        def luau(self, code, dm="Edit"):
+            calls.append(("luau", dm, code))
+            nxt = queue.pop(0) if len(queue) > 1 else queue[0]
+            if isinstance(nxt, Exception):
+                raise nxt
+            return nxt
+    return Fake, calls
+
+
+def _reporting_test(d, name="t.luau"):
+    path = os.path.join(d, name)
+    open(path, "w").write('script:SetAttribute("Attr", "PASS ok")\n')
+    return path
+
+
+@check("servertest: Edit mode is refused with 'start Play first' (exit 4) before the test runs")
+def _():
+    from rbforge import live
+    from rbforge.errors import ForgeError
+    fake, calls = _play_session(state="- Current Studio Mode: Edit\n- Available DataModels: Edit\n")
+    orig = live.Session
+    live.Session = fake
+    try:
+        with tempdir() as d:
+            try:
+                live.server_test(_reporting_test(d), "Attr", timeout=1)
+            except ForgeError as exc:
+                assert exc.code == "RBF-PLAY-001" and "start Play first" in exc.message, exc
+                assert exc.exit_code == 4, exc.exit_code
+            else:
+                raise AssertionError("an Edit-mode servertest was not refused")
+    finally:
+        live.Session = orig
+    assert not [c for c in calls if c[0] == "luau"], calls
+
+
+@check("servertest: an unrecognised get_studio_state text does not block the run")
+def _():
+    from rbforge import live
+    fake, calls = _play_session(state="something new")
+    orig = live.Session
+    live.Session = fake
+    try:
+        with tempdir() as d:
+            got = live.server_test(_reporting_test(d), "Attr", timeout=1)
+    finally:
+        live.Session = orig
+    assert got["passed"], got
+
+
+@check("servertest: a result written with script:SetAttribute is read, not only workspace")
+def _():
+    from rbforge import live
+    code = live._server_test_code('script:SetAttribute("Attr", "PASS")', "Attr", 5)
+    assert 'workspace:GetAttribute("Attr") or s:GetAttribute("Attr")' in code, code
+    assert code.index("rbfOut = rbfResult()") < code.index("s:Destroy()")
+
+
+@check("servertest: --grace waits before destroying the test Script, --keep never destroys it")
+def _():
+    from rbforge import live
+    plain = live._server_test_code("x", "Attr", 5)
+    assert "task.wait(2.5)" not in plain and "s:Destroy()" in plain
+    graced = live._server_test_code("x", "Attr", 5, grace=2.5)
+    assert graced.index("task.wait(2.5)") < graced.index("s:Destroy()"), graced
+    kept = live._server_test_code("x", "Attr", 5, keep=True)
+    assert "s:Destroy()" not in kept, kept
+
+
+@check("servertest: Client runs the test as a LocalScript in the local player's PlayerScripts")
+def _():
+    from rbforge import live
+    fake, calls = _play_session()
+    orig = live.Session
+    live.Session = fake
+    try:
+        with tempdir() as d:
+            live.server_test(_reporting_test(d), "Attr", timeout=1, datamodel="Client")
+    finally:
+        live.Session = orig
+    run = [c for c in calls if c[0] == "luau"][0]
+    assert run[1] == "Client" and "Instance.new('LocalScript')" in run[2] and "PlayerScripts" in run[2], run
+
+
+@check("servertest: --ready waits for an attribute value and reports NOT_READY as a failure")
+def _():
+    from rbforge import live
+    from rbforge.errors import ForgeError
+    assert live.parse_ready("workspace.BootStage=players-wired") == (["workspace"], "BootStage", "players-wired")
+    assert live.parse_ready("game.ReplicatedStorage.Boot.Stage=a=b") == (["ReplicatedStorage", "Boot"], "Stage", "a=b")
+    for bad in ("BootStage", "workspace.Boot Stage=x", "workspace.=x", "work-space.A=x", "workspace.RBXa=x"):
+        try:
+            live.parse_ready(bad)
+        except ForgeError as exc:
+            assert exc.code == "RBF-ARG-002", (bad, exc)
+        else:
+            raise AssertionError("accepted %r" % bad)
+    code = live._server_test_code("x", "Attr", 5, ready=live.parse_ready("workspace.BootStage=players-wired"))
+    assert code.index("rbfReady()") < code.index("Instance.new("), code
+    assert "NOT_READY" in code and '"BootStage"' in code
+    assert live._classify("NOT_READY workspace.BootStage never became the expected value")[1] == "fail"
+
+
+@check("servertest: --suite runs every suite in one session and counts the failures")
+def _():
+    from rbforge import live
+    from rbforge.errors import ForgeError
+    fake, calls = _play_session(answers=["PASS a", "FAIL b", ForgeError("RBF-STUDIO-002", "boom"), "PASS d"])
+    orig = live.Session
+    live.Session = fake
+    lines = []
+    try:
+        with tempdir() as d:
+            os.makedirs(os.path.join(d, "tests"))
+            for n in "abcd":
+                _reporting_test(os.path.join(d, "tests"), n + ".luau")
+            manifest = os.path.join(d, "suites.json")
+            json.dump({"suites": [
+                {"file": "tests/a.luau", "attr": "Attr"},
+                {"file": "tests/b.luau", "attr": "Attr", "timeout": 30},
+                {"file": "tests/c.luau", "attr": "Attr", "name": "crashes"},
+                {"file": "tests/d.luau", "attr": "Attr", "datamodel": "Client", "grace": 1},
+            ]}, open(manifest, "w"))
+            res = live.run_suite(manifest, report=lines.append)
+    finally:
+        live.Session = orig
+    assert fake.opened == 1, fake.opened
+    assert [r["outcome"] for r in res["suites"]] == ["pass", "fail", "error", "pass"], res
+    assert res["failed"] == 2 and res["passed"] == 2, res
+    assert len(lines) == 4 and lines[2].startswith("ERROR crashes"), lines
+    assert [c[1] for c in calls if c[0] == "luau"] == ["Server", "Server", "Server", "Client"], calls
+
+
+@check("servertest: a bad suite manifest is refused before Studio is touched")
+def _():
+    from rbforge import live
+    from rbforge.errors import ForgeError
+    with tempdir() as d:
+        m = os.path.join(d, "m.json")
+        for bad in ([], [{"attr": "A"}], [{"file": "a.luau", "attr": "bad name"}],
+                    [{"file": "a.luau", "attr": "A", "datamodel": "Edit"}],
+                    [{"file": "a.luau", "attr": "A", "timeout": 0}],
+                    [{"file": "a.luau", "attr": "A", "ready": "nope"}]):
+            json.dump(bad, open(m, "w"))
+            try:
+                live.load_suite(m)
+            except ForgeError as exc:
+                assert exc.code == "RBF-ARG-002", (bad, exc)
+            else:
+                raise AssertionError("accepted %r" % (bad,))
+
+
+@check("cli: servertest --suite exits with the number of failed suites")
+def _():
+    from rbforge import live
+    orig = live.run_suite
+    live.run_suite = lambda *a, **k: {"suites": [], "passed": 1, "failed": 3}
+    try:
+        code, out = _cli("servertest", "--suite", "whatever.json")
+    finally:
+        live.run_suite = orig
+    assert code == 3 and out["failed"] == 3, (code, out)
+    code, out = _cli("servertest")
+    assert code == 2 and out["error"]["code"] == "RBF-ARG-001", (code, out)
+
+
+@check("agents: a Claude tool gateway that carries ROBLOX_FORGE_ROOT counts as reachable")
+def _():
+    from rbforge import agents
+    with tempdir() as d:
+        cfg = os.path.join(d, ".claude.json")
+        json.dump({"mcpServers": {"gateway": {"command": "gw.exe", "env": {"ROBLOX_FORGE_ROOT": "x"}}}}, open(cfg, "w"))
+        assert agents._claude_proxy(cfg) == "gateway"
+        json.dump({"projects": {"p": {"mcpServers": {"rf2": {"command": "python",
+                                                              "args": ["C:\\RF\\mcp_server\\server.py"]}}}}}, open(cfg, "w"))
+        assert agents._claude_proxy(cfg) == "rf2"
+        json.dump({"mcpServers": {"other": {"command": "npx", "args": ["thing"]}}}, open(cfg, "w"))
+        assert agents._claude_proxy(cfg) is None
+        open(cfg, "w").write("{broken")
+        assert agents._claude_proxy(cfg) is None
+
+
+@check("doctor: says 'reachable via <gateway>' and shows each place's cloud or local identity")
+def _():
+    from rbforge import doctor, studio
+    cloud = studio.session_info({"id": "u1", "mode": "Edit", "name": "My Game (placeId: 42)",
+                                 "persistedToCloud": True, "placeId": 42, "universeId": 7})
+    local = studio.session_info({"id": "u2", "mode": "Edit", "name": "copy.rbxl", "file": "copy.rbxl",
+                                 "persistedToCloud": False})
+    assert cloud["name"] == "My Game" and cloud["placeId"] == 42, cloud
+    assert studio.describe_session(cloud) == "My Game - cloud place 42"
+    assert studio.describe_session(local) == "copy.rbxl - local file, not a cloud place"
+    assert studio.describe_session(dict(local, name="Place")) == "Place - local file copy.rbxl, not a cloud place"
+    report = {
+        "version": "x",
+        "studio": {"studio_installed": True, "studio_version": "1", "studio_process": {"running": True},
+                   "mcp_enabled_setting": {"enabled": True}, "mcp_launcher_found": True,
+                   "active_places": ["My Game (placeId: 42)", "copy.rbxl"],
+                   "studio_sessions": [cloud, local], "multiple_studio_sessions": True},
+        "mcp_probe": {"responding": True, "tool_count": 38},
+        "docs": {"present": False},
+        "toolchain": {},
+        "agents": {"claude": {"configured": False, "reachable_via": "toolbox", "installed": True}},
+        "capabilities_by_status": {},
+    }
+    text = doctor.render(report)
+    assert "My Game - cloud place 42; copy.rbxl - local file, not a cloud place" in text, text
+    assert "reachable via toolbox" in text, text
 
 
 if __name__ == "__main__":
