@@ -24,7 +24,7 @@ Evidence format: `cmd:<command> @ <sha> exit=<n>`. `T=python tests/run_tests.py`
 | Q1 | Docs sample gate: every fenced Luau block in the first-party references parses (StyLua), with a negative control | complete | K1-K6 | `cmd:RBFORGE_TEST_ONLY="docs: reference samples" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
 | R1 | Full suite, self-check, version 0.19.0, CHANGELOG, README, STATE, field reports cleared | complete | all | `cmd:T` and `cmd:python src/rbforge_cli.py check . --scope static` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped); repo-root `check . --scope static` is not a project gate (probe templates carry placeholders) - the scaffold's own `rbforge check` is: exit=0 |
 | R2 | Live: scaffolded project built, opened in Studio, Play, console clean, starter loop exercised | complete | S1 | `cmd:rbforge servertest` against the scaffold | run on the tree that became 5184530, live Studio Play, disposable local place: `cmd:rbforge servertest tests/Starter.server.luau --ready workspace.ServerReady=true` exit=0 (PASS, twice); Client `DoAction` 0 -> 2 coins; capture inspected; console clean |
-| R3 | Push, CI green on the SHA, alerts queried, tag + release, skills installed, doctor | pending | R1 | `cmd:gh run list` / `rbforge doctor` | - |
+| R3 | Push, CI green on the SHA, alerts queried, tag + release, skills installed, doctor | complete | R1 | `cmd:gh run list` / `rbforge doctor` | v0.19.0 @ 1abefb5: CI green, 0 open alerts, asset sha256 verified, smoke OK, skills current, doctor v0.19.0 |
 
 ## Decisions
 

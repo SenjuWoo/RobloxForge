@@ -291,6 +291,13 @@ rbforge.cmd <command>              # same CLI, from the checkout
 
 - 2026-11-17 — 0.19.0: knowledge audit, audit command, starter kit, genres, lint T026-T044; 238 tests;
   starter loop proven in live Studio Play.
+  Released v0.19.0 from 1abefb5 (CI + CodeQL green on 5184530 and 1abefb5; 0 open Dependabot,
+  code-scanning and secret-scanning alerts). Published zip sha256-verified
+  (976c933c...74c3e8), `smoke_artifact.py` OK from the extracted asset (25 skills, 19 MCP tools),
+  `new` + `check` PASS and `audit` clean run from it; skills updated and `current` in every agent
+  root; `rbforge doctor` reports v0.19.0.
+  Known quirk, not fixed in this release: `python -I src/rbforge_cli.py` cannot import `rbforge`
+  (isolated mode drops the script directory from `sys.path`); the `rbforge` launcher is unaffected.
 
 - 2026-11-16 — 0.18.0: servertest upgrades, doctor place identity, 38-tool MCP surface; 217 tests.
 
