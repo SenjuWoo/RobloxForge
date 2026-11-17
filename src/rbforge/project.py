@@ -34,11 +34,57 @@ def detect(path):
                      "official MCP tools instead" if False else None)}
 
 
+# Directories that hold copies of the code rather than the code: recovery snapshots and vendored
+# packages. Auditing them reports defects nobody can fix and buries the real ones. Build output is
+# left to .gitignore (`out/` is the shipped Luau of a roblox-ts project, so no name can decide it).
+SNAPSHOT_DIRS = frozenset({"artifacts", "backups", "backup", "recovery",
+                           "Packages", "ServerPackages", "DevPackages", "_Index"})
+_SKIP_DIRS = frozenset({".git", "node_modules", "__pycache__", ".sourcemap", "sourcemap"})
+
+
+def is_snapshot(rel):
+    """True when a project-relative path sits under a snapshot/vendored directory."""
+    parts = rel.replace("\\", "/").split("/")[:-1]
+    return any(p in SNAPSHOT_DIRS or p.lower() in ("artifacts", "backups", "backup", "recovery")
+               for p in parts)
+
+
+def git_ignored(root, rels):
+    """The subset of `rels` (project-relative, forward slashes) that git ignores.
+
+    Empty when `root` is not inside a work tree or git is absent: an unknown answer keeps the file in
+    the audit, because dropping source silently is the worse error.
+    """
+    import subprocess
+    rels = list(rels)
+    if not rels:
+        return set()
+    try:
+        # NUL-separated bytes both ways: text mode turns "\n" into "\r\n" on Windows and git then
+        # looks up a path ending in "\r", which is never ignored.
+        done = subprocess.run(["git", "check-ignore", "-z", "--stdin"], cwd=root,
+                              input="\0".join(rels).encode("utf-8"), capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if done.returncode not in (0, 1):  # 128: not a repository
+        return set()
+    return {p for p in done.stdout.decode("utf-8", "replace").split("\0") if p}
+
+
+def shipped_sources(root, files=None):
+    """(kept, skipped) absolute paths: Luau sources that are part of the project being shipped."""
+    files = list(files) if files is not None else list(_walk_sources(root))
+    rel = {f: os.path.relpath(f, root).replace("\\", "/") for f in files}
+    ignored = git_ignored(root, [r for r in rel.values() if not is_snapshot(r)])
+    kept, skipped = [], []
+    for f in files:
+        (skipped if is_snapshot(rel[f]) or rel[f] in ignored else kept).append(f)
+    return kept, skipped
+
+
 def _walk_sources(path):
     for dirpath, dirnames, filenames in os.walk(path):
-        dirnames[:] = [d for d in dirnames
-                       if d not in (".git", "node_modules", "__pycache__",
-                                    ".sourcemap", "sourcemap")]
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
         for name in filenames:
             if name.lower().endswith(_LUAU_EXTS) or name.endswith((".server.lua",
                                                                    ".client.lua")):

@@ -47,17 +47,25 @@ in this order — each one is cheap and independently testable:
 | Numbers | floating damage text with `TweenService` up + fade | count text instances after 10 hits — must not grow |
 | Currency | UI number ticker springing to the new value, not snapping | value equals server value after the tick |
 | Movement | small acceleration + landing squash, `Humanoid` walk speed ramp | walk speed returns to base, no drift |
-| Reward moment | 0.2s time dilation on level-up, then restore | `workspace.Gravity` unchanged after the effect |
+| Reward moment | a short sting, a burst, the number that grew scaling up and settling | everything returns to its rest state; nothing stays scaled |
 
 Rules:
-- **Pool, do not spawn.** A `ParticleEmitter` and `Sound` per hit leaks instances
-  and eventually stalls the client. Create N up front, reuse them.
-- **Tween, do not loop.** `RunService.RenderStepped` loops for cosmetic values are
-  a common latency bug; `TweenService`/Fusion springs get the same look for free.
+- **Reuse, do not spawn per hit.** A new `ParticleEmitter` and `Sound` for every
+  hit grows the instance count until the client stalls. Keep a small pool, or
+  `Emit(n)` on an emitter that already exists.
+- **Tween one-shot changes; step only what is continuous.** A fade, a slide or a
+  pop is a `TweenService` call. A spring that follows a moving target needs a
+  per-frame step - keep it to one connection per system and disconnect it when
+  the thing it drives is gone.
 - **Every effect ends.** Capture a screenshot after the effect, not during; a
   permanent screen shake is a bug the agent will call "juice".
-- **Feedback is server-confirmed.** Show the currency ticker *after* the server
-  confirms, or you teach players the UI lies.
+- **Local feedback immediately, authoritative numbers after the server.** The
+  press animates and sounds at once; the currency counter moves when the
+  server's value arrives. A counter that runs ahead of the server teaches
+  players the UI lies.
+- **No global slow motion.** There is no per-player time scale in a shared
+  server; fake it locally with animation speed and camera, never by changing
+  gravity or walk speed for a moment.
 
 ## Economy sanity, checked offline
 
@@ -68,7 +76,10 @@ Before shipping a currency loop, assert the math outside the engine (see
 - cost curve growth between 1.15x and 1.5x per tier (below feels flat, above
   feels like a wall),
 - income per action grows slower than cost per tier, or the game solves itself,
-- every currency has exactly one source and one sink, written down.
+- every currency has its sources and sinks written down, and at least one sink
+  that scales with progress - a currency with nowhere to go is a number, not a
+  system.
 
-If you cannot state the loop's source and sink in one sentence each, the design
+These are starting points to tune from playtests, not laws. If you cannot state
+where a currency comes from and where it goes in one sentence each, the design
 is not ready to implement.

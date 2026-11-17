@@ -121,7 +121,8 @@ def _project_analyze(a):
 
 
 @tool("rb_vertical_slice_plan", {"type": "object", "properties": {
-    "genre": {"type": "string", "enum": ["generic", "obby", "simulator", "tycoon"]},
+    "genre": {"type": "string", "description": "generic|obby|simulator|tycoon|shooter|round|"
+                                                "towerdefense|rpg|horror|survival"},
     "premise": {"type": "string"}}, "required": ["genre", "premise"]},
       "Turn a premise into the smallest playable vertical slice plan with "
       "authority boundaries and verification steps. Use BEFORE building.")
@@ -135,8 +136,7 @@ def _slice_plan(a):
     "live": {"type": "boolean", "default": False,
              "description": "review the live Studio place instead of files"}},
       },
-      "Static architecture review of Luau sources: ownership violations, "
-      "monoliths, placement problems. Static heuristics, not a runtime proof.")
+      "Static architecture review of Luau sources: ownership violations, monoliths, placement.")
 def _arch_review(a):
     from rbforge import review
     return review.architecture(path=a.get("path"), live=a.get("live", False))
@@ -306,10 +306,18 @@ def _studio_push(a):
     return live.push(paths, proj, a.get("studio_id"), force=bool(a.get("force")))
 
 
+@tool("rb_audit", {"type": "object", "properties": {"path": {"type": "string"}}},
+      "Ranked health audit of an existing project: what to fix first (data loss, exploitable remotes, "
+      "runtime faults, tests, structure, cost) and every server remote handler with its guards.")
+def _audit(a):
+    from rbforge import audit
+    return audit.audit(a.get("path") or ".")
+
+
 @tool("rb_traps_review", {"type": "object", "properties": {
     "path": {"type": "string", "description": "project root; omit for cwd"}}},
-      "Engine-trap lint: Luau that compiles but breaks a Roblox game (LocalPlayer on the server, "
-      "client-created remotes, unprotected DataStore calls, deprecated APIs). Findings carry file, line and fix.")
+      "Engine-trap lint: Luau that compiles but breaks in Roblox. Findings carry file, line, fix "
+      "and evidence class.")
 def _traps_review(a):
     from rbforge import traps
     return traps.review(a.get("path") or ".")

@@ -1,178 +1,142 @@
-# Animation: procedural motion and first-person viewmodels
+# Animation: authored clips, procedural layers, first-person viewmodels
 
-Notes from building a held-weapon viewmodel and a gait layer over R15 on a live
-game. Everything here is additive to the Animator, so it layers on whatever the
-character is already playing instead of replacing it.
+API detail for rigs, the Animator and constraints is in the `roblox-characters-animation` skill. This
+file is how to choose a route and the traps on each.
 
-## The additive layer
+## Choose the route first
 
-`Motor6D.Transform` is applied **after** the Animator's output. Setting it every
-frame in `RunService.PreSimulation` gives you a procedural pass on top of the
-played animation without touching Animator assets:
+| Route | Use it for | Cost |
+|---|---|---|
+| **Authored clips** played through the `Animator` (default) | characters, NPCs, weapons, doors - anything with a fixed motion | none per frame in your code; the engine blends, replicates and culls |
+| `generate_animation` (Studio MCP) | a first pass of an R15 clip from a text prompt | needs a look and often a retime |
+| **Additive procedural layer** over clips | aim offsets, leaning, look-at, recoil, breathing | a few joint writes per frame, per character you run it on |
+| **Fully procedural rig** (code poses every joint) | creatures with no clip pipeline, legs that must plant on uneven ground | every joint, every frame, every instance - needs distance LOD from day one |
+
+Default to clips. A fully procedural animator is hundreds of lines per creature type and a per-frame
+bill that grows with the crowd; choose it when planted feet or a non-humanoid body justify it, write
+down that you chose it, and budget it:
+
+- run it on the **client** only - the server moves a root part and publishes state (attributes);
+- animate only what is near and on screen: skip rigs past a distance, step far ones at a lower rate;
+- one shared update loop for all rigs, not one connection per rig;
+- measure with 30+ instances before building the second creature on the same pattern.
+
+## Authored clips in practice
 
 ```lua
-RunService.PreSimulation:Connect(function(dt)
-    waist.Transform *= CFrame.Angles(pitch * 0.4, 0, -lean * 0.3)
-end)
+local animator = humanoid:FindFirstChildOfClass("Animator") :: Animator
+local track = animator:LoadAnimation(animation) -- Humanoid:LoadAnimation is deprecated
+track.Priority = Enum.AnimationPriority.Action
+track:Play(0.1)
 ```
 
-Cache the joints once per character (`Waist`, `Neck`, `Root`, `LeftHip`,
-`RightHip`, `LeftKnee`, `RightKnee`, `LeftAnkle`, `RightAnkle`, `LeftShoulder`,
-`RightShoulder`, `LeftElbow`, `RightElbow`); walking the tree every frame for
-every player is the usual performance accident. Do it for **every** character on
-the client - shared attributes (`Stance`, `Aim`, `Lean`) are enough to pose
-others without any new replication.
+- Load a track once per character and keep it; loading inside the input handler stutters and leaks.
+- An animation asset plays only in experiences of its owner (the user or group that uploaded it). A
+  clip that works in Studio and is silent in the live game is usually an ownership mismatch.
+- A track played on a character the client owns replicates to everyone; a server NPC plays its
+  tracks on the server's Animator.
+- Tie gameplay to animation with markers (`track:GetMarkerReachedSignal("Hit")`), not with
+  `task.wait(0.3)` - but the **server** still decides whether the hit counts.
+- Stop looping tracks when the state ends.
 
-## A gait that reads as movement
+## Joints: Motor6D or AnimationConstraint
 
-- **Drive the cycle from real speed**, not input state:
-  `Vector3.new(vel.X, 0, vel.Z).Magnitude` from `HumanoidRootPart`. A character
-  pushed by physics then walks, and one blocked by a wall stops.
-- **Phase advances with speed**: `phase += dt * (idleRate + stride * runRate)`.
-  Constant-rate cycles look like treadmills.
-- **Two joints make a leg**: hip swings, knee only bends on the back half
-  (`-max(0, swing) * 1.15`). Bending both directions reads as a puppet.
-- **Arms counter-swing and damp while aiming** - a weapon must not bob with the
-  shoulders while the player is trying to hit something.
-- **Root bob and roll**, then **counter-rotate the neck** by part of the bob so
-  the head stays level. Without that the camera feels like it is on a spring.
-- **Airborne**: tuck the knees, and pick the amount from vertical velocity.
-- **Landing**: remember `lastVelY`, and on the frame the feet touch down convert
-  it into a squash that decays (`land = max(0, land - dt * k)`).
-- **Standing still is not frozen**: a slow breath on the root and neck at ~1 Hz
-  keeps an idle character alive.
-
-## First-person viewmodel
-
-A viewmodel is a clone of the world weapon parented to the camera, not a UI
-image. What matters, in the order it bites:
-
-1. **One anchor, everything welded to it.** Build a small anchored part, weld the
-   weapon root to it, and weld every other part to the root. Drive exactly one
-   CFrame per frame.
-2. **Scale for the eye.** A weapon authored for a character is enormous at one
-   stud from the camera. `Model:ScaleTo(0.5-0.65)` before welding, then frame it
-   around `CFrame.new(0.32, -0.34, -1.15)`.
-3. **Lift the palette and add a key light.** World lighting reaches the back of
-   the gun while the eye sees the front - the model renders as a black slab.
-   Lerp part colours toward mid grey and put a `PointLight` on the camera.
-4. **Hide the whole body, not the arms.** From inside the head, the torso and
-   backpack are black wedges across the screen. `LocalTransparencyModifier = 1`
-   on every BasePart of the character while the viewmodel is up, restored after.
-5. **Hands.** A floating gun reads as a bug; two blocky gloved hands on the grip
-   and fore-end read as held. They cost four lines.
-6. **Sway, bob, recoil, reload** on springs: sway from the camera's own yaw/pitch
-   delta (clamped), bob from horizontal speed, recoil as an impulse the fire path
-   calls, and a dip while reloading.
-
-## Verifying it without a mouse
-
-MCP wheel input works when the pointer is moved onto the viewport first (`moveTo`,
-then `scrollUp`), but a test that does not depend on the pointer is sturdier. Add a
-debug attribute the movement code respects:
+Current R15 avatars can be joined by `AnimationConstraint`s instead of `Motor6D`s (checked live
+2026-11-16: a default player avatar in Play had 15 `AnimationConstraint`s, 14
+`BallSocketConstraint`s and **zero** `Motor6D`s). Code that searches only for `Motor6D` silently
+does nothing on them. Look for both, everywhere:
 
 ```lua
-local firstPerson = st.zoom == 0 or player:GetAttribute("DebugFirstPerson") == true
-```
-
-Then a client `execute_luau` can set it, wait a frame, and assert the viewmodel
-exists, the body is hidden and the log is clean. That is a real test of the same
-code path the wheel uses.
-
-## Traps
-
-- Welding parts that are still `Anchored` leaves the assembly frozen; unanchor
-  every cloned part.
-- Cloning a weapon brings its `PointLight`s, `ParticleEmitter`s and any scripts
-  with it; strip them or you get a second muzzle flash in the eye.
-- `Model:ScaleTo` after welding does not move welds the way you expect - scale
-  first, then weld.
-- Setting `Motor6D.Transform` on a joint that no animation touches is safe;
-  writing `Motor6D.C0` fights the Animator and jitters.
-
-## Avatars joined by AnimationConstraint, not Motor6D
-
-Current R15 avatars can be built from `AnimationConstraint`s instead of
-`Motor6D`s (Root, Waist, Neck, Shoulders, Elbows, Wrists, Hips, Knees, Ankles),
-with `BallSocketConstraint`s beside them. Checked live 2026-11-16: a default
-player avatar in Play had 15 `AnimationConstraint`s, 14
-`BallSocketConstraint`s and **zero** `Motor6D`s.
-
-- Code that only searches for `Motor6D` (`FindFirstChildWhichIsA("Motor6D")`,
-  `IsA("Motor6D")`) silently does nothing on these avatars. Look for both.
-- `AnimationConstraint.C0` and `C1` are read-only ("Unable to assign property
-  C0. Property is read only", verified live). Write the joint offset through
-  `Attachment0.CFrame` (or `Attachment1.CFrame`) and pose through
-  `Transform`, which is writable.
-
-```lua
-local function joint(model, name)
-    local j = model:FindFirstChild(name, true)
-    if j and (j:IsA("Motor6D") or j:IsA("AnimationConstraint")) then
-        return j
-    end
-    return nil
+local function joint(model: Model, name: string): (Motor6D | AnimationConstraint)?
+	local j = model:FindFirstChild(name, true)
+	if j and (j:IsA("Motor6D") or j:IsA("AnimationConstraint")) then
+		return j
+	end
+	return nil
 end
--- offset: Motor6D -> j.C0 ; AnimationConstraint -> j.Attachment0.CFrame
+-- offset: Motor6D -> j.C0 ; AnimationConstraint -> j.Attachment0.CFrame (C0/C1 are read-only there)
 -- pose:   both    -> j.Transform
 ```
 
-## IKControl and your own posing fight
+## The additive layer
 
-`IKControl` results are applied by the Animator. If your code then poses the
-same joints in `PreSimulation`, it overwrites the IK solve and the limb
-ignores the target (reported from a production game project, 2026-11). Either
-solve those limbs analytically yourself (two-bone IK is a few lines), or pose
-in an order where the IK result is applied after your write, and do not drive
-one joint from both.
+`Transform` is written by the Animator each frame; multiplying it afterwards in
+`RunService.PreSimulation` adds a procedural pass on top of whatever clip is playing:
+
+```lua
+RunService.PreSimulation:Connect(function()
+	waist.Transform *= CFrame.Angles(pitch * 0.4, 0, -lean * 0.3)
+end)
+```
+
+- Cache the joints once per character; walking the tree every frame for every player is the usual
+  performance accident.
+- Shared attributes (`Stance`, `Aim`, `Lean`) are enough to pose other players' characters on each
+  client without new replication.
+- Write `Transform`, not `C0`: writing `C0` every frame fights the Animator and jitters.
+- `IKControl` results are applied by the Animator. If your code also poses those joints, it
+  overwrites the solve and the limb ignores its target. Drive each joint from one system.
+
+## A procedural gait that reads as movement
+
+- **Drive the cycle from real speed**: `Vector3.new(vel.X, 0, vel.Z).Magnitude` of the root. A
+  character pushed by physics then walks, and one blocked by a wall stops.
+- **Phase advances with speed**: `phase += dt * (idleRate + stride * runRate)`. Constant-rate cycles
+  look like treadmills.
+- **Two joints make a leg**: the hip swings, the knee bends only on the back half.
+- **Arms counter-swing and damp while aiming.**
+- **Root bob and roll**, then counter-rotate the neck by part of the bob so the head stays level.
+- **Airborne**: tuck the knees by vertical velocity. **Landing**: turn the last downward speed into
+  a squash that decays.
+- **Standing still is not frozen**: a slow breath at ~1 Hz.
+
+## First-person viewmodel
+
+A viewmodel is a clone of the world weapon parented to the camera, not a UI image. In the order it
+bites:
+
+1. **Strip the clone.** It carries the welds that bind it to the hand, plus lights, emitters and
+   scripts. Destroy every `JointInstance` and `Constraint` in it before adding your own - an anchored
+   viewmodel still welded to the live character flings the player.
+2. **One anchor, everything welded to it.** Park the anchor on the weapon root
+   (`anchor.CFrame = body.CFrame`), **then** weld: a `WeldConstraint` keeps the offset it saw at
+   creation, and an anchor left at the origin puts the gun hundreds of studs away.
+3. **Scale for the eye.** `Model:ScaleTo(0.5-0.65)` before welding, framed around
+   `CFrame.new(0.22, -0.30, -1.20)` in camera space: about 12 % of the width and 32 % of the height,
+   lower right. Measure with `Camera:WorldToViewportPoint`.
+4. **Make it readable without lighting the world.** World light reaches the back of the gun while
+   the eye sees the front. Lift the part colours toward mid tones and use untextured materials
+   (world-stud material tiling turns cloth into planks at this scale). A light on the camera also
+   lights every wall near the player: if you use one, keep it weak and short (about 0.6 brightness,
+   4 studs).
+5. **Hide the whole body, not the arms**: `LocalTransparencyModifier = 1` on every BasePart of the
+   character while the viewmodel is up. On exit set them back to `0` - never to a saved value (the
+   engine also writes it for the local head), and never touch `HumanoidRootPart`.
+6. **Hands.** Two blocky gloved hands on the grip and fore-end read as held; a floating gun reads as
+   a bug.
+7. **Sway, bob, recoil, reload** on springs: sway from the camera's yaw/pitch delta (clamped), bob
+   from horizontal speed, recoil as an impulse, a dip while reloading.
 
 ## Ragdoll leftovers
 
-When a death hides the original model and swaps in a ragdoll copy, hiding
-parts is not enough. Also disable the original's `LayerCollector`s
-(`SurfaceGui` decals and stencils), `Light`s, `ParticleEmitter`s and
-`Highlight`s, or they hang in mid-air where the body was (reported from a
-production game project, 2026-11).
+When a death hides the original model and swaps in a ragdoll copy, hiding parts is not enough:
 
 ```lua
 for _, d in original:GetDescendants() do
-    if d:IsA("LayerCollector") or d:IsA("Light") or d:IsA("ParticleEmitter") or d:IsA("Highlight") then
-        d.Enabled = false
-    end
+	if d:IsA("LayerCollector") or d:IsA("Light") or d:IsA("ParticleEmitter") or d:IsA("Highlight") then
+		d.Enabled = false
+	end
 end
 ```
 
-## Viewmodel traps that only show up in first person
+## Verifying without a mouse
 
-- **Kill the clone's joints.** An equipped weapon carries the welds that bind it to
-  the hand. Clone it, parent it to the camera, anchor the assembly, and those welds
-  still point at the live character - the anchored viewmodel then drags the
-  assembly, and the player is flung into the air the instant first person starts.
-  Sweep the clone for `JointInstance` and `Constraint` and destroy them before you
-  add your own.
-- **`WeldConstraint` keeps the offset it saw at creation.** If the anchor is still
-  at the origin when you weld, the gun keeps the whole clone offset and sits
-  hundreds of studs off camera - it looks like the viewmodel "does not render".
-  Park the anchor on the weapon root first (`anchor.CFrame = body.CFrame`), then
-  weld. A legacy `Weld` with `C0 = CFrame.new()` hides the bug instead of fixing it.
-- **Never restore a saved `LocalTransparencyModifier`.** The engine also writes
-  that value for the local head. Save it, hide the body, and on exit you restore a
-  stale `1`: the head stays invisible for about a second until the engine corrects
-  it. Hide the parts you hide, then restore them to `0`, and never touch
-  `HumanoidRootPart`.
+Add a debug attribute the movement code respects, gated to Studio:
 
-### Framing a viewmodel that reads as held
+```lua
+local forced = RunService:IsStudio() and player:GetAttribute("DebugFirstPerson") == true
+local firstPerson = zoom == 0 or forced
+```
 
-Numbers that survive a 16:9 and a 21:9 window: `SCALE = 0.5` on a
-character-sized weapon, `BASE = CFrame.new(0.22, -0.30, -1.20)` in camera space.
-That covers roughly **12% of the width and 32% of the height** in the lower right;
-bigger than ~20% wide and it reads as a wall, smaller than ~8% and it looks like a
-prop on the floor. Measure it instead of eyeballing: project every part corner with
-`Camera:WorldToViewportPoint` and compare the bounding box to the viewport size.
-
-### One mechanism per job
-
-Two systems solving the same problem is how the tunnel saga restarted twice. When a
-runtime build and a saved build can both own a fix (a shutter in the generated dome
-*and* a throat in the tunnel), pick the one that survives a fresh Play, delete the
-other, and leave a comment saying which one you kept and why.
+A client `execute_luau` can then set it, wait a frame, and assert the viewmodel exists, the body is
+hidden and the log is clean - the same code path the wheel uses.

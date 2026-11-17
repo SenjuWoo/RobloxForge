@@ -762,8 +762,8 @@ def _():
     with tempdir() as base:
         target = os.path.join(base, "game")
         r = scaffold.scaffold(target, "simulator")
-        assert os.path.isfile(os.path.join(target, "src", "server", "Main.server.lua"))
-        cfg = open(os.path.join(target, "src", "shared", "Config.lua")).read()
+        assert os.path.isfile(os.path.join(target, "src", "server", "Main.server.luau"))
+        cfg = open(os.path.join(target, "src", "shared", "Config.luau")).read()
         assert '"simulator"' in cfg
         try:
             scaffold.scaffold(target, "simulator")
@@ -1145,7 +1145,7 @@ def _():
     assert "T013" in ids("a.server.luau", "RunService.Heartbeat:Connect(function() r:FireAllClients(1) end)")
     assert not ids("a.luau", "-- wait(1) in a comment")
     # viewmodel clone keeping its character joints, and a saved transparency restored
-    bugh = 'local m = weapon:Clone()\nlocal cam = workspace.CurrentCamera\nm.Parent = cam'
+    bugh = 'local viewmodel = weapon:Clone()\nlocal m = viewmodel\nlocal cam = workspace.CurrentCamera\nm.Parent = cam'
     assert "T022" in ids("src/client/vm.luau", bugh)
     assert "T022" not in ids("src/client/vm.luau", bugh + '\nfor _, d in ipairs(m:GetDescendants()) do\n if d:IsA("JointInstance") then d:Destroy() end\nend')
     assert "T023" in ids("src/client/vm.luau", "part.LocalTransparencyModifier = saved")
@@ -1153,9 +1153,6 @@ def _():
     trig = 'local on = player:GetAttribute("DebugFirstPerson")'
     assert "T024" in ids("src/client/move.luau", trig)
     assert "T024" not in ids("src/client/move.luau", "local on = RunService:IsStudio() and player:GetAttribute(\"DebugFirstPerson\")")
-    deco = 'w.rod("Tendril", a, b, 1, flesh, M.Slate, true)'
-    assert "T025" in ids("src/server/t.server.luau", deco)
-    assert "T025" not in ids("src/server/t.server.luau", 'w.rod("Tendril", a, b, 1, flesh, M.Slate, false)')
 
 @check("traps: review skips snapshot folders")
 def _():
@@ -4216,12 +4213,13 @@ def _():
                 raise AssertionError("lune is required in CI (scripts/install_lune.py)")
             return "skip: lune not installed"
         good = check.rung_unit(root)["checks"]
-        assert [c["status"] for c in good] == ["pass"], good
-        config = os.path.join(root, "src", "shared", "Config.lua")
+        assert len(good) == 4 and {c["status"] for c in good} == {"pass"}, good
+        config = os.path.join(root, "src", "shared", "Config.luau")
         text = open(config, encoding="utf-8").read().replace('Genre = "obby"', 'Genre = "tycoon"')
         open(config, "w", encoding="utf-8").write(text)
-        bad = check.rung_unit(root)["checks"]
-        assert [c["status"] for c in bad] == ["fail"], "the spec cannot fail, so it proves nothing: %r" % bad
+        bad = {c["id"]: c["status"] for c in check.rung_unit(root)["checks"]}
+        assert bad["lune:tests/Config.spec.luau"] == "fail", "the spec cannot fail, so it proves nothing: %r" % bad
+        assert bad["lune:tests/Rules.spec.luau"] == "pass", bad
 
 
 @check("verification: evidence collection opens one session for identity and one for console+capture")
@@ -4371,7 +4369,9 @@ def _():
     size = len(json.dumps(tools))
     # The catalog is loaded into every Roblox session that enables this server. Growing it is an
     # explicit decision: raise this number in the same change, and say why.
-    assert size <= 10600, "tools/list is %d chars; the budget is 10600" % size
+    # 0.19.0: 10600 -> 10800 for rb_audit (one tool, ~300 chars); three other descriptions were cut
+    # in the same change to keep the growth to that.
+    assert size <= 10800, "tools/list is %d chars; the budget is 10800" % size
 
 
 
@@ -4978,6 +4978,482 @@ def _():
     text = doctor.render(report)
     assert "My Game - cloud place 42; copy.rbxl - local file, not a cloud place" in text, text
     assert "reachable via toolbox" in text, text
+
+
+# ---------------------------------------------------------------- 0.19.0: lint, audit, starter kit, docs
+
+
+def _trap_ids(rel, text):
+    from rbforge import traps
+    return {f["id"] for f in traps.scan_text(rel, text)}
+
+
+@check("traps: a failed data store read that falls through to defaults is flagged (T038)")
+def _():
+    wipe = (
+        "local ok, res = pcall(function()\n\treturn store:GetAsync(key)\nend)\n"
+        "local profile = sanitize(ok and res or nil)\n"
+        "pcall(function()\n\tstore:UpdateAsync(key, function() return profile end)\nend)\n"
+    )
+    assert "T038" in _trap_ids("src/server/Data.luau", wipe)
+    # A variable merely named profileStore is not the ProfileStore library and must not hide it.
+    assert "T038" in _trap_ids("src/server/Data.luau", "local profileStore = nil\n" + wipe)
+    kicked = wipe + "if not ok then\n\tplayer:Kick('rejoin')\nend\n"
+    assert "T038" not in _trap_ids("src/server/Data.luau", kicked)
+    assert "T038" not in _trap_ids("src/client/Data.client.luau", wipe)
+    lib = "local ProfileStore = require(Packages.ProfileStore)\n" + wipe
+    assert "T038" not in _trap_ids("src/server/Data.luau", lib)
+
+
+@check("traps: saves on PlayerRemoving without BindToClose are flagged (T039)")
+def _():
+    text = ("Players.PlayerRemoving:Connect(function(p)\n\tpcall(function()\n"
+            "\t\tstore:UpdateAsync(k, f)\n\tend)\nend)\n")
+    assert "T039" in _trap_ids("a.server.luau", text)
+    assert "T039" not in _trap_ids("a.server.luau", text + "game:BindToClose(function() end)\n")
+
+
+@check("traps: lifecycle rules - existing players (T040), existing character (T041)")
+def _():
+    assert "T040" in _trap_ids("a.server.luau", "Players.PlayerAdded:Connect(onAdded)")
+    assert "T040" not in _trap_ids(
+        "a.server.luau",
+        "Players.PlayerAdded:Connect(onAdded)\nfor _, p in Players:GetPlayers() do onAdded(p) end")
+    assert "T040" not in _trap_ids("a.client.luau", "Players.PlayerAdded:Connect(onAdded)")
+    assert "T041" in _trap_ids("a.server.luau", "player.CharacterAdded:Connect(onChar)")
+    assert "T041" not in _trap_ids(
+        "a.server.luau",
+        "player.CharacterAdded:Connect(onChar)\nif player.Character then onChar(player.Character) end")
+
+
+@check("traps: input ignoring gameProcessed (T042) fires for UserInputService only")
+def _():
+    bad = "UserInputService.InputBegan:Connect(function(input)\n\tfire()\nend)"
+    assert "T042" in _trap_ids("src/client/a.luau", bad)
+    good = "UserInputService.InputBegan:Connect(function(input, gameProcessed)\n\tfire()\nend)"
+    assert "T042" not in _trap_ids("src/client/a.luau", good)
+    # A GuiObject's InputBegan has one argument, and InputEnded must always run.
+    assert "T042" not in _trap_ids("src/client/a.luau", "frame.InputBegan:Connect(function(input)\nend)")
+    assert "T042" not in _trap_ids("src/client/a.luau", "UserInputService.InputEnded:Connect(function(input)\nend)")
+
+
+@check("traps: client-supplied values (T043) and unguarded test remotes (T044)")
+def _():
+    assert "T043" in _trap_ids("a.server.luau", "Reward.OnServerEvent:Connect(function(player, amount)\nend)")
+    assert "T043" in _trap_ids("a.server.luau", "Hit.OnServerEvent:Connect(function(player: Player, damage: number)\nend)")
+    assert "T043" not in _trap_ids("a.server.luau", "Buy.OnServerEvent:Connect(function(player, itemId)\nend)")
+    test = "TestCommandRemote.OnServerEvent:Connect(function(player, cmd)\n\tgive(player)\nend)"
+    assert "T044" in _trap_ids("a.server.luau", test)
+    assert "T044" not in _trap_ids("a.server.luau", "if not RunService:IsStudio() then return end\n" + test)
+    assert "T044" not in _trap_ids("a.server.luau", "Buy.OnServerEvent:Connect(function(player, itemId)\nend)")
+
+
+@check("traps: deprecated and wrong-side calls each fire, and their replacements do not")
+def _():
+    cases = [
+        ("T026", "a.luau", "sig:connect(fn)", "sig:Connect(fn)"),
+        ("T027", "a.server.luau", "local r = fn:InvokeClient(player)", "ev:FireClient(player)"),
+        ("T028", "a.luau", "workspace:FindPartOnRay(ray)", "workspace:Raycast(o, d, params)"),
+        ("T029", "a.luau", "part:Remove()", "part:Destroy()"),
+        ("T030", "a.luau", "Lighting.Technology = Enum.Technology.Future",
+         "if Lighting.Technology == Enum.Technology.Future then end"),
+        ("T031", "a.luau", "_G.Data = {}", "local Data = {}"),
+        ("T032", "a.server.luau", "pcall(function() store:SetAsync(player.Name, data) end)",
+         "pcall(function() store:SetAsync(tostring(player.UserId), data) end)"),
+        ("T033", "a.server.luau", "MarketplaceService.PromptProductPurchaseFinished:Connect(grant)",
+         "MarketplaceService.ProcessReceipt = onReceipt"),
+        ("T034", "src/client/a.luau", "mouse.KeyDown:Connect(fn)", "UserInputService.InputBegan:Connect(fn)"),
+        ("T035", "a.server.luau", "player:LoadCharacter()", "player:LoadCharacterAsync()"),
+        ("T036", "src/client/a.luau", "HttpService:GetAsync(url)", "remote:FireServer()"),
+        ("T037", "a.server.luau", "local owns = MarketplaceService:UserOwnsGamePassAsync(id, pass)",
+         "local ok, owns = pcall(function()\n\treturn MarketplaceService:UserOwnsGamePassAsync(id, pass)\nend)"),
+    ]
+    for rule, rel, bad, good in cases:
+        assert rule in _trap_ids(rel, bad), "%s did not fire on %r" % (rule, bad)
+        assert rule not in _trap_ids(rel, good), "%s fired on the fix %r" % (rule, good)
+    assert "T027" not in _trap_ids("src/client/a.luau", "local r = fn:InvokeClient(player)")
+    assert "T036" not in _trap_ids("a.server.luau", "HttpService:GetAsync(url)")
+
+
+@check("traps: comments and long comments never produce findings, and line numbers survive them")
+def _():
+    from rbforge import traps
+    text = "--[[\nwait(1)\nspawn(f)\n]]\n-- [plotId] = Player, wait(2)\nlocal x = 1\nwait(3)\n"
+    found = traps.scan_text("a.luau", text)
+    assert [(f["id"], f["line"]) for f in found] == [("T001", 7)], found
+
+
+@check("traps: every rule declares an evidence class, and the project-specific rule is gone")
+def _():
+    from rbforge import traps
+    cat = traps.catalog()
+    assert set(cat.values()) <= {"docs", "live", "field"}, cat
+    assert "T025" not in cat, "T025 matched one project's part names; it is not a general rule"
+    assert cat["T004"] == "field"
+    # A field-class rule is a lead: it may never be reported above info.
+    sev = [f["severity"] for f in traps.scan_text(
+        "a.luau", 'local g = Instance.new("SurfaceGui")\ng.ClipsDescendants = true\ng.AlwaysOnTop = true')
+        if f["id"] == "T004"]
+    assert sev == ["info"], sev
+    # Viewmodel clone rule needs a viewmodel, not just a camera and a Clone.
+    plain = 'local m = thing:Clone()\nlocal cam = workspace.CurrentCamera\nm.Parent = cam'
+    assert "T022" not in _trap_ids("src/client/drone.luau", plain)
+    assert "T022" in _trap_ids("src/client/vm.luau", "local viewmodel = {}\n" + plain)
+
+
+@check("luau_text: a line comment that starts with a bracket is not a long comment")
+def _():
+    from rbforge import luau_text
+    src = "local a = {} -- [id] = owner\nloadstring(x)\nlocal b = 2 -- ]]\n"
+    code = luau_text.code_only(src)
+    assert "loadstring" in code, "a `-- [x]` comment swallowed the code after it: %r" % code
+    assert "owner" not in code
+    long = "--[[ hidden\nloadstring(x) ]] visible()\n--[==[ also\nhidden ]==] shown()\n"
+    code = luau_text.code_only(long)
+    assert "loadstring" not in code and "visible" in code and "shown" in code, code
+    kept = luau_text.code_only(long, keep_lines=True)
+    assert kept.count("\n") == long.count("\n"), "keep_lines must preserve every newline"
+
+
+@check("check: snapshot and git-ignored directories are not audited by the structure rung or reviews")
+def _():
+    import subprocess
+    from rbforge import check, review, project
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        os.makedirs(os.path.join(d, "artifacts", "recovery", "old"))
+        os.makedirs(os.path.join(d, "scratch"))
+        open(os.path.join(d, "default.project.json"), "w").write(
+            '{"name":"x","tree":{"$className":"DataModel","ReplicatedStorage":{"$path":"src"}}}')
+        open(os.path.join(d, "src", "a.luau"), "w").write("--!strict\nreturn {}\n")
+        bad = "loadstring('x')()\n"
+        open(os.path.join(d, "artifacts", "recovery", "old", "b.luau"), "w").write(bad)
+        open(os.path.join(d, "scratch", "c.luau"), "w").write(bad)
+        assert project.is_snapshot("artifacts/recovery/old/b.luau")
+        assert not project.is_snapshot("src/artifactsLike.luau")
+        rung = check.rung_structure(d)
+        details = " ".join(c["detail"] for c in rung["checks"] if c["status"] == "fail")
+        assert "artifacts" not in details, details
+        assert "scratch/c.luau" in details, "a normal folder must still be audited"
+        # git-ignored files drop out once the project is a repository
+        if shutil.which("git"):
+            subprocess.run(["git", "init", "-q"], cwd=d, check=True)
+            open(os.path.join(d, ".gitignore"), "w").write("scratch/\n")
+            rung = check.rung_structure(d)
+            fails = [c for c in rung["checks"] if c["status"] == "fail"]
+            assert not fails, fails
+            snap = [c for c in rung["checks"] if c["id"] == "snapshots"]
+            assert snap and "2 files" in snap[0]["detail"], snap
+        open(os.path.join(d, "artifacts", "recovery", "old", "h.server.luau"), "w").write(
+            "r.OnServerEvent:Connect(function(p, amt) give(p, amt) end)")
+        files = {f["file"] for f in review.security(d)["findings"]}
+        assert not any(f.startswith("artifacts/") for f in files), files
+
+
+def _audit_fixture(d):
+    os.makedirs(os.path.join(d, "src", "server"))
+    os.makedirs(os.path.join(d, "src", "client"))
+    os.makedirs(os.path.join(d, "artifacts", "recovery"))
+    open(os.path.join(d, "default.project.json"), "w").write(
+        '{"name":"x","tree":{"$className":"DataModel","ServerScriptService":{"$path":"src/server"}}}')
+    open(os.path.join(d, "src", "server", "Data.luau"), "w").write(
+        "--!strict\nlocal profiles = {}\n"
+        "local function load(player)\n"
+        "\tlocal ok, res = pcall(function()\n\t\treturn store:GetAsync('P_' .. player.UserId)\n\tend)\n"
+        "\tprofiles[player] = (ok and res) or {}\nend\n"
+        "local function save(player)\n\tpcall(function()\n\t\tstore:UpdateAsync('P_' .. player.UserId, f)\n\tend)\nend\n"
+        "return { load = load, save = save }\n")
+    open(os.path.join(d, "src", "server", "Shop.server.luau"), "w").write(
+        "--!strict\n"
+        "Reward.OnServerEvent:Connect(function(player, amount)\n\tgive(player, amount)\nend)\n"
+        "Buy.OnServerEvent:Connect(function(player, itemId)\n\tShop.buy(player, itemId)\nend)\n"
+        "function Shop.buy(player, itemId)\n"
+        "\tif type(itemId) ~= 'string' then\n\t\treturn\n\tend\n"
+        "\tif os.clock() - last[player] < 1 then\n\t\treturn\n\tend\nend\n")
+    open(os.path.join(d, "src", "client", "Ui.client.luau"), "w").write(
+        "--!strict\nlocal coins = player:GetAttribute('Coins')\nSay:FireServer(box.Text)\n")
+    open(os.path.join(d, "artifacts", "recovery", "Old.server.luau"), "w").write(
+        "X.OnServerEvent:Connect(function(player, damage)\nend)\n")
+
+
+@check("audit: ranks data loss first, lists every handler with its guards, skips snapshots")
+def _():
+    from rbforge import audit
+    with tempdir() as d:
+        _audit_fixture(d)
+        rep = audit.audit(d)
+        tiers = [it["tier"] for it in rep["fix_order"]]
+        assert tiers == sorted(tiers), "fix order must run tier 1 -> 7: %r" % tiers
+        assert tiers[0].startswith("1"), tiers
+        assert any("T038" in w for w in rep["fix_order"][0]["where"]), rep["fix_order"][0]
+        titles = " | ".join(it["title"] for it in rep["fix_order"])
+        assert "never filtered" in titles, titles
+        assert "No tests found" in titles, titles
+        handlers = {h["remote"]: h for h in rep["remote_handlers"]}
+        assert set(handlers) == {"Reward", "Buy"}, handlers
+        assert handlers["Reward"]["args"] == ["amount"] and handlers["Reward"]["read_first"] is True
+        # Buy delegates to Shop.buy; the guards live there and must be followed.
+        assert {"type", "rate"} <= set(handlers["Buy"]["guards_seen"]), handlers["Buy"]
+        assert handlers["Buy"]["read_first"] is False
+        assert rep["skipped"]["snapshot_or_ignored"] == 1
+        assert not any("artifacts" in h["file"] for h in rep["remote_handlers"])
+        # the client's read of a currency attribute is not a client-authority write
+        assert not any("Client scripts that write" in it["title"] for it in rep["fix_order"]), titles
+        text = audit.render(rep)
+        assert "1. [1 data loss]" in text and "Remote handlers" in text and "MISSING: type" in text, text
+
+
+@check("audit: a clean scaffold produces no leads, and the CLI and MCP expose it")
+def _():
+    import subprocess
+    from rbforge import audit, scaffold
+    with tempdir() as d:
+        target = os.path.join(d, "g")
+        scaffold.scaffold(target, "shooter")
+        rep = audit.audit(target)
+        assert rep["fix_order"] == [], rep["fix_order"]
+        assert rep["tests"]["unit_specs"] == 4, rep["tests"]
+        assert {h["remote"] for h in rep["remote_handlers"]} == {'Net.event("DoAction")', 'Net.event("BuyUpgrade")'}
+        cli = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src", "rbforge_cli.py")
+        done = subprocess.run([sys.executable, cli, "audit", target], capture_output=True, text=True)
+        assert done.returncode == 0 and "No leads from the static audit" in done.stdout, done.stdout + done.stderr
+        done = subprocess.run([sys.executable, cli, "audit", target, "--json"], capture_output=True, text=True)
+        assert json.loads(done.stdout)["files"] == rep["files"]
+        # review takes a positional path like check and audit do
+        done = subprocess.run([sys.executable, cli, "review", target, "--kind", "traps"],
+                              capture_output=True, text=True)
+        assert done.returncode == 0 and json.loads(done.stdout)["traps"]["findings"] == [], done.stdout
+    server = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                               "mcp_server", "server.py"), encoding="utf-8").read()
+    assert '"rb_audit"' in server
+
+
+@check("scaffold: the starter kit is a real loop - loader, remotes, data safety, specs, live test")
+def _():
+    from rbforge import scaffold, traps
+    with tempdir() as d:
+        target = os.path.join(d, "g")
+        files = scaffold.scaffold(target, "rpg")["files"]
+        for need in ("src/server/Main.server.luau", "src/server/Services/DataService.luau",
+                     "src/server/Services/GameService.luau", "src/server/ProfileSchema.luau",
+                     "src/shared/Net.luau", "src/shared/RateLimiter.luau", "src/shared/Cleaner.luau",
+                     "src/shared/Rules.luau", "src/client/Main.client.luau",
+                     "tests/Rules.spec.luau", "tests/RateLimiter.spec.luau", "tests/ProfileSchema.spec.luau",
+                     "tests/Starter.server.luau", ".gitignore", "default.project.json"):
+            assert need in files, "%s missing from the scaffold" % need
+        read = lambda rel: open(os.path.join(target, *rel.split("/")), encoding="utf-8").read()
+        for rel in files:
+            assert "{genre}" not in read(rel), "%s still holds the placeholder" % rel
+        data = read("src/server/Services/DataService.luau")
+        assert ":Kick(" in data and "BindToClose" in data and "UpdateAsync" in data and "IsStudio()" in data
+        main = read("src/server/Main.server.luau")
+        assert "GetPlayers()" in main and 'SetAttribute("ServerReady", true)' in main
+        assert "gameProcessed" in read("src/client/Main.client.luau")
+        # The kit must not trip the lint it ships with.
+        found = [f for rel in files if rel.endswith(".luau")
+                 for f in traps.scan_text(rel, read(rel)) if f["severity"] != "info"]
+        assert not found, found
+        project = json.loads(read("default.project.json"))
+        assert "$path" not in project["tree"]["ReplicatedStorage"], "Rojo must not own the whole service"
+
+
+@check("scaffold: every genre and alias scaffolds and plans; an unknown genre is refused")
+def _():
+    from rbforge import planning, scaffold
+    assert len(planning.GENRES) >= 10 and planning.GENRES[0] == "generic", planning.GENRES
+    for genre in planning.GENRES:
+        plan = planning.vertical_slice(genre, "p")
+        assert len(plan["build_order"]) >= 4 and len(plan["verification"]) >= 3, genre
+        assert "console clean" in " ".join(plan["verification"]), genre
+    assert planning.resolve("FPS") == "shooter" and planning.resolve("td") == "towerdefense"
+    assert planning.resolve("extraction") == "survival"
+    with tempdir() as d:
+        res = scaffold.new_project(os.path.join(d, "g"), "td", "defend the gate")
+        assert res["genre"] == "towerdefense"
+        plan = open(res["plan"], encoding="utf-8").read()
+        assert "## What already works" in plan and "rbforge audit" in plan
+        cfg = open(os.path.join(d, "g", "src", "shared", "Config.luau"), encoding="utf-8").read()
+        assert 'Genre = "towerdefense"' in cfg
+    try:
+        planning.resolve("battle-royale-with-cheese")
+        raise AssertionError("an unknown genre must be refused, not mapped to generic")
+    except err_mod.ForgeError as e:
+        assert e.code == "RBF-ARG-001"
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for genre in planning.GENRES:
+        if genre != "generic":
+            assert os.path.isfile(os.path.join(root, "templates", "genre", genre + ".md")), genre
+
+
+_REFS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "skills", "roblox-game-development", "references")
+
+
+def _ref(name):
+    return open(os.path.join(_REFS, name), encoding="utf-8").read()
+
+
+def _luau_blocks(text):
+    """Fenced lua/luau blocks of a markdown file, with the line each starts on."""
+    out, lines, i = [], text.splitlines(), 0
+    while i < len(lines):
+        m = re.match(r"\s*```(lua|luau)\s*$", lines[i])
+        if m:
+            start, body = i + 1, []
+            i += 1
+            while i < len(lines) and not re.match(r"\s*```\s*$", lines[i]):
+                body.append(lines[i])
+                i += 1
+            out.append((start + 1, "\n".join(body) + "\n"))
+        i += 1
+    return out
+
+
+@check("docs: reference samples - every fenced Luau block in the first-party references parses")
+def _():
+    import subprocess
+    stylua = shutil.which("stylua")
+    if not stylua:
+        if os.environ.get("CI"):
+            raise AssertionError("stylua is required in CI (scripts/install_stylua.py)")
+        return "skip: stylua not installed"
+
+    def parses(code):
+        # `stylua -` formats stdin: exit 0 means it parsed, 2 means a syntax error.
+        done = subprocess.run([stylua, "-"], input=code, capture_output=True, text=True, encoding="utf-8")
+        return done.returncode == 0
+
+    assert not parses("local function f(a, b = 1) end\n"), "negative control: StyLua accepted invalid Luau"
+    assert parses("local x = 1\n"), "positive control failed"
+    bad, total = [], 0
+    for name in sorted(os.listdir(_REFS)):
+        if not name.endswith(".md"):
+            continue
+        for line, code in _luau_blocks(_ref(name)):
+            total += 1
+            if not parses(code):
+                bad.append("%s:%d" % (name, line))
+    assert total >= 25, "only %d Luau blocks found - the extractor is broken" % total
+    assert not bad, "Luau samples that do not parse: %s" % ", ".join(bad)
+
+
+@check("docs: persistence - the ProfileStore sample uses the real API and names the failed-read rule")
+def _():
+    text = _ref("persistence.md")
+    assert "ListenToRelease(" not in text.replace("There is no `ListenToRelease`", ""), \
+        "ListenToRelease is ProfileService; ProfileStore has no such method"
+    assert "OnSessionEnd:Connect(" in text and "OnSessionEnd =" not in text
+    assert "a failed read is not a new player" in text.lower()
+    assert "T038" in text
+    assert "30-minute" not in text, "ProfileStore steals a session after 40 s, not 30 minutes"
+
+
+@check("docs: sharp-edges - every trap carries an evidence tag and the false ones are gone")
+def _():
+    text = _ref("sharp-edges.md")
+    body = text.split("## Agent traps")[0]
+    items = re.findall(r"(?ms)^- (.*?)(?=^- |^## |\Z)", body.split("## Players and characters", 1)[1])
+    assert len(items) >= 40, len(items)
+    untagged = [i[:70] for i in items if not re.search(r"\((docs|live[^)]*|field)\)", i)]
+    assert not untagged, "traps without an evidence tag: %r" % untagged
+    assert "No `+=`" not in text and "pre-parser" not in text, "compound assignment runs in execute_luau"
+    assert "not `player.Character` at connect time" not in text
+    for stale in ("225-panel", "PineTier", "midpoint-only"):
+        assert stale not in text, "project case note %r belongs in sightlines-and-openings.md" % stale
+    assert "midpoint-only" in _ref("sightlines-and-openings.md")
+    assert "No `+=`" not in _ref("studio-mcp.md")
+
+
+@check("docs: stale or project-specific advice is gone from the references")
+def _():
+    live = _ref("live-iteration.md")
+    assert "There is no save tool" not in live and "save_place" in live
+    assert "http.server" not in live and "HttpEnabled" not in live, "rbforge push replaced the HTTP pull"
+    assert "rbforge push" in live
+    arch = _ref("architecture.md")
+    assert "Authored or generated" in arch and "GetPlayers()" in arch and "ServerReady" in arch
+    assert "pcall(service.SetupPlayer" not in arch, "the loader must not swallow player-setup errors"
+    anim = _ref("animation.md")
+    assert anim.index("Choose the route first") < anim.index("A procedural gait")
+    assert "put a `PointLight` on the camera" not in anim
+    assert "AnimationConstraint" in anim.split("## The additive layer")[0], "joint helper must come first"
+    assets = _ref("assets.md")
+    assert "above ~6 seconds" not in assets
+    assert "Skinned mesh with bones" in assets
+    design = _ref("game-design.md")
+    assert "time dilation" not in design and "exactly one source and one sink" not in design
+    net = _ref("security-networking.md")
+    assert "Do not hand-roll the schema layer" not in net and "only when measured" in net
+    assert "InvokeClient" in net and "FilterStringAsync" in net
+    ui = _ref("ui-mobile.md")
+    assert "ScreenInsets" in ui and "Activated" in ui and "gameProcessed" in ui
+    assert ui.index("Build it the plain way first") < ui.index("Fusion 0.3")
+    world = _ref("worldbuilding-lighting.md")
+    assert "Build it once, in Edit, and save it" in world
+    perf = _ref("performance.md")
+    assert "SetStateEnabled" in perf and "AnimationController" in perf and "foreground" in perf
+
+
+@check("docs: current-engine - every class it names exists in the creator-docs cache")
+def _():
+    from rbforge import paths
+    text = _ref("current-engine.md")
+    m = re.search(r"Checked classes:(.*)\Z", text, re.S)
+    assert m, "current-engine.md must end with its 'Checked classes:' list"
+    names = [n.strip(" .\n") for n in m.group(1).replace("\n", " ").split(",") if n.strip(" .\n")]
+    assert len(names) >= 20, names
+    for name in names:
+        assert name in text[:m.start()], "%s is listed as checked but never mentioned" % name
+    classes = os.path.join(paths.docs_cache_dir(), "content", "en-us", "reference", "engine", "classes")
+    if not os.path.isdir(classes):
+        return "skip: creator-docs cache absent (rbforge docs update)"
+    missing = [n for n in names if not os.path.isfile(os.path.join(classes, n + ".yaml"))]
+    assert not missing, "classes named in current-engine.md that the engine reference does not have: %s" % missing
+
+
+@check("skill: router points at the specialist skills, both new references and the right tool count")
+def _():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    skill = open(os.path.join(root, "skills", "roblox-game-development", "SKILL.md"), encoding="utf-8").read()
+    assert "all 38 live tools" in skill and "34 live tools" not in skill
+    assert "rbforge audit" in skill and "rbforge new" in skill
+    for name in re.findall(r"`(roblox-[a-z-]+)`", skill):
+        assert os.path.isfile(os.path.join(root, "skills", name, "SKILL.md")), \
+            "router names a skill that is not shipped: %s" % name
+    shipped = {d for d in os.listdir(os.path.join(root, "skills"))
+               if d.startswith("roblox-") and d not in ("roblox-game-development", "roblox-docs")}
+    routed = set(re.findall(r"`(roblox-[a-z-]+)`", skill))
+    assert shipped <= routed, "specialist skills the router never mentions: %s" % sorted(shipped - routed)
+    assert len(skill) <= 16000, "the router is loaded on every Roblox task: %d chars" % len(skill)
+
+
+@check("cli: servertest defaults the attribute to RbforgeTest, and the scaffold ships a dev place project")
+def _():
+    from rbforge import live, scaffold
+    import rbforge_cli
+    seen = {}
+
+    def fake(path, attr, *a, **k):
+        seen["attr"] = attr
+        return {"passed": True}
+
+    old = live.server_test
+    live.server_test = fake
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = rbforge_cli.main(["servertest", "tests/x.server.luau"])
+    finally:
+        live.server_test = old
+    assert code == 0 and seen["attr"] == "RbforgeTest", (code, seen)
+    with tempdir() as d:
+        target = os.path.join(d, "g")
+        files = scaffold.scaffold(target, "obby")["files"]
+        assert "dev.project.json" in files
+        dev = json.load(open(os.path.join(target, "dev.project.json"), encoding="utf-8"))
+        assert dev["tree"]["Workspace"]["SpawnLocation"]["$className"] == "SpawnLocation"
+        assert dev["tree"]["Workspace"]["Baseplate"]["$properties"]["Anchored"] is True
+        hud = open(os.path.join(target, "src", "client", "Main.client.luau"), encoding="utf-8").read()
+        assert "Enum.SortOrder.LayoutOrder" in hud, "a script-made UIListLayout sorts by Name by default"
 
 
 if __name__ == "__main__":

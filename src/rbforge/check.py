@@ -24,6 +24,7 @@ import subprocess
 import tempfile
 
 from . import luau_text
+from . import project as project_mod
 from .errors import ForgeError
 
 # Rung 1 tools: each absent one lowers coverage instead of failing the run.
@@ -369,6 +370,13 @@ def rung_structure(root):
     # merely contains "Packages" used to have every file dropped, and an empty audit read as a skip.
     files = [f for f in _luau_files(root)
              if not any(seg.endswith("Packages") for seg in _rel(root, f).split("/")[:-1])]
+    # Recovery snapshots and git-ignored files are copies, not the project: the static rung already
+    # ignores them, and warnings about a three-month-old backup hide the ones about live code.
+    files, snapshots = project_mod.shipped_sources(root, files)
+    if snapshots:
+        rung["checks"].append({"id": "snapshots", "status": "pass",
+                               "detail": "%d files under snapshot or git-ignored paths not audited"
+                                         % len(snapshots)})
     if not files:
         # Not a reason to stop: a project can be all project.json + models, and
         # the $path audit below is exactly what catches that state.

@@ -4,13 +4,25 @@ A graybox reads as a prototype because of lighting more than geometry. Two cheap
 passes — terrain height and one lighting preset — move a slice from "test level"
 to "place". Both are deterministic Luau you can run through `execute_luau`.
 
+## Build it once, in Edit, and save it
+
+Everything in this file is run in the **Edit** datamodel and kept by saving the place
+(`save_place`). The scripts are tools: keep them in the repo's `tools/` folder so the world can be
+regenerated, but do not make them server start-up code. A world that is the same every session and
+is rebuilt by a script on every server start costs boot time for every server, cannot be touched up
+by hand, and needs a spawn gate an authored world never needs. Generate at runtime only what is
+different per session (`architecture.md`, "Authored or generated").
+
 ## Terrain generator (heightmap + slope-based materials)
 
 `Terrain:FillBlock(cframe, size, material)` and `Terrain:FillBall(center, radius,
 material)` **overwrite** existing terrain in the target volume — that is what
-makes them usable for carving as well as building. Never call them per voxel in
-one unyielding loop; chunk the work and `task.wait()` between chunks (see the
-`execute_luau` chunking rule in `studio-mcp.md`).
+makes them usable for carving as well as building. Never run a whole map in
+one unyielding loop: yield when the thread has held the frame for a while
+(`if os.clock() - last > 0.03 then task.wait() last = os.clock() end`), not
+after every column - a wait per column spends most of the build idle. For
+dense voxel data `Terrain:WriteVoxels` writes a whole region in one call
+(`rb_docs_search "Terrain:WriteVoxels"`).
 
 ```lua
 --!strict
@@ -156,11 +168,12 @@ light and a consequence. Pattern used for an anchored blast gate:
 
 ## Streaming and large maps
 
-If the map grows past roughly 2 km or 20k parts, enable streaming rather than
-fighting replication: `workspace.StreamingEnabled = true` in the place's
-properties, then load `skill "rbx-convert-to-streaming"` for the model
-requirements (streaming targets, `Model.ModelStreamingMode`, persistence). Turning
-streaming on without reading that skill is how "my script disappears" bugs happen.
+`Workspace.StreamingEnabled` is on by default in new places and is a Studio
+property, not something a script can set. Keep it on for any large map and
+write client code that tolerates parts that have not arrived. For an old place
+that has it off, load `skill "rbx-convert-to-streaming"` first (streaming
+targets, `Model.ModelStreamingMode`, persistence): turning it on without
+reading that is how "my script cannot find the part" bugs happen.
 
 ## Art-direction pass on a prototype world
 

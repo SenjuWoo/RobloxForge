@@ -99,6 +99,7 @@ folder to `PATH`, or call `python src\rbforge_cli.py` directly. Python 3.11+.
 rbforge new mygame --genre obby --premise "dodge lasers and reach the end"
 rbforge doctor                      # full health report, each fact independent
 rbforge check .                     # offline gate: format, lint, types, structure
+rbforge audit .                     # existing project: what to fix first, ranked
 rbforge plugins                     # optional plugins found + their free alternatives
 rbforge docs update                 # fetch official creator-docs (27 MB, git-sparse)
 rbforge docs search "ProcessReceipt"
@@ -169,9 +170,11 @@ docs > verified community practice > model memory.
 | `src/rbforge/plugins.py` | optional-plugin detection, each with a free alternative |
 | `src/rbforge/assets.py` | optional 3D route: Blender and Roblox add-on detection, GLB triangle budget check (never uploads) |
 | `src/rbforge/mapkit.py` | optional adapter for an external map prover: discovers it, checks its deps, returns its own report (never touches Studio) |
-| `mcp_server/server.py` | 18-tool MCP server (doctor, capabilities, docs, check, plugins, assets, planning, reviews, receipts, probes, traps, evidence) |
+| `src/rbforge/audit.py` | health audit of an existing project: a ranked fix order and every remote handler with its guards |
+| `templates/starter/` | the working starter kit `rbforge new` writes: loader, remotes, rate limiter, safe load/save, HUD, specs |
+| `mcp_server/server.py` | 19-tool MCP server (doctor, capabilities, docs, check, audit, plugins, assets, planning, reviews, receipts, probes, traps, evidence) |
 | `skills/` | 25 agent skills (2 first-party + 23 adopted MIT topic skills), installed into Hermes/Claude/Codex/Grok/Kimi |
-| `tests/run_tests.py` | 217 checks, no Roblox required |
+| `tests/run_tests.py` | 238 checks, no Roblox required |
 
 Register the MCP server manually (all agents, disabled) instead:
 
@@ -189,7 +192,7 @@ it. Whenever push replaces a source it did not write itself, the Studio copy is 
 
 ## Status
 
-0.18.0. Only what was observed is listed as verified.
+0.19.0. Only what was observed is listed as verified.
 
 | Area | Status |
 |---|---|
@@ -197,7 +200,8 @@ it. Whenever push replaces a source it did not write itself, the Studio copy is 
 | `rbforge servertest`: Play preflight, `--ready`, Client tests, `--grace`/`--keep`, `--suite` | verified against a live Studio place (0.18.0) |
 | creator-docs sparse cache + ranked search | verified (2,214 docs indexed) |
 | `rbforge check` offline gate (static / unit / structure) | verified; skips reported as `incomplete`, never `pass` |
-| `rbforge new` one-command project + plan | verified |
+| `rbforge new` one-command project + plan | verified; the starter kit passes its own gate, and its live server test, client remote path and HUD were run and inspected in Studio Play (0.19.0) |
+| `rbforge audit` ranked project health report | verified offline on fixtures and on a 35k-line production project (0.19.0) |
 | `rbforge push`: checksum readback, rollback, class-change backup | verified against a live Studio place |
 | `rbforge push` conflict guard and backup-before-overwrite | verified against a live Studio place (0.17.2): conflict, `--force` backup, ledger re-push |
 | Plugin detection with a free alternative for every entry | verified (filename-based) |

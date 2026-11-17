@@ -86,11 +86,61 @@ Before calling a multiplayer feature complete:
 - can it spam the request?
 - can it skip required sequence/state?
 
-## High-frequency data: serialize, do not send tables
+## The handler shape
 
-A Luau table with string keys is expensive on the wire. For anything sent many
-times per second (positions, movement intents, hit notifications) pack it into a
-`buffer` of fixed-width fields.
+Every server handler has the same five steps. The scaffold's `GameService.luau` is the running
+version; the `roblox-security` and `roblox-networking` skills carry the full catalogue.
+
+```lua
+--!strict
+local limiter = RateLimiter.new(4, 2) -- 4 per second, bursts of 2 on top
+
+Net.event("BuyItem").OnServerEvent:Connect(function(player: Player, itemId: unknown)
+	-- 1 type: everything after `player` is attacker-controlled
+	if type(itemId) ~= "string" or #itemId > 40 then
+		return
+	end
+	-- 2 rate
+	if not limiter:allow(player.UserId, os.clock()) then
+		return
+	end
+	-- 3 state: does this player exist in the game right now
+	local profile = DataService.get(player)
+	local item = Catalog[itemId]
+	if not profile or not item then
+		return
+	end
+	-- 4 rule: price and eligibility come from server data, never from the client
+	if profile.Coins < item.Price then
+		return
+	end
+	-- 5 apply once, publish the result
+	profile.Coins -= item.Price
+	profile.Items[itemId] = true
+	player:SetAttribute("Coins", profile.Coins)
+end)
+```
+
+- Numbers from a client: `type(x) == "number"`, `x == x` (rejects NaN), finite, then clamp.
+- Instances from a client: `typeof(x) == "Instance"`, `x:IsA(...)`, `x:IsDescendantOf(workspace)`,
+  then ownership and distance.
+- **Never `InvokeClient`.** The server would wait on a machine it does not control. Send an event and
+  let the client answer with another.
+- **Text a player typed that another player will see** must pass
+  `TextService:FilterStringAsync` on the server (or go through `TextChatService`). This is a
+  platform requirement, not a style choice; see the `roblox-text-chat` skill.
+- **A remote for testing is a remote for exploiters.** Guard it with `RunService:IsStudio()` or a
+  creator/group check, or delete it before publishing. `rbforge audit` lists every handler.
+- For competitive movement and combat, Roblox's server-authority mode
+  (`Workspace.AuthorityMode`, prediction and rollback) replaces hand-rolled reconciliation:
+  `rb_docs_read projects/server-authority/index.md` before designing your own.
+
+## High-frequency data: only when measured
+
+Plain typed arguments are the default: readable, checkable, and fast enough for almost every remote
+in a game. Packing into a `buffer` is level C in `optimization-levels.md` - do it when a measurement
+shows a specific stream (positions, movement intents, hit notifications many times per second) is
+the bandwidth problem, not before.
 
 ```lua
 --!strict
@@ -136,11 +186,11 @@ Rules that keep this honest:
 - Sample the rate yourself. Sending 200 messages/second per player is a design
   decision, not an accident; measure with `skill "rbx-network-simulator"`.
 
-## Do not hand-roll the schema layer
+## Schema libraries (optional)
 
-For a project with more than a couple of remotes, a schema library is less code
-and fewer bugs than a hand-written `if type(...)` wall. All three below compile
-or validate typed schemas into buffer packets; pick one, do not mix:
+A project with dozens of remotes and a build step can generate its packets and type checks from a
+schema. It is a dependency and a toolchain to maintain, so adopt one because the remote count
+demands it, not by default. If you do, pick one and do not mix:
 
 | Library | Shape | When |
 |---|---|---|

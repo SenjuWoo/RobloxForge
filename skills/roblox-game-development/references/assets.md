@@ -25,10 +25,11 @@ inspecting pixels. Say "captured, unverified visually."
 
 ## Audio/images
 
-Audio above ~6 seconds requires upload/asset IDs you own or licensed
-marketplace audio. Images used as Decals need uploaded IDs. Generate via
-MCP (`upload_image`, `generate_mesh`) rather than guessing IDs - a guessed
-ID is a broken texture at best.
+Every sound and image is an uploaded asset with an id, and the experience must
+be allowed to use it: your own upload, or a Creator Store asset that grants
+use. Uploaded audio is reviewed before it plays. Get ids from a real upload
+(`upload_image`, `open_cloud_invoke`, the generators) or a real search
+(`search_asset`) - a guessed id is silence or a grey square, with no error.
 
 ## Generative 3D: the actual tool contracts
 
@@ -249,11 +250,23 @@ repo.
 
 ## Blender -> Roblox rigged meshes
 
-Reported from a production game project (2026-11):
+Two ways to bring a character or creature in; pick by how it will be animated
+(`animation.md`, "Choose the route first"):
 
-- Export **one mesh per rig segment** (head, torso, upper arm, ...) and drive
-  them with `Motor6D`s from code. One skinned mesh per character is harder to
-  pose procedurally and to re-export.
+- **Skinned mesh with bones, animated by clips** - the standard route. Rig and
+  skin in Blender, import through Studio's 3D importer, play Animation assets
+  through an `AnimationController` + `Animator`. The engine does the per-frame
+  work. Official walkthroughs: `rb_docs_search "rig a simple mesh"`,
+  `"skin a simple mesh"`.
+- **One rigid mesh per segment, joined and posed from code** - for fully
+  procedural animation only. It costs a per-frame update for every joint of
+  every instance, so it needs distance LOD. The notes below are from a
+  production project that took this route (2026-11).
+
+For the segmented route:
+
+- Export **one mesh per rig segment** (head, torso, upper arm, ...) and join
+  them with `Motor6D`s created from code.
 - Imported meshes face **+Z**; Roblox's forward is -Z. Place each segment with
   a 180° yaw (`CFrame.Angles(0, math.pi, 0)`), or every limb points backwards.
 - Have the Blender script write the rig (segment names, joint pivots, sizes) to

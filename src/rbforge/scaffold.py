@@ -1,68 +1,37 @@
-"""Scaffold a new project from a genre template.
+"""Scaffold a new project: a working starter kit, not an empty folder.
 
-Writes the minimal sane layout (see skills references/architecture.md):
-server systems module, shared config, client HUD stub, verification
-checklist. Studio-native projects get .server/.client/.lua naming that
-Rojo understands too.
+`templates/starter` is a complete small game loop - explicit service loader, a named remote registry,
+a rate limiter, a data service that cannot overwrite a profile it failed to read, a cleanup helper, a
+HUD, and offline specs for every pure module. A new project starts from code that already passes the
+gate and already runs, so the first session changes a working loop instead of inventing plumbing.
 """
 import os
 
 from .errors import ForgeError
-
-_SERVER = '''--!strict
--- Server entry point. Systems own authoritative state.
-local Config = require(game:GetService("ReplicatedStorage"):WaitForChild("Config"))
-
-print("[server] booted with genre=" .. Config.Genre)
-'''
-
-_CLIENT = '''--!strict
--- Client presentation. Listens to state; owns no truth.
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
-
-local hud = Instance.new("ScreenGui")
-hud.Name = "Hud"
-hud.ResetOnSpawn = false
-hud.Parent = player:WaitForChild("PlayerGui")
-
-local label = Instance.new("TextLabel")
-label.Size = UDim2.fromOffset(200, 40)
-label.Position = UDim2.fromOffset(16, 16)
-label.BackgroundTransparency = 0.4
-label.TextColor3 = Color3.new(1, 1, 1)
-label.Text = "Ready"
-label.Parent = hud
-'''
-
-_CONFIG = '''--!strict
--- Shared contracts/config. Required by both sides.
-return {
-	Genre = "{genre}",
-	Version = "0.1.0",
-}
-'''
-
-# A fresh project must be able to reach `pass`: with no spec, rung 2 is a skip and every first check
-# reads "incomplete". Lune runs this without Studio, so it can only test modules that touch no Roblox
-# globals - which is the reason to keep rules and numbers in such modules.
-_CONFIG_SPEC = '''--!strict
--- Pure-Luau unit spec, run by `rbforge check` through Lune (no Studio needed).
--- Add one per rule module: anything that does not touch game, workspace or Instance can be proven here.
-local Config = require("../src/shared/Config")
-
-assert(Config.Genre == "{genre}", "Config.Genre must match the scaffolded genre")
-assert(string.match(Config.Version, "^%d+%.%d+%.%d+$") ~= nil, "Config.Version must be semver")
-print("Config.spec: ok")
-'''
+from . import paths
+from . import planning
 
 _CHECKLIST = """# Verification checklist ({genre})
 
-Run `rbforge check .` first - it catches syntax, types, missing Rojo paths and
-unanchored geometry without opening Studio. Then:
+What you start with (already working - change it, do not rebuild it):
+
+- `src/server/Main.server.luau` - starts services in a fixed order, owns the player lifecycle
+- `src/server/Services/DataService.luau` - load/save; a failed read is never treated as a new player
+- `src/server/Services/GameService.luau` - the sample loop: intent -> validate -> change -> publish
+- `src/shared/Net.luau` - every remote, named in one list
+- `src/shared/RateLimiter.luau`, `Cleaner.luau`, `Rules.luau` - reusable, unit tested
+- `src/client/Main.client.luau` - HUD and input; shows server state, sends intents
+- `tests/*.spec.luau` - offline specs (Lune); `tests/Starter.server.luau` - live server test
+
+Run `rbforge check .` first - format, lint, types, unit specs and structure without opening Studio.
+Then put the code in a place - `rbforge push ALL --project default.project.json` into an open Studio
+Baseplate, or `rojo build dev.project.json -o game.rbxl` for a standalone test place with a floor and
+a spawn - press Play and run
+`rbforge servertest tests/Starter.server.luau --ready workspace.ServerReady=true`.
 
 Slice 1 is DONE only when every box below has real evidence:
 - [ ] `rbforge check .` reports pass (or states exactly what it skipped)
+- [ ] `rbforge servertest` reports PASS in a Play session
 - [ ] player spawns
 - [ ] core action works end-to-end (playtested)
 - [ ] progression step works
@@ -71,12 +40,12 @@ Slice 1 is DONE only when every box below has real evidence:
 - [ ] screenshot captured AND inspected
 - [ ] rb_verify_receipt written
 
-Expand only after proof.
+Expand only after proof. One system per change; add a spec for every new pure module.
 """
 
 # Pinned toolchain so the gate means the same thing on every machine.
 # `rokit install` reads this; absent tools are reported as skips, not failures.
-_ROKIT = '''# Pinned Luau toolchain (rbforge scaffold). Optional: the gate degrades to
+_ROKIT = """# Pinned Luau toolchain (rbforge scaffold). Optional: the gate degrades to
 # the structural rung when these are absent.
 [tools]
 rojo = "rojo-rbx/rojo@7.7.1"
@@ -84,73 +53,141 @@ selene = "Kampfkarren/selene@0.32.0"
 stylua = "JohnnyMorganz/StyLua@2.6.0"
 luau-lsp = "JohnnyMorganz/luau-lsp@1.70.1"
 lune = "lune-org/lune@0.11.1"
-'''
+"""
 
-_LUAURC = '''{
+_LUAURC = """{
   "languageMode": "strict",
   "lint": { "*": true },
   "aliases": { "Shared": "src/shared" }
 }
-'''
+"""
 
 _SELENE = 'std = "roblox"\n'
 
-_STYLUA = '''indent_type = "Tabs"
+_STYLUA = """indent_type = "Tabs"
 column_width = 120
 quote_style = "AutoPreferDouble"
-'''
+"""
 
+_GITIGNORE = """# Build output and editor state
+*.rbxl
+*.rbxlx
+*.rbxl.lock
+*.rbxlx.lock
+sourcemap.json
+/build/
+"""
 
+# Each service gets its own folder node instead of a `$path` on the service itself: Rojo then owns
+# only `Shared`, `Server` and `Client`, and leaves everything else in the place alone - the map,
+# the lighting, models placed by hand.
 _PROJECT = """{
-  "name": "{genre}",
+  "name": "{genre}-game",
   "tree": {
     "$className": "DataModel",
-    "ReplicatedStorage": { "$path": "src/shared" },
-    "ServerScriptService": { "$path": "src/server" },
+    "ReplicatedStorage": {
+      "Shared": { "$path": "src/shared" }
+    },
+    "ServerScriptService": {
+      "Server": { "$path": "src/server" }
+    },
     "StarterPlayer": {
-      "StarterPlayerScripts": { "$path": "src/client" }
+      "StarterPlayerScripts": {
+        "Client": { "$path": "src/client" }
+      }
     }
   }
 }
 """
 
 
+# A standalone test place: the same code plus a floor and a spawn, so `rojo build` gives something
+# a character can stand in. `default.project.json` stays code-only on purpose.
+_DEV_PROJECT = """{
+  "name": "{genre}-game-dev",
+  "tree": {
+    "$className": "DataModel",
+    "Workspace": {
+      "Baseplate": {
+        "$className": "Part",
+        "$properties": {
+          "Anchored": true,
+          "Size": [512, 4, 512],
+          "Position": [0, -2, 0],
+          "Color": [0.36, 0.38, 0.42],
+          "Material": "Concrete"
+        }
+      },
+      "SpawnLocation": {
+        "$className": "SpawnLocation",
+        "$properties": {
+          "Anchored": true,
+          "Size": [8, 1, 8],
+          "Position": [0, 0.5, 0]
+        }
+      }
+    },
+    "ReplicatedStorage": {
+      "Shared": { "$path": "src/shared" }
+    },
+    "ServerScriptService": {
+      "Server": { "$path": "src/server" }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Client": { "$path": "src/client" }
+      }
+    }
+  }
+}
+"""
+
+
+def starter_dir():
+    return os.path.join(paths.templates_dir(), "starter")
+
+
+def _starter_files():
+    """(relative path, text) for every file of the starter kit."""
+    root = starter_dir()
+    out = []
+    for base, _dirs, names in os.walk(root):
+        for name in sorted(names):
+            full = os.path.join(base, name)
+            with open(full, encoding="utf-8") as fh:
+                out.append((os.path.relpath(full, root).replace(os.sep, "/"), fh.read()))
+    if not out:
+        raise ForgeError("RBF-ARG-002", "starter kit is missing: %r" % root,
+                         hint="reinstall RobloxForge; templates/starter ships with it")
+    return sorted(out)
+
+
 def scaffold(path, genre="generic"):
-    genre = (genre or "generic").lower()
-    if genre not in ("generic", "obby", "simulator", "tycoon"):
-        raise ForgeError("RBF-ARG-001", "unknown genre %r" % genre,
-                         hint="one of: generic, obby, simulator, tycoon")
+    genre = planning.resolve(genre)
     if os.path.isdir(path) and os.listdir(path):
         raise ForgeError("RBF-ARG-002", "target not empty: %r" % path,
                          hint="scaffold into a fresh directory")
-    dirs = {
-        os.path.join(path, "src", "server"): None,
-        os.path.join(path, "src", "shared"): None,
-        os.path.join(path, "src", "client"): None,
-        os.path.join(path, "tests"): None,
-    }
-    files = {
-        os.path.join(path, "tests", "Config.spec.luau"): _CONFIG_SPEC,
-        os.path.join(path, "src", "server", "Main.server.lua"): _SERVER,
-        os.path.join(path, "src", "shared", "Config.lua"): _CONFIG,
-        os.path.join(path, "src", "client", "Hud.client.lua"): _CLIENT,
-        os.path.join(path, "VERIFY.md"): _CHECKLIST,
-        os.path.join(path, "rokit.toml"): _ROKIT,
-        os.path.join(path, ".luaurc"): _LUAURC,
-        os.path.join(path, "selene.toml"): _SELENE,
-        os.path.join(path, "stylua.toml"): _STYLUA,
+    files = {rel: text for rel, text in _starter_files()}
+    files.update({
+        "VERIFY.md": _CHECKLIST,
+        "rokit.toml": _ROKIT,
+        ".luaurc": _LUAURC,
+        "selene.toml": _SELENE,
+        "stylua.toml": _STYLUA,
+        ".gitignore": _GITIGNORE,
         # Rojo map: without it every `require` is unknown to the typechecker, and the project cannot
         # be built from disk at all.
-        os.path.join(path, "default.project.json"): _PROJECT,
-    }
-    for d in dirs:
-        os.makedirs(d, exist_ok=True)
-    for f, content in files.items():
-        with open(f, "w", encoding="utf-8", newline="\n") as fh:
+        "default.project.json": _PROJECT,
+        "dev.project.json": _DEV_PROJECT,
+    })
+    for rel, content in files.items():
+        full = os.path.join(path, *rel.split("/"))
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(content.replace("{genre}", genre))
     return {"path": os.path.abspath(path), "genre": genre,
-            "files": sorted(os.path.relpath(f, path).replace(os.sep, "/") for f in files),
-            "next": "open Studio with a Baseplate, then follow VERIFY.md slice order"}
+            "files": sorted(files),
+            "next": "rbforge check <path>, then put it in a place and run the live server test (VERIFY.md)"}
 
 
 def new_project(path, genre="generic", premise=""):
@@ -161,18 +198,25 @@ def new_project(path, genre="generic", premise=""):
     agent should do next, so the first session starts with intent instead of
     setup.
     """
-    from . import optimize, planning
+    from . import optimize
 
+    genre = planning.resolve(genre)
     result = scaffold(path, genre)
     plan = planning.vertical_slice(genre, premise or "a first playable slice")
-    # A new project starts small: the profile is computed from the real (empty-ish) source, so it
-    # reports level A only and says so instead of attaching a pipeline nobody needs yet.
+    # A new project starts small: the profile is computed from the real source, so it reports
+    # level A only and says so instead of attaching a pipeline nobody needs yet.
     guidance = optimize.profile(path, premise or genre)
 
     lines = [
         "# Plan: %s" % (premise or "first slice"),
         "",
         "Genre: %s. Built by RobloxForge; read this before touching the place." % genre,
+        "",
+        "## What already works",
+        "The scaffold is a running loop, not a stub: a service loader, named remotes, a rate limiter, safe",
+        "load/save, a HUD and tests (see VERIFY.md). Replace the sample action in",
+        "`src/server/Services/GameService.luau` with this game's and keep the shape: intent in, server",
+        "decides, state published, client shows it.",
         "",
         "## Core loop",
         plan.get("core_loop", ""),
@@ -197,6 +241,7 @@ def new_project(path, genre="generic", premise=""):
         "## Commands",
         "```",
         "rbforge check .        # offline gate; run before every playtest",
+        "rbforge audit .        # ranked health report; run before changing code you did not write",
         'rbforge optimize --premise "<what this game is>"   # levels for THIS project',
         "```",
         "Rungs 1-3 must be clean (or their skips named) before any Studio playtest.",
@@ -218,7 +263,9 @@ def new_project(path, genre="generic", premise=""):
             "In Studio: Assistant -> '...' -> Manage MCP Servers -> Enable Studio as MCP server.",
             "rbforge doctor            # confirm the handshake before building",
             "rbforge check <path>      # gate before any Studio work",
-            "Build step 1 of PLAN.md only, then playtest it.",
+            "rbforge push ALL --project <path>/default.project.json   # put the starter kit in the place",
+            "Play, then: rbforge servertest <path>/tests/Starter.server.luau --ready workspace.ServerReady=true",
+            "Build step 1 of PLAN.md by changing the working starter loop, then playtest it.",
         ],
         "free": "No purchase is needed for any step. See references/free-stack.md.",
     }

@@ -12,6 +12,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from rbforge.errors import ForgeError, ExitCode
+from rbforge.planning import GENRE_CHOICES as GENRES
 
 
 def _emit(obj):
@@ -92,19 +93,24 @@ def main(argv=None):
     p_scaf = sub.add_parser("scaffold", help="create a project from a genre template")
     p_scaf.add_argument("path")
     p_scaf.add_argument("--genre", default="generic",
-                        choices=["generic", "obby", "simulator", "tycoon"])
+                        choices=GENRES)
 
     p_new = sub.add_parser("new", help="scaffold + slice plan + next steps in one go")
     p_new.add_argument("path")
     p_new.add_argument("--genre", default="generic",
-                       choices=["generic", "obby", "simulator", "tycoon"])
+                       choices=GENRES)
     p_new.add_argument("--premise", default="", help="one sentence: what the game is")
 
     p_plan = sub.add_parser("plan", help="vertical-slice plan for a premise")
-    p_plan.add_argument("genre", choices=["generic", "obby", "simulator", "tycoon"])
+    p_plan.add_argument("genre", choices=GENRES)
     p_plan.add_argument("premise")
 
+    p_audit = sub.add_parser("audit", help="ranked health report for an existing project: what to fix first")
+    p_audit.add_argument("path", nargs="?", default=".")
+    p_audit.add_argument("--json", action="store_true", help="machine-readable report")
+
     p_rev = sub.add_parser("review", help="static architecture/security review")
+    p_rev.add_argument("target", nargs="?", default=None, help="project root (same as --path)")
     p_rev.add_argument("--path", default=".")
     p_rev.add_argument("--live", action="store_true", help="review the live Studio place")
     p_rev.add_argument("--kind", default="both", choices=["both", "architecture", "security", "traps", "all"],
@@ -134,7 +140,8 @@ def main(argv=None):
     p_st = sub.add_parser("servertest", help="run a test as a temporary server Script in Play (shares module cache)")
     p_st.add_argument("file", nargs="?")
     p_st.add_argument("attr", nargs="?",
-                      help="attribute the test sets to 'PASS ...' or 'FAIL ...' on workspace or its own Script")
+                      help="attribute the test sets to 'PASS ...' or 'FAIL ...' on workspace or its own Script "
+                           "(default RbforgeTest)")
     p_st.add_argument("--timeout", type=int, default=120)
     p_st.add_argument("--studio")
     p_st.add_argument("--dm", default="Server", choices=["Server", "Client"],
@@ -322,8 +329,19 @@ def _dispatch(args):
         _emit(planning.vertical_slice(args.genre, args.premise))
         return ExitCode.OK
 
+    if args.cmd == "audit":
+        from rbforge import audit
+        report = audit.audit(args.path)
+        if args.json:
+            _emit(report)
+        else:
+            print(audit.render(report))
+        return ExitCode.OK
+
     if args.cmd == "review":
         from rbforge import review
+        if args.target:
+            args.path = args.target
         out = {}
         if args.kind in ("both", "architecture", "all"):
             out["architecture"] = review.architecture(path=args.path, live=args.live)
@@ -375,9 +393,10 @@ def _dispatch(args):
                                  report=lambda line: print(line, file=sys.stderr, flush=True))
             _emit(res)
             return min(res["failed"], 100)
-        if not (args.file and args.attr):
-            raise ForgeError("RBF-ARG-001", "servertest needs FILE ATTR, or --suite MANIFEST")
-        res = live.server_test(args.file, args.attr, args.timeout, args.studio, datamodel=args.dm,
+        if not args.file:
+            raise ForgeError("RBF-ARG-001", "servertest needs FILE [ATTR], or --suite MANIFEST")
+        # The documented default: a test that reports through `RbforgeTest` needs no second argument.
+        res = live.server_test(args.file, args.attr or "RbforgeTest", args.timeout, args.studio, datamodel=args.dm,
                                ready=args.ready, grace=args.grace, keep=args.keep)
         _emit(res)
         return ExitCode.OK if res["passed"] else 1

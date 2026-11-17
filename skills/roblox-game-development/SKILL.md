@@ -9,6 +9,51 @@ You are working on a Roblox game through the **official Roblox Studio MCP**
 (live engine) plus RobloxForge (knowledge + verification). Non-negotiables
 first; references carry the detail.
 
+## Start here
+
+| Situation | First move |
+|---|---|
+| New game | `rbforge new <dir> --genre <genre> --premise "<one sentence>"` - writes a **working** starter loop (service loader, named remotes, rate limiter, safe load/save, HUD, tests) and a slice plan. Change that loop; do not rebuild plumbing. Genres: obby, simulator, tycoon, shooter, round, towerdefense, rpg, horror, survival, generic. |
+| Existing game, any origin | `rbforge audit <dir>` before the first edit - a ranked list (player-data loss, exploitable remotes, runtime faults, missing tests, monoliths, cost) and every server remote handler with the guards it shows. Then `references/existing-projects.md`. The code that is already there is evidence of what was built, not of what works: do not copy its patterns forward without asking whether they were good ones. |
+| A place that exists only in Studio | inspect with the official MCP (`search_game_tree`, `script_grep`), then the same order of concerns as the audit. |
+
+Two defaults that weak output gets backwards: **the static world is authored in Edit and saved
+with the place** - a server script builds only what differs per session - and **characters are
+animated by clips through the Animator**; per-frame procedural rigs are a measured exception
+(`references/architecture.md`, `references/animation.md`).
+
+## Where the knowledge is
+
+Twenty-four specialist skills are installed beside this one. They are typechecked against the
+current API and are the authority on API facts; the references in this skill are workflow, field
+evidence and the rules that decide whether the game survives. Load the specialist for the system
+you are building:
+
+| Building | Specialist skill | This skill's reference |
+|---|---|---|
+| Module layout, loader, replication, streaming | `roblox-architecture` | `references/architecture.md` |
+| Remotes, validation, exploits | `roblox-networking`, `roblox-security` | `references/security-networking.md` |
+| Saving, sessions, migrations | `roblox-data-stores` | `references/persistence.md` |
+| Currency, XP, rounds, combat, inventory, shops | `roblox-game-systems` | `references/development-loop.md`, `references/game-design.md` |
+| NPCs, pathfinding, enemies | `roblox-npc-ai` | `references/performance.md` (crowds) |
+| Rigs, animation, viewmodels | `roblox-characters-animation` | `references/animation.md` |
+| Screens, HUD, devices | `roblox-ui`, `roblox-input` | `references/ui-mobile.md`, `references/ui-craft.md` |
+| Maps, terrain, lighting | `roblox-world-building` | `references/worldbuilding-lighting.md` |
+| Moving parts, vehicles, constraints | `roblox-physics` | `references/sharp-edges.md` |
+| Sound | `roblox-audio` | `references/assets.md` |
+| Purchases, passes, products | `roblox-monetization` | - |
+| Chat, filtering | `roblox-text-chat` | - |
+| Places, servers, queues | `roblox-teleport-matchmaking` | - |
+| Frame time, memory | `roblox-performance` | `references/performance.md`, `references/optimization-levels.md` |
+| Luau types and idioms | `roblox-luau` | `references/typing-luau.md`, `references/current-engine.md` |
+| Tests | `roblox-testing` | `references/testing-debugging.md` |
+| Review before merge | `roblox-code-review` | `rbforge audit`, `rbforge review --kind all` |
+| Driving Studio through the MCP | `roblox-studio-mcp` | `references/studio-mcp.md`, `references/live-iteration.md` |
+| Analytics, live ops, Open Cloud, toolchain | `roblox-analytics-liveops`, `roblox-open-cloud`, `roblox-tooling` | `references/tooling.md` |
+
+If a specialist and a reference here disagree on an API fact, the specialist and the official docs
+(`rb_docs_search`) win; report the disagreement.
+
 ## What counts as proof
 
 | Level | Evidence behind it |
@@ -133,18 +178,20 @@ for `execute_luau`.
 Before Studio, run `rbforge review --kind traps` (MCP `rb_traps_review`).
 
 - `references/debugging-playbook.md` - START HERE when something looks or behaves wrong: symptom -> cause -> probe, and the fix protocol
-- `references/studio-mcp.md` - all 34 live tools, exact argument quirks, subagents
-- `references/live-iteration.md` - disk-to-Studio sync, require-cache rebuilds, capture limits, camera restore
+- `references/existing-projects.md` - taking over a codebase: audit order, characterization tests, strangler refactors, patterns to question
+- `references/current-engine.md` - what model memory gets wrong: replaced APIs and engine features newer than most training data
+- `references/studio-mcp.md` - all 38 live tools, exact argument quirks, subagents
+- `references/live-iteration.md` - code loop (`rbforge push`) vs world loop (Edit + `save_place`), require-cache rebuilds, capture limits
 - `references/development-loop.md` - the vertical-slice method per genre
-- `references/architecture.md` - ownership, three-stage loader, dependency injection
-- `references/security-networking.md` - remotes, buffer serialization, validation
-- `references/persistence.md` - ProfileStore session locking, migrations, test doubles
-- `references/ui-mobile.md` - Fusion 0.3 scoped UI, safe area, touch
+- `references/architecture.md` - ownership, the explicit loader, lifetimes and cleanup, authored vs generated worlds, dependency injection
+- `references/security-networking.md` - the handler shape, validation layers, when buffers are worth it
+- `references/persistence.md` - a failed read is not a new player; ProfileStore session locking, migrations, test doubles
+- `references/ui-mobile.md` - plain-instance UI, safe areas, touch, input; Fusion 0.3 only if the project uses it
 - `references/ui-craft.md` - HUD craft: what reads as agent slop and what to build instead
-- `references/animation.md` - procedural gait and first-person viewmodels on R15
-- `references/sightlines-and-openings.md` - openings show the world: diagnose flat colour/screen artefacts and seal them with structure
+- `references/animation.md` - choosing clips vs procedural, joints on current avatars, first-person viewmodels
+- `references/sightlines-and-openings.md` - openings show the world: diagnose flat colour/screen artefacts; case notes for panelled shells
 - `references/testing-debugging.md` - five-rung verification ladder, console triage
-- `references/sharp-edges.md` - the traps that break AI-built games
+- `references/sharp-edges.md` - engine traps, each tagged docs / live / field
 - `references/game-design.md` - loop design and game-feel ("juice") matrices
 - `references/performance.md` - MicroProfiler-first optimization, known traps
 - `references/optimization-levels.md` - pick level A/B/C from project evidence; no universal budgets

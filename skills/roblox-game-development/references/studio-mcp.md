@@ -102,8 +102,8 @@ without it the selected rig is used, or a default rig is inserted.
   `search_game_tree`, `multi_edit`, `user_keyboard_input`, `user_mouse_input`.
   `Edit` is rejected while a playtest is running - switch with
   `start_stop_play(is_start: false)` first.
-- **No `+=`.** The tool pre-parser rejects compound assignment. Write
-  `counter = counter + 1`.
+- **Compound assignment (`+=`) is ordinary Luau and runs.** An earlier note here said the tool
+  rejected it; the shipped probes use it and have been run live.
 - **`PivotTo` takes a CFrame**, not a Vector3:
   `part:PivotTo(CFrame.new(Vector3.new(x, y, z)))`.
 - **`multi_edit` with a nonexistent path CREATES the script**; pass `className`

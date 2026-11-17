@@ -14,7 +14,9 @@ _CLIENT_AUTHORITY = [
     # `=(?!=)`: `if hum.Health == 0` and `coins == 5` are reads, not client writes.
     (re.compile(r"\.Health\s*=(?!=)\s*(?!100\b)", re.I), "sets Humanoid.Health directly"),
     (re.compile(r"TakeDamage\s*\("), "applies damage"),
-    (re.compile(r"(coins?|cash|money|gems?)\w*\s*[:+-]?=(?!=)", re.I), "writes a currency-like variable"),
+    # A `local coins = player:GetAttribute("Coins")` is a read for display, not a write.
+    (re.compile(r"^(?!\s*local\b)[^\n]*?\b(coins?|cash|money|gems?)\w*(\.Value)?\s*[:+-]?=(?!=)", re.I | re.M),
+     "writes a currency-like variable"),
     (re.compile(r"leaderstats", re.I), "touches leaderstats"),
     (re.compile(r"TeleportToPlaceInstance\s*\(", re.I), "requests a teleport"),
     (re.compile(r"PivotTo\s*\(\s*CFrame\.new\(", re.I), "teleports something"),
@@ -29,11 +31,14 @@ _UNVALIDATED_HINTS = [
 ]
 
 
-def _collect_sources(path):
+def _collect_sources(path, include_snapshots=False):
     if path:
         det = project_mod.detect(path)
         root = det["path"]
         files = list(project_mod._walk_sources(root))
+        if not include_snapshots:
+            # Recovery copies and git-ignored files are not the game being shipped.
+            files, _skipped = project_mod.shipped_sources(root, files)
     else:
         raise ForgeError("RBF-ARG-001",
                          "no source path; for live places use the official MCP's "

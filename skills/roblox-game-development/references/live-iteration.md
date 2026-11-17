@@ -1,138 +1,129 @@
-# Live iteration: source on disk, slice rebuilt in Studio
+# Live iteration: source on disk, slice checked in Studio
 
-Field notes from building a large procedural world (a 9,000-part ship, six
-outposts, tunnels, HUD) through the official Studio MCP. Each item below cost at
-least one wasted round trip before it was understood. Verified on Studio
-0.735.x, Windows 11, November 2026.
+How to move code and world changes into Studio through the official MCP without wasting round
+trips. Verified on Studio 0.735-0.74x, Windows 11, November 2026.
 
-## The loop that works
+## Two kinds of content, two loops
 
-1. Source of truth is `src/` on disk (Rojo layout). Studio is a mirror.
-2. Push changed files into Studio without Rojo serve (below).
-3. Rebuild only the slice you changed, in Edit, from **fresh module clones**.
-4. Frame a capture on the slice and look at it.
-5. Start Play only for runtime proof (routes, remotes, console, HUD).
+**Code** lives in `src/` on disk and is pushed into Studio. **Static world and UI** are authored in
+the place (in Edit) and saved with it. A server script builds only what is dynamic. See "Authored or
+generated" in `architecture.md` - mixing the two up is the most expensive mistake in this file.
 
-Never hand-edit Workspace parts that a builder module regenerates at server
-start - Play throws them away. Edit the module, then rebuild.
+### Code loop
 
-## Pushing source into Studio without Rojo
+1. Edit files on disk.
+2. `rbforge check .` (seconds).
+3. `rbforge push <files> --project default.project.json` - sets each script's `Source`, reads it
+   back, and refuses to overwrite a script someone edited in Studio (`conflict`). `ALL` pushes every
+   mapped file. No Rojo server and no HTTP setting changes are needed.
+4. Play only for runtime proof: `start_stop_play`, then `rbforge servertest`, console, capture.
 
-When `rojo serve` is not running, serve `src/` on loopback and let one
-`execute_luau` pull each file. Restore `HttpEnabled` before the call returns.
+`rojo serve` with the Studio plugin is the alternative when a human keeps Studio open all day; do not
+run both against the same place.
 
-```bash
-python -I -m http.server 8765 --bind 127.0.0.1 --directory src
-```
+### World loop (authored content)
 
-```lua
--- execute_luau, datamodel_type = "Edit"
-local Http = game:GetService("HttpService")
-local sys = game:GetService("ServerScriptService").Systems
-local was = Http.HttpEnabled
-Http.HttpEnabled = true
-local ok, err = pcall(function()
-	for _, name in { "WorldBuilder", "OutpostBuilder" } do
-		local body = Http:GetAsync("http://127.0.0.1:8765/server/Systems/" .. name .. ".luau")
-		local m = sys:FindFirstChild(name) or Instance.new("ModuleScript")
-		m.Name, m.Parent = name, sys
-		m.Source = body:gsub("\r\n", "\n")
-	end
-end)
-Http.HttpEnabled = was -- never leave a security setting changed
-return ok and "synced" or tostring(err)
-```
+1. Change the place in **Edit**: `execute_luau` with `datamodel_type = "Edit"` for scripted builds,
+   the generators, or hand edits by the owner.
+2. Frame a capture on what changed and look at it.
+3. `save_place` when the owner asked for the change to be kept. Nothing done in Play survives Stop.
 
-Stop the server afterwards. A new ModuleScript the project maps (Rojo) must also
-be added to `default.project.json`, or the next Rojo sync deletes it.
+A builder you run once in Edit is a tool: keep it in `tools/`, not in server start-up.
+
+### World loop (generated at runtime)
+
+Only for worlds that really are procedural. Then the builder modules are code (loop one), and:
+
+- never hand-edit parts a builder regenerates - Play throws them away;
+- rebuild one slice in Edit from **fresh module clones** to preview (below);
+- gate tests and spawning on a readiness attribute the builder sets last.
 
 ## `require` caches in Edit: rebuild from clones
 
-In Edit, `require(moduleScript)` returns the first result for that instance for
-the rest of the session. Changing `.Source` does **not** invalidate it - the
-rebuild silently runs the old code (symptom: the error you just fixed comes
-back verbatim). Clone the module tree into a scratch folder and require the
-clones; sibling `require(script.Parent.X)` calls resolve inside the folder.
+In Edit, `require(moduleScript)` returns the first result for that instance for the rest of the
+session. Changing `.Source` does **not** invalidate it - a rebuild silently runs the old code
+(symptom: the error you just fixed comes back verbatim). Clone the module tree into a scratch folder
+and require the clones; sibling `require(script.Parent.X)` calls resolve inside the folder.
 
 ```lua
 local SS = game:GetService("ServerStorage")
-local sys = game:GetService("ServerScriptService").Systems
-local old = SS:FindFirstChild("DevRebuild"); if old then old:Destroy() end
-local f = Instance.new("Folder"); f.Name = "DevRebuild"; f.Parent = SS
-for _, n in { "OutpostKit", "OutpostBuilder" } do sys[n]:Clone().Parent = f end
-local Builder = require(f.OutpostBuilder) -- fresh code every time
+local sys = game:GetService("ServerScriptService").Server.Services
+local old = SS:FindFirstChild("DevRebuild")
+if old then
+	old:Destroy()
+end
+local f = Instance.new("Folder")
+f.Name = "DevRebuild"
+f.Parent = SS
+for _, n in { "MapKit", "MapBuilder" } do
+	sys[n]:Clone().Parent = f
+end
+local Builder = require(f.MapBuilder) -- fresh code every time
 ```
 
 Delete the scratch folder before saving.
 
 ## Runtime state in Play is a different module instance
 
-In Play, a command-bar / `execute_luau` `require` of a manager returns a
-**separate copy** from the one `GameServer` loaded - its registries are empty.
-To test against live server state (combat, plots, profiles), create a temporary
-`Script` at runtime that requires the managers, runs the check and writes the
-result to an attribute; read the attribute, then destroy the Script. Prefer
-asserting on replicated facts (attributes, instance counts, prompt kinds) where
-that is enough.
+In Play, a command-bar or `execute_luau` `require` of a service returns a **separate copy** from the
+one the game loaded - its tables are empty. To test against live server state use
+`rbforge servertest` (it runs your file as a real Script and reads an attribute back), or assert on
+replicated facts: attributes, instance counts, HUD text.
 
-To exercise a real remote path, fire it from the **Client** datamodel:
+To exercise a real remote path, fire it from the **Client** datamodel and read the outcome from the
+Server datamodel:
 
 ```lua
 -- execute_luau, datamodel_type = "Client"
-game.ReplicatedStorage.Remotes.ToggleGate:FireServer(3)
+game.ReplicatedStorage.Remotes.DoAction:FireServer()
 ```
-
-then read the outcome from the Server datamodel a few seconds later.
 
 ## Captures: what they can and cannot show
 
-- **Edit captures DO render ordinary SurfaceGuis** (dome panoramas, signs,
-  lettering all show). An earlier note here claimed the opposite; it was wrong
-  and sent a session chasing terrain. What did not render in captures (Edit or
-  Play) is **`AlwaysOnTop = true` SurfaceGuis**: use depth-tested panes instead
-  (see ui-craft.md, helmet HUD).
-- **An `ImageLabel` at `ImageTransparency = 1` never reports `IsLoaded`.**
-  Start a fade-in at 0.99, or also accept
-  `ContentProvider:GetAssetFetchStatus(id) == Enum.AssetFetchStatus.Success`.
-- **A Play capture with no camera arguments shows the client viewport**,
-  including ScreenGuis - this is how to review a HUD.
-- Always pass `camera_position` + `look_at_position` for world evidence, and
-  keep the camera out of geometry: a camera inside a shelf shows a ceiling of
-  giant diamond-plate texture that looks like a rendering bug.
-- Lighting at capture time is whatever the clock says. A dusk preview makes
-  everything orange; set `ClockTime` for review captures and restore it.
+- Edit captures render ordinary SurfaceGuis, signs and lettering.
+- **An `ImageLabel` at `ImageTransparency = 1` never reports `IsLoaded`.** Start a fade-in at 0.99,
+  or accept `ContentProvider:GetAssetFetchStatus(id) == Enum.AssetFetchStatus.Success`.
+- **A Play capture with no camera arguments shows the client viewport**, ScreenGuis included - this
+  is how to review a HUD.
+- Pass `camera_position` + `look_at_position` for world evidence, and keep the camera out of
+  geometry: a camera inside a shelf shows a wall of texture that looks like a rendering bug.
+- Lighting at capture time is whatever the clock says. Set `ClockTime` for review captures and
+  restore it.
+- Streaming shows what is near the **character**, not near a pinned camera: use the `goto` probe
+  first.
 
 ## The editor camera after `execute_luau`
 
-The MCP restores `Camera.CameraType` after each command, which can leave the
-owner's editor camera stuck (right-drag does nothing). A plain assignment is
-overwritten; a delayed one survives:
+The MCP restores `Camera.CameraType` after each command, which can leave the owner's editor camera
+stuck. A plain assignment is overwritten; a delayed one survives:
 
 ```lua
 local cam = workspace.CurrentCamera
-task.delay(1, function() cam.CameraType = Enum.CameraType.Custom end)
+task.delay(1, function()
+	cam.CameraType = Enum.CameraType.Custom
+end)
 ```
-
-Do this after any command that touched the camera, then verify on the next call.
 
 ## Saving
 
-- There is no save tool. The owner saves (File > Save, or Download a Copy for a
-  local `.rbxl`). Verify the file's size/time or embedded sources before
-  claiming a checkpoint.
-- Studio's automation guard blocks scripted save/menu input while the owner is
-  using the mouse/keyboard. Ask for ~30 s idle instead of retrying.
+- `save_place` saves like File > Save: a new version for a cloud place, the file for a local one. It
+  never publishes. Statuses and what to do with each are in `studio-mcp.md`.
+- Save when the owner asked for it or at the end of a change they wanted kept - not after every edit.
 - Remove probes (`DevRebuild`, temp Scripts, test parts) before any save.
+- A change made in Edit that is not saved is gone at the next reopen. Say so in the report.
+
+## Debug switches
+
+A `Debug*` attribute a test can set is useful; in a shipped build it is a switch any client can flip.
+Gate every one: `RunService:IsStudio() and player:GetAttribute("DebugX")`.
 
 ## Ready-made snippets
 
-`templates/studio/` in the RobloxForge checkout: `dev-rebuild.luau` (clone-and-
-rebuild one slice), `connectivity.luau` (floating-part proof),
-`route-matrix.luau` (walkability proof). Fill in the names at the top.
+`templates/studio/` in the RobloxForge checkout: `dev-rebuild.luau` (clone-and-rebuild one slice),
+`connectivity.luau` (floating-part proof), `route-matrix.luau` (walkability proof).
 
 ## Budget rules that kept sessions short
 
 - Batch independent captures into one message; they are read-only.
-- Rebuild one plot / one POI, not the world (`BuildWorld` with terrain can take
-  a minute).
 - After a fix, re-run only the check that failed, then the full gate once.
+- Rebuild or re-test one area, not the world.

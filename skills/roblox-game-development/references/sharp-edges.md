@@ -1,285 +1,177 @@
 # Sharp edges (things that bite every agent at least once)
 
-Hard-won, verified against live Studio + MCP sessions. Read before your
-first build session.
+Each item says what stands behind it:
 
-## MCP tool pre-parser quirks
+- **(docs)** the official engine reference;
+- **(live)** observed in a Studio session, with the month;
+- **(field)** reported once from one project and not reproduced elsewhere - a lead to test, not a rule.
 
-- **No `+=` / `-=` / `*=` in tool-call code strings.** The pre-parser
-  rejects augmented assignment. Write `x = x + 1`.
-- Attribute access on results is unreliable across wrappers - prefer
-  explicit indexing/locals in executed Luau.
-- `execute_luau` needs `datamodel_type` (Edit / Client / Server). Server
-  truth requires Server context; Edit context runs in edit mode where
-  Players don't exist.
+Case notes from one procedural-dome project (panel faces, shell openings, skirts) moved to
+`sightlines-and-openings.md`; they are specific to that kind of build.
 
-## Instance / math traps
+## Players and characters
 
-- `Model:PivotTo(CFrame)` moves the whole model; `Part.CFrame = ...` moves
-  one part. Setting PrimaryPart CFrame on a model does NOT move the rest.
-- `WaitForChild` infinite-yield = wrong name or missing instance. Fix the
-  cause; don't nil-guard around it reflexively.
-- Kill bricks / Touched: debounce or the event refires every physics step.
-- `Humanoid.Died` vs `Humanoid.Health <= 0` polling: prefer the event.
-- Character may not exist yet when the player joins - use
-  `player.CharacterAdded`, not `player.Character` at connect time.
+- **Handle what already exists.** `PlayerAdded` and `CharacterAdded` fire only for arrivals after the
+  connection. Connect, then loop `Players:GetPlayers()` / check `player.Character`. A script that
+  only connects works in a published game and fails in Studio, where the player is often already
+  there. (docs)
+- **Per-character connections die with the character - only if you end them.** Anything connected in
+  `CharacterAdded` (Humanoid events, RunService steps) must be disconnected when that character is
+  removed, or every respawn adds another copy. (docs)
+- `Humanoid.Died` over polling `Health <= 0`. (docs)
+- **Spawn-before-world races** exist only when a script builds the world at start-up. Then set
+  `Players.CharacterAutoLoads = false`, build, assign a real `RespawnLocation`, and
+  `LoadCharacterAsync`. An authored world does not need any of this (`architecture.md`). (live 2026-11)
+- **Avatars may have no `Motor6D`.** Current R15 avatars can be joined by `AnimationConstraint`
+  (15 of them and zero `Motor6D`s on a default avatar). Motor6D-only joint code silently does
+  nothing; `C0`/`C1` are read-only there. Details: `animation.md`. (live 2026-11)
+- **Ragdoll swap leaves floating decals and lights** unless the hidden original's LayerCollectors,
+  Lights, ParticleEmitters and Highlights are disabled. (live 2026-11)
 
-## Engine traps found in real builds
+## Instances and CFrames
 
-- **`Enum.BulkMoveMode` has `FireAllEvents` and `FireCFrameChanged` only.** There
-  is no "fast without events" member; using one throws at runtime.
-- **SurfaceGui `Face = Front` is the part's -Z face.** `CFrame.lookAt(pos, pos + n)`
-  points -Z along `n`, so that orientation shows the text on the side facing `n`.
-  If your helper thinks "+Z is the visible side", flip the carrier by
-  `CFrame.Angles(0, math.pi, 0)` once, inside the helper.
-- **Tweening an anchored part does not move parts welded to it** - anchored parts
-  ignore welds. Move an anchored assembly with `workspace:BulkMoveTo(parts,
-  cframes)` from offsets captured once (`root.CFrame:ToObjectSpace(part.CFrame)`).
-- **Light emitters inside a part's voxel can emit nothing** on voxel lighting.
-  Put the light on an invisible emitter a few studs below a ceiling fixture, not
-  on the fixture embedded in the slab. SpotLights barely register there.
-- **`Lighting.LightingStyle` is script-writable; `Lighting.Technology` is not**
-  from MCP/command context. Guides that say "set Technology = Future in a
-  script" are stale.
-- **The Audio API has no generator.** `AudioOscillator`/`AudioNoise` do not exist
-  (`AudioPlayer`, `AudioEmitter`, `AudioFader`, effects and `Wire` do). Motor
-  hums, alarms and clangs need real audio assets; plan the asset step.
-- **`Terrain:FillBlock` overwrites everything in the box**, including the inside
-  of a tunnel or room you built from parts. Fill around hollow volumes, never
-  through them.
-- **`CorrodedMetal` (and other bright textures) multiply the part colour.** Mid
-  oranges render as salmon camouflage; use dark rust colours (around
-  RGB 50-65, 27-34, 21-24) and keep it to a minority of panels.
-- **Thin floating collidable slabs and props in doorway corners break
-  `PathfindingService`** at AgentRadius 2. Make furniture collide through a
-  floor-standing invisible hull, set decor `CanCollide = false`, keep door
-  corners clear, and test routes from both approach directions.
-- **Spawn-before-world races.** With `CharacterAutoLoads = true` a player can
-  load before a procedural world exists and fall through, or spawn under a floor
-  and respawn normally on death. Disable auto-load, build the world and assign a
-  real `RespawnLocation`, then `LoadCharacterAsync`.
+- `Model:PivotTo(cf)` moves the whole model; setting one part's `CFrame` moves that part. Welded
+  unanchored parts follow their assembly root; anchored parts never follow a weld. (docs)
+- **Tweening an anchored part does not move parts welded to it.** Move an anchored assembly with
+  `workspace:BulkMoveTo(parts, cframes)` from offsets captured once, or unanchor everything but the
+  root. (docs)
+- **`Enum.BulkMoveMode` has `FireAllEvents` and `FireCFrameChanged` only.** (docs)
+- `WaitForChild` "infinite yield possible" means a wrong name or an instance nobody creates. Find it;
+  do not add a timeout around it. (docs)
+- `Touched` fires many times per contact: debounce per character, and never trust it for authority
+  without a server-side distance check. (docs)
+- **`CFrame.lookAt` between two points on the same vertical is degenerate** - pass an explicit up
+  vector, or use a separate helper for vertical posts. (docs)
+- **Wedge orientation:** a `WedgePart`'s tall edge is its local +Z and the slope falls toward -Z; a
+  `CornerWedgePart` peaks at (+X, -Z). Measure with two downward rays before building from memory.
+  (live 2026-11)
+- **`tostring(Enum.Material.Grass)` is `"Enum.Material.Grass"`**, not `"Grass"`. Use `.Name` for
+  lookups and payloads. (docs)
+- **`WeldConstraint` keeps the offset the parts had when it was created.** Position first, weld
+  second. (docs)
+- **Spatial queries and raycasts skip `CanQuery = false` parts.** A clear `GetPartBoundsInBox` does
+  not prove an area is empty (`box-scan` probe). (docs)
 
-## Character and test-world traps (2026-11)
+## Rendering, lighting, materials
 
-- **No `Motor6D` on the avatar.** Current R15 avatars can be joined by
-  `AnimationConstraint` (15 of them, zero `Motor6D`s on a default avatar,
-  verified live). Motor6D-only joint code silently does nothing; its `C0`/`C1`
-  are read-only, so offset through `Attachment0.CFrame` and pose through
-  `Transform`. Details: `animation.md`.
-- **IKControl loses to your own PreSimulation posing** of the same joints.
-- **Ragdoll swap leaves floating decals and lights** unless the hidden
-  original's LayerCollectors, Lights, ParticleEmitters and Highlights are
-  disabled.
-- **A ground ray from high up lands on roofs**, crane beams and canopies; a unit
-  spawned there falls off the map and the test fails like an AI bug. Cast short
-  rays at the unit's own level with `RespectCanCollide = true`
-  (`testing-debugging.md`).
+- **`Lighting.Technology` is not scriptable** - assigning it throws. `Lighting.LightingStyle` and
+  `PrioritizeLightingQuality` are. (docs)
+- **A `Sky` with fixed image ids never gets dark**: the textures are drawn as-is at midnight. A fresh
+  `Instance.new("Sky")` on engine textures follows `ClockTime`. Raise night ambient enough to read
+  silhouettes. (live 2026-11)
+- **`SurfaceGui.ClipsDescendants` defaults to false**: children larger than the canvas render in
+  mid-air beyond the part, one-sided. Set it on every screen-style SurfaceGui. (live 2026-11)
+- **`SurfaceGui.Face = Front` is the part's -Z face.** `CFrame.lookAt(pos, pos + n)` points -Z along
+  `n`. Probe before painting many panels. (docs)
+- **A SurfaceGui with `Adornee` lives where you parented it** (often `PlayerGui`), not under its
+  part. (docs)
+- **`UIGradient.Transparency` replaces the object's background transparency** under the gradient - a
+  "glass" panel with a keypoint at 0 renders opaque. (live 2026-11)
+- **Material textures tile in world studs.** On a first-person viewmodel a few texels of `Fabric`
+  cover the whole arm; use an untextured material there. (live 2026-11)
+- **Bright material textures multiply the part colour** (`CorrodedMetal` turns mid orange into
+  salmon). Use darker base colours. (live 2026-11)
+- **A light inside a part's voxel can emit nothing** on voxel lighting. Put the emitter on an
+  invisible part clear of the fixture. (live 2026-11)
+- **A `PointLight` carried by the camera lights the world**, not just the held object. Keep it weak
+  and short, or give the held object real mid-tone colours instead. (live 2026-11)
+- **Thin overhead structure casts real shadows** as dark lines on the ground; set
+  `CastShadow = false` on decorative framing. (live 2026-11)
+- **GUIs are not fogged, parts are.** A `BillboardGui` stays visible through `Atmosphere` haze. (live
+  2026-11)
+- **AlwaysOnTop SurfaceGuis did not render in one project's captures.** Not reproduced elsewhere; if
+  yours does not show, try a depth-tested pane close to the camera. (field)
 
-## Workflow traps
+## Audio and assets
 
-- Editing StarterGui at runtime does nothing for existing players - edit
-  PlayerGui copies.
-- Edit-mode `execute_luau` cannot see play-mode state and vice versa.
-- Multiple Studio sessions: every tool takes `studio_id`. Get it from
-  `list_roblox_studios` first; guessing targets the wrong place.
-- Console output is cumulative - filter by timestamp/your run, don't
-  re-read ancient errors and "fix" them again.
+- **The Audio API has no oscillator or noise generator** (`AudioPlayer`, `AudioEmitter`,
+  `AudioListener`, effects and `Wire` exist). Hums and alarms need real audio assets. (docs)
+- **Every sound, image and mesh needs an uploaded asset id** the experience is allowed to use.
+  A guessed id is silence or a grey square, with no error. (docs)
+- **`rbxasset://` files you add exist only in one Studio build** and never reach a player. Upload
+  real assets; `sound-audit` lists the ones that fail. (live 2026-11)
+- **Stock `rbxasset://sounds/` files are not a contract** between Studio versions. (live 2026-11)
+- **An `ImageLabel` at `ImageTransparency = 1` never reports `IsLoaded`.** Fade from 0.99 or use
+  `ContentProvider:GetAssetFetchStatus`. (live 2026-11)
+- **Uploaded audio is reviewed before it plays.** "Uploaded" is not "usable"; check the asset state.
+  (live 2026-11)
+
+## Terrain and building
+
+- **`Terrain:FillBlock` / `FillBall` overwrite everything in the volume**, including the inside of
+  a room built from parts. Fill around hollow spaces. (docs)
+- **Smooth terrain does not sit exactly at the height you filled to.** Stand props on a downward
+  raycast hit, not on the fill height. (live 2026-11)
+- **Thin floating collidable slabs and props in door corners break pathfinding.** Give furniture a
+  floor-standing hull, make decor non-collidable, and test routes in both directions. (live 2026-11)
+- **Yield on elapsed time, not once per chunk**, in a long build:
+  `if os.clock() - last > 0.03 then task.wait() last = os.clock() end`. (live 2026-11)
+- **Seeded randomness (`Random.new(seed)`) for anything placed procedurally**, and draw the same
+  values for every candidate before deciding to reject it - otherwise moving one exclusion zone
+  reshuffles everything after it. (live 2026-11)
+- **A world built at runtime is not saved.** What a server script builds exists only in that
+  session; the place file still holds what was there before. (docs)
+
+## Luau syntax and types
+
+- **No default parameter values.** `function f(a, b: number? = nil)` is a syntax error that
+  cascades into hundreds of bogus diagnostics. (docs)
+- **A line that starts with `(`** continues the previous expression ("ambiguous syntax"). Assign
+  to a local first. (docs)
+- **`number?` is nullable, not optional at the call site** under `--!strict`: pass the `nil`. (docs)
+- **Untyped parameters report errors at the callers.** `Expected this to be 'Player', but got {...}`
+  usually means the function's parameter was never annotated. See `typing-luau.md`. (live 2026-11)
+- Deprecated globals still run and are still wrong: `wait`, `spawn`, `delay`, `tick`,
+  `:connect`, `Instance.new(class, parent)`, `SetPrimaryPartCFrame`, body movers, `FindPartOnRay`,
+  `Humanoid:LoadAnimation`. The trap lint lists each with its replacement. (docs)
+
+## Client code
+
+- **An error in a per-frame callback aborts the rest of that call, every frame - the connection
+  itself keeps firing** (a Heartbeat handler that threw on its first call ran 35 more times in
+  0.6 s and stayed connected). One function that does camera, HUD and effects loses all three to a
+  nil in the first, and the console gets one error per frame. Keep optional visual passes on their
+  own connections and publish a failure to an attribute you can read back. (live 2026-11)
+- **A `UIListLayout` created from code sorts by `Name`**, not `LayoutOrder`, until you set
+  `SortOrder = Enum.SortOrder.LayoutOrder`: three elements with orders 1-2-3 came out alphabetical.
+  (live 2026-11)
+- **`UserInputService.InputBegan` passes `gameProcessed`.** Ignore it and typing in chat fires the
+  ability. (docs)
+- **Editing `StarterGui` at runtime does nothing for players already in the game** - their copies
+  live in `PlayerGui`. (docs)
+- **A client cache built while the server is still creating things is wrong forever.** Wait for a
+  server-set readiness attribute or count, and refresh when it changes. (live 2026-11)
+- **Never restore a saved `LocalTransparencyModifier`.** The engine also writes it for the local
+  head; set hidden parts back to 0. (live 2026-11)
+
+## Studio and MCP workflow
+
+- `execute_luau` needs `datamodel_type` (Edit / Client / Server). Edit cannot see play state and
+  play cannot see edit state. (live 2026-11)
+- Every tool takes `studio_id`; get it from `list_roblox_studios`. (live 2026-11)
+- **Edit-mode `require` caches a ModuleScript for the whole session**; changing `Source` does not
+  invalidate it. Require a clone (`live-iteration.md`). (live 2026-11)
+- **`execute_luau` in Play has its own module cache**: a `require` there returns a fresh copy with
+  empty state. Test live state with `rbforge servertest`. (live 2026-11)
+- **`_G` is not shared between separate `execute_luau` calls.** Park cross-call state in an
+  attribute. (live 2026-11)
+- **Background Studio runs at about 15 fps** and Automatic quality collapses the draw distance.
+  Timings and "missing far geometry" measured there are the throttle, not the place
+  (`capture-quality` probe). (live 2026-11)
+- Console output is cumulative - read what is new since your change (`console since=60`). (live)
+- Wheel input through the MCP needs a `moveTo` onto the viewport first; verify the state the input
+  writes rather than calling the feature dead. (live 2026-11)
 
 ## Agent traps (the meta-failures)
 
 - Declaring done when scripts exist but nothing was playtested.
 - "Visually verified" without having inspected a screenshot.
 - Building 15 systems before proving one loop.
-- Trusting client-sent numbers because "it's just a prototype" - prototypes
-  get published.
-
-## Screen surfaces (dome walls, billboards, in-world displays)
-
-Field notes from building a 225-panel projection dome across six plots. Each one
-was invisible in the code and obvious in the capture.
-
-- **`SurfaceGui.Face` is not "the side you can see".** A panel built with
-  `CFrame.fromMatrix(centre, right, up)` has its LookVector along `right × up`,
-  which on an inward-facing shell points *outward*, so the screen belongs on
-  `Enum.NormalId.Back`. Probe before painting 200 panels:
-  `panel.CFrame.LookVector:Dot((centre - panel.Position).Unit)`. Negative means
-  the LookVector points away from the interior: use `Back`.
-- **A RenderStepped connection dies on its first error**, silently and
-  permanently. Everything after the throw stops for the rest of the session.
-  Put optional visual passes on their own connection, wrap the body in `pcall`,
-  and write the message to a workspace attribute you can read back.
-- **A client cache built during world construction is permanently wrong.** A
-  display pass scanned the dome while it was still being built, cached 62 of 225
-  panels, and because the table was non-empty it never refreshed — the whole
-  feature did nothing with no error. Publish a `PanelCount` attribute on the
-  server after building and recache whenever the client's count disagrees.
-- **Edit `require` caches a ModuleScript for the whole session.** Pushing new
-  source into Studio does not invalidate it: a rebuild used a `GameConfig` from
-  before a field existed and died with `attempt to index nil with 'Ground'`.
-  Bust it by cloning the module, parenting the clone under the same name,
-  destroying the original, then requiring the clone.
-- **Planar panels on a curved shell leave wedge gaps at the corners**, and the
-  world sky leaks through as bright spikes on a bright screen. Fix both ends:
-  overlap each panel ~12 % past its true quad, and put a dark backing slab behind
-  it so any pinhole reads as bezel instead of sky.
-- **An ellipsoid's base ring does not touch the ground.** When the dome centre
-  sits at courtyard height, the wall floats and players walk out underneath. Add
-  a skirt ring and leave exactly one opening, skipping segments whose
-  *endpoints* fall in the corridor — a midpoint-only test skipped nothing and
-  walled the tunnel.
-- **Any new collidable shell can invalidate walk routes.** After adding a skirt,
-  wall or gate, re-run the route test: the tunnel went `NoPath` on all six plots
-  while the capture looked perfect.
-
-## Verifying things the MCP cannot press
-
-- **Wheel input needs the pointer on the viewport.** `user_mouse_input` with a
-  `moveTo` onto the 3D view first, then `scrollUp`, did reach the game's
-  `MouseWheel` handler (first-person zoom verified 2026-11-05). A scroll with no
-  prior `moveTo` may land nowhere. If a scroll seems ignored, do not call the
-  feature dead: read the state it writes (an attribute, a camera distance, a HUD
-  flag) and verify that code path. Treat anything needing a focused viewport or
-  `MouseBehavior.LockCenter` the same way.
-- **A SurfaceGui with `Adornee` lives in PlayerGui, not under its part.** Walking
-  the part's children for the gui returns nothing and reads as "no panes
-  rendered". Search `PlayerGui` by name or Adornee instead.
-- **A client-side feature can be complete and still be invisible in a capture.**
-  Studio resets a camera you assign from `execute_luau` before the capture lands.
-  Verify state first, picture second.
-
-## Cutting a hole in a curved shell
-
-- **Test the quad, not the centre.** A panel 37 studs wide easily covers a 24-stud
-  corridor while its centre sits outside it, so a centre-only test leaves the
-  shell hanging inside the tunnel and blocks the view. Test all four corners.
-- **Test the height too, or the hole climbs.** On a dome, panels higher up shrink
-  toward the axis, so their corners also fall inside a corridor test. Add a height
-  gate (a panel whose bottom is above the opening cannot be in it) or you delete
-  rings all the way to the oculus.
-- **Flatten floors in shell space, not plot space.** A dome offset from its build
-  rectangle will rise inside the rectangle-based apron: the wall buries itself in
-  the hillside and panels clip through terrain. Flatten out to ~1.25 of the shell's
-  own normalised radius before the hill function starts.
-- **Trim the panel, do not delete it.** A deleted panel leaves a hole in the
-  sky that reads as "the dome is not sealed". Cut the panel at the opening's top
-  edge instead (re-centre it and shrink its height by the same fraction) and the
-  shell stays continuous above a door, gate or tunnel mouth.
-- **Carve terrain only where the structure is meant to be open.** A tunnel that
-  is carved along its whole length lies in an open cut with its roof slab
-  exposed. Carve the run inside the shell and the far mouth; fill everything
-  between and the structure reads as a hillside with an entrance.
-
-- **Match the pixels before the code.** When a user sends a screenshot of a
-  "wall", "panel" or "screen effect" that your raycasts say is not there, sample
-  the image: read the RGB at the offending surface, then scan `workspace` for
-  parts whose `Color` is within ~0.07 of it inside the reported box. That found a
-  tunnel blocked by `PineTier` foliage from a treeline ring the same session that
-  three geometry hypotheses (panels, skirt, terrain) had already failed on. Colour
-  is a part's identity; positions alone will not tell you what you are looking at.
-- **A runtime world build does not persist.** Terrain carving, dome panels and
-  anything else built by a server script exist only in that session; the saved
-  place still holds whatever geometry was there before. A user who reports a
-  wall, plug or leftover hill blocking a tunnel they can walk in Play is usually
-  looking at **edit mode**, where the carve never happened. Two cheap tells: their
-  screenshot has no HUD (scripts are not running) and a Play ray from the same
-  spot is clear. Fix it by running the same builder against the **Edit** datamodel
-  (`--dm Edit --exec tools/dev_rebuild_all.luau`), then have the owner save the
-  place once - without that save the next reopen restores the old state.
-
-- **`SurfaceGui.ClipsDescendants` defaults to false.** Children past the canvas
-  render in mid-air beyond the part, one-sided. Oversized parallax/background layers
-  then "appear" in doorways and tunnels from one direction only. Set it to `true` on
-  every screen-style SurfaceGui. Check this before blaming terrain or geometry.
-- **Do not delete a panel that seals a shell.** Split it around the opening (see
-  sightlines-and-openings.md); removing it opens a hole the owner reports next.
-- **`AlwaysOnTop = true` SurfaceGuis did not render** (Studio captures and Play).
-  For camera-bound HUD panes use depth-tested panes about 0.75 studs from the eye.
-- **`GetPartBoundsInBox` skips `CanQuery = false` parts**, same as raycasts.
-
-- **Weapon FX that starts at the character instead of the barrel.** `hrp.Position + Vector3.new(0, 1.6, 0)` is the
-  chest, and a weapon model's `PrimaryPart` is usually the **grip** - both put the ray and the tracer inside the body, so
-  shots look like they come out of the player's sternum and can hit geometry the barrel has already cleared. Name the
-  barrel tip on every weapon (`Muzzle`) and resolve it before the raycast: `model:FindFirstChild("Muzzle", true)`, then
-  PrimaryPart, then the old offset. First person needs one more step - the body gun is hidden behind the camera, so the
-  local tracer must come from the viewmodel's muzzle while remote players keep the body one.
-
-## Silent failures found while art-directing a live place
-
-Each of these produced no error and cost a session before it was measured.
-
-- **A `Sky` with fixed image ids never gets dark.** The textures are drawn as-is at midnight, so "night" is a
-  dim afternoon with a moon in it. A `Sky` left on the engine's own textures (a fresh `Instance.new("Sky")`)
-  follows `ClockTime` and shows stars. Then set the night's ambient high enough to read silhouettes: a correct
-  night with default ambient is pitch black and unplayable.
-- **`rbxasset://` files you added exist only in one Studio build.** `content/` sits inside the versioned install
-  folder; every Studio update creates a new folder without your files. Sounds then fail to load with no error and
-  only stock clips play. It also never reaches a player. Keep an installer script for local work, check with the
-  `sound-audit` probe, and upload real assets before shipping.
-- **Stock content is not a contract either.** A stock `rbxasset://sounds/*.mp3` that loaded last month can be
-  gone after an update; `sound-audit` lists those too.
-- **Background Studio runs at about 15 fps.** Server and client both report the same flat rate and it does not
-  move when you delete half the scene. Boot times, tween timings and anything measured in frames are inflated
-  roughly four times, and Automatic quality drops the draw distance so far geometry disappears from captures.
-  Prove it is the throttle (hide your additions, re-measure) before optimising anything.
-- **Yielding once per chunk makes a build wait on the frame clock.** `task.wait()` after every terrain tile or
-  every N parts spends most of the boot idle. Yield when the thread has held the frame for ~30 ms instead
-  (`if os.clock() - last > 0.03 then task.wait() last = os.clock() end`) - and do not let a search-and-replace
-  rewrite the `task.wait()` inside that helper into a call to itself.
-- **Smooth terrain does not sit at the height you filled it to.** A block filled "to Y = 0" can present its
-  surface a few studs lower. Stand props on a downward raycast hit, and treat water or a non-terrain hit as
-  "do not place here"; one function then keeps scatter out of harbours and off existing buildings.
-- **`_G` is not shared between separate command sessions.** State saved by one `execute_luau` client may be nil
-  for another. Park cross-call state in an attribute (`workspace:SetAttribute`) instead.
-- **Wedge orientation, measured:** a `WedgePart`'s tall edge is its local +Z and the slope falls toward -Z; a
-  `CornerWedgePart` peaks at (+X, -Z). Measure with two downward rays before building a battered wall from memory.
-- **Material textures tile in world studs, so they blow up on a first-person viewmodel.** Arms and weapon parts
-  scaled to a fraction of a stud and held against the camera show a few texels of `Fabric` weave as wood planks.
-  Use a matte material without a visible pattern (`Rubber`) for cloth on a viewmodel; `SmoothPlastic` is flat but
-  glossy enough to turn gold in direct sun. Keep the textured material on the third-person copy.
-- **A "fill light" on a viewmodel lights the world.** A `PointLight` near the camera strong enough to lift a dark
-  weapon also bleaches every wall within its range and flattens the night; and it forces every held object to be
-  near-black to survive it. Keep it weak and short (about 0.6 brightness, 4 studs) and give the object real
-  mid-tone finishes instead.
-- **A fixed-length cut of a recording is not a sound effect.** Foley takes start with handling noise; the first
-  N milliseconds can end before the clack. Trim on content (first and last sample above a floor, short fades),
-  measure where the main transient sits in the stem, and start playback that much before the animation frame it
-  belongs to.
-- **Decorative structure overhead still casts real shadows.** Thin struts of a dome, a canopy frame or a cable net
-  draw dark lines and rings across the ground far below, which reads as a rendering fault - doubly so under a
-  projected or painted sky. Set `CastShadow = false` on overhead framing unless the shadow is the point.
-- **`CFrame.lookAt` between two points on the same vertical is degenerate.** A "rod from A to B" helper built on
-  it produces a twisted or NaN part for a perfectly vertical post. Use a dedicated vertical-post helper, or pass
-  an explicit up vector when the direction is within a degree of world up.
-- **Scatter that rejects candidates must draw its random values first.** If a rejected spot consumes fewer random
-  numbers than an accepted one, moving a single exclusion zone reshuffles every prop after it and the before/after
-  captures no longer compare. Draw the same values for every candidate, then decide.
-- **GUIs are not fogged, parts are.** A `BillboardGui` glow stays visible through `Atmosphere` haze and beyond
-  the part draw distance, which makes it the reliable far landmark; neon parts fade with everything else.
-
-## `tostring(Enum.Material.Grass)` is not `"Grass"`
-
-`tostring()` on an Enum item yields the full path - `"Enum.Material.Grass"` - so a lookup keyed by
-plain names (`{ Grass = ... }`) misses every time and falls through to its default. In an impact or
-surface-effect payload send `result.Material.Name`, and keep `tostring()` for logs only. The failure is
-silent: the effect still plays, it just plays the fallback for every surface.
-
-
-## Luau syntax that does not exist (and reads like a type error)
-
-- **No default parameter values.** `function f(a: string, b: number? = nil)` is a *syntax* error
-  (`Expected ')' ... got '='`) and can cascade into hundreds of bogus diagnostics in one file. Write
-  `b: number?` and pass `nil` explicitly at every call site that omits it.
-- **A line that starts with `(`** continues the previous expression. `local x = 1` followed by
-  `(tbl :: any).field()` is "Ambiguous syntax: this looks like an argument list". Assign to a local
-  first, or prefix the statement with `;`.
-- **Nullability is not optionality.** `material: Enum.Material?` still requires an argument. A helper
-  with four optional parameters has four-argument call sites, so pass the `nil`s.
-
-## Type errors cascade from untyped parameters
-
-`function M.Do(player, id)` gives `player` a generic type, which Luau then unifies against every call
-site, so the failures are reported *at the callers*:
-`Expected this to be 'Player', but got '{- Character: {- FindFirstChild: ... }}'`. That message
-usually means the parameter was never typed rather than that a wrong value was passed - but check the
-argument first, because a genuine `Instance` passed where a `Player` is required produces the same
-shape of message. Once the parameter is typed, the callers either pass. See `typing-luau.md`.
+- Trusting client-sent numbers because "it's just a prototype" - prototypes get published.
+- Copying the pattern the project already uses without asking whether it was a good one. An existing
+  codebase is evidence of what was built, not of what works (`existing-projects.md`).
+- Turning one project's workaround into a rule for every project.
+- **Match the pixels before the code.** When a screenshot shows something your raycasts say is not
+  there, read the colour at that pixel and search for parts of that colour.
+- **Weapon effects start at the muzzle**, not at the character's chest or the weapon's grip: name a
+  `Muzzle` attachment and resolve it before the raycast and the tracer.

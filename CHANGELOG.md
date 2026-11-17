@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.19.0 - 2026-11-17
+
+A knowledge audit. The first-party references grew out of one production project whose core was
+written by a weak model; this release separates engine fact from that project's habits, corrects what
+was wrong, and fills the gaps for starting a game and for taking one over.
+
+### Added
+- `rbforge audit [path]` and MCP `rb_audit`: a ranked health report for an existing project - player
+  data loss first, then exploitable remotes, runtime faults, missing tests, monoliths, cost and
+  deprecations - plus a table of every server remote handler, its arguments and the kinds of guard the
+  code shows (following one level of delegation). Reports when a world or UI is built entirely by code.
+- `rbforge new` / `scaffold` write a working starter kit instead of three stub files: an explicit
+  service loader, a named remote registry, a token-bucket rate limiter, a data service that cannot
+  overwrite a profile it failed to read (retry, kick, `UpdateAsync`, `BindToClose`, Studio-only
+  in-memory mode), a cleanup helper, a HUD, four offline specs and a live server test. It passes its
+  own gate (StyLua, selene, luau-lsp strict, Lune) and was run in Studio Play.
+- `dev.project.json` in the scaffold builds a standalone test place with a floor and a spawn.
+- Genres `shooter`, `round`, `towerdefense`, `rpg`, `horror`, `survival` (with aliases such as `fps`,
+  `td`, `extraction`) in `new`, `scaffold`, `plan` and `templates/genre/`. An unknown genre is refused.
+- Trap lint rules T026-T044: failed data store read treated as a new player (T038), saves without
+  `BindToClose` (T039), missed existing players and characters (T040, T041), input that ignores
+  `gameProcessed` (T042), client-supplied values in a handler signature (T043), unguarded test/debug
+  remotes (T044), `InvokeClient`, name-keyed stores, `PromptProductPurchaseFinished` grants,
+  client-side HTTP, unprotected web calls and the remaining deprecated calls. Every rule declares an
+  evidence class (`docs`, `live`, `field`); a `field` rule never reports above `info`.
+- References `existing-projects.md` (taking over a codebase: audit order, characterization tests,
+  strangler refactors, patterns to question) and `current-engine.md` (replaced APIs and engine
+  features newer than most training data; every class it names is checked against the docs cache).
+- The router skill routes each kind of work to the specialist skill that owns its API facts.
+- A test parses every fenced Luau block in the first-party references with StyLua.
+- `servertest FILE` uses the documented default attribute `RbforgeTest`; `review` accepts a positional
+  path like `check` and `audit`.
+
+### Fixed
+- `persistence.md`: the ProfileStore sample called `profile:ListenToRelease` and assigned
+  `profile.OnSessionEnd`; ProfileStore has no `ListenToRelease` and `OnSessionEnd` is a signal. The
+  sample, the constants (session taken after 40 s, not "30-minute lease stealing") and the method
+  list now match the upstream source. (Field reports.)
+- The structure rung and the security/architecture reviews audited recovery snapshots and git-ignored
+  files; they now skip `artifacts/`, `backups/`, `recovery/`, vendored packages and anything git
+  ignores, and say how many files that was. (Field report.)
+- `luau_text.code_only` treated `-- [text]` as the start of a long comment and dropped everything up
+  to the next `]]`. Every scan built on it (the loadstring/require-by-id gate, the server-test
+  reporter check, the lint) could miss code after such a comment.
+- Wrong or project-specific advice removed from the references: "no `+=` in `execute_luau`" (it
+  runs; checked live), "a RenderStepped connection dies on its first error" (it keeps firing; checked
+  live), "use `CharacterAdded`, not `player.Character`" (use both), "there is no save tool"
+  (`save_place`), the HTTP-server source push (use `rbforge push`), "audio above ~6 seconds needs an
+  upload" (every asset needs an id), buffer packets and schema compilers as the default for remotes,
+  Fusion as the default UI route, a camera `PointLight` for viewmodels, one mesh per rig segment as
+  the only import route, "time dilation" and "exactly one source and one sink" in game design.
+- New defaults stated where the old text normalised one project's choices: static worlds are authored
+  in Edit and saved, not rebuilt by a server script on every start; characters are animated by clips
+  through the Animator, with per-frame procedural rigs as a measured exception.
+- The loader sample in `architecture.md` never set its readiness flag, swallowed player-setup errors
+  and missed existing characters; it is now the scaffold's loader.
+- Trap lint: T022 fired on any `Clone()` near a camera (5 false positives in one project) and now
+  needs a viewmodel; T025 matched one project's part names and is removed; T004 is `info`.
+- The client-authority review flagged `local coins = player:GetAttribute("Coins")` as a write.
+- A script-created `UIListLayout` sorts by `Name`; documented, and the starter HUD sets `SortOrder`.
+
 ## 0.18.0 - 2026-11-16
 
 ### Added

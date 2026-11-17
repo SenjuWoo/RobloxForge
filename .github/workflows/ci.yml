@@ -102,6 +102,15 @@ jobs:
           assert r["rungs"], "gate produced no rungs"
           print("gate OK:", r["status"], r["counts"])
           EOF
+          # The starter kit must come out of its own audit with nothing to fix.
+          python src/rbforge_cli.py audit "$work/game" --json > audit.json
+          python - <<'EOF'
+          import json
+          a = json.load(open("audit.json"))
+          assert a["fix_order"] == [], a["fix_order"]
+          assert len(a["remote_handlers"]) == 2, a["remote_handlers"]
+          print("audit OK:", a["files"], "files,", a["tests"]["unit_specs"], "specs")
+          EOF
 
   # The Luau semantic examples in the docs are only real if a real analyzer runs them. One job, one
   # platform: installing luau-lsp on all four matrix legs would download the same 20 MB four times for

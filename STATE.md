@@ -10,24 +10,30 @@ claim checkable.
 
 ## Version
 
-0.18.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.19.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
 | Area | Evidence |
 |---|---|
+| Starter kit (0.19.0) | offline: scaffold -> `rbforge check` PASS (StyLua, selene, luau-lsp strict 0 errors, 4 Lune specs, structure), `rbforge audit` 0 leads, the kit trips none of its own lint. Live, 2026-11-17, disposable local place built with `rojo build dev.project.json`: `servertest tests/Starter.server.luau --ready workspace.ServerReady=true` -> `PASS starter loop: action, rate limit, validation, purchase` (twice, the second after a `push`); Client datamodel fired `DoAction` and `Coins` went 0 -> 2; HUD labels read back; capture inspected (character on the floor, HUD bottom centre, order Coins / Collect / Power after the `SortOrder` fix the first capture exposed); console held only the expected "in memory" data warning |
+| `rbforge audit` (0.19.0) | fixture tests (tier order, T038 first, handler table with delegated guards, snapshots skipped, clean scaffold = no leads) and a 35k-line production project: the real failed-read-defaults data bug ranked first, 9 of 9 remote handlers listed, 16 builder modules reported, 29 snapshot files skipped |
+| Trap lint T026-T044 (0.19.0) | each rule has a positive and a negative fixture; run against the production project: 0 hits for the removed/narrowed rules that produced 5 false positives before |
+| Docs samples (0.19.0) | every fenced Luau block in the first-party references parses under StyLua, with a negative control; `current-engine.md` class names checked against the creator-docs cache |
+| Engine claims re-checked live (2026-11-17) | compound assignment runs in `execute_luau`; a Heartbeat handler that errors keeps firing (36 calls, still connected); a script-made `UIListLayout` sorts by Name |
+| ProfileStore API (0.19.0) | `persistence.md` checked against upstream `ProfileStore.luau` @ 45c9847: signals, methods and constants |
 | CLI surface | `check <path>`, `check --root <path>` and `check <path> --scope static` are run from a cwd that is **not** the project, and each report's `root` and `rungs_run` are asserted; a positional/`--root` conflict exits 2 (tests `cli: ...`) |
 | Luau semantic examples | extracted from `typing-luau.md` and re-analysed by pinned luau-lsp 1.70.1; CI job `luau-semantics` runs them with `RBFORGE_REQUIRE_LUAU_LSP=1` |
 | Diagnostic map | keyed by the whole project-relative path, so `src/Server/init.luau` and `tests/Server/init.luau` are two files; containment is `commonpath`, so a sibling `proj2` is not inside `proj` (tests `check: same-named files at different depths...`, `check: a sibling directory...`) |
 | Offline gate (`check`, traps, probes, review) | 217 automated tests + fixture projects |
 | Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
 | Push guard (0.17.0) | the exact push code is executed under Lune against `tests/lune/mock_datamodel.luau`: new script, first push (backup), unchanged ledger (no backup), Studio edit (`CONFLICT`, source untouched), `force` (backup + write), other place (first-push rules); Luau stamp equals Python `adler` |
-| MCP wire | negotiation (2025-06-18/2025-03-26/2024-11-05), parse error -32700, non-object arguments -32602, annotations on every tool, catalog <= 10,600 chars |
+| MCP wire | negotiation (2025-06-18/2025-03-26/2024-11-05), parse error -32700, non-object arguments -32602, annotations on every tool, catalog <= 10,800 chars (19 tools) |
 | Receipts / observations | unit tests, including omission, mismatch, expiry, replay and tamper cases |
 | Skill installer | 31 tests: manifest path traversal refused, foreign/legacy/modified dirs preserved, empty+corrupt manifests never `current`, transactional staging and activation rollback, backup-name uniqueness, per-profile `current`, backup instead of delete, preflight abort, idempotent re-run, root dedupe; live across 10 Hermes roots + claude/codex/grok |
 | Clean-machine lifecycle (0.17.1) | sandboxed profile (temp USERPROFILE/LOCALAPPDATA/RBFORGE_HOME, no agent CLIs on PATH, no UTF-8 mode): `Install.ps1` exit 0 and 25 skills into `~/.claude/skills`; `agent disconnect all` skips all five agents, exit 0; `Uninstall.ps1 -RemoveState` exit 0, 0 skills left, state dir removed |
 | Non-ASCII stdio (0.17.1) | MCP request with a `jogo_é_п` path and CLI text output for a Cyrillic path, both run with `-X utf8=0` |
-| Release artifact | `smoke_artifact.py` checks all 25 skills, frontmatter and the 18-tool MCP handshake |
+| Release artifact | `smoke_artifact.py` checks all 25 skills, frontmatter and the MCP handshake |
 | Live Studio: push + readback | disposable place, 2026-11-06: `synced` digests matched, ModuleScript/Script classes correct |
 | Live Studio: push conflict guard (2026-11-15, Place1, unpublished) | first push `synced`, no backup; unchanged and file-only re-push `synced`; Studio edit -> `conflict`, Studio source untouched; `--force` -> `synced` + `Guard_rbforge_<ms>` holding the Studio edit in `ServerStorage.rbforge_backups`; next push `synced`, no backup; a source ending in `]=` read back exact |
 | Live Studio: session discovery | a new StudioMCP lists 0 Studios for 2.7-3.6 s after spawn (4 sessions measured); sessions and the doctor probe now poll; three back-to-back `doctor` runs all saw Place1 |
@@ -66,6 +72,16 @@ claim checkable.
    through the documented API.
 
 ## Done (verified)
+
+- 0.19.0 (2026-11-17): knowledge audit and gap fill (PLAN.md). The first-party references came out of
+  one production project with a weak-model core; engine fact was separated from that project's habits.
+  Wrong tips removed (no `+=`, dying RenderStepped, `CharacterAdded` instead of `Character`, no save
+  tool, HTTP push, ProfileStore `ListenToRelease`), defaults restated (authored world, clip animation,
+  plain remotes, plain UI), every trap tagged docs/live/field. New: `rbforge audit` + `rb_audit`, a
+  working starter kit, six genres, lint T026-T044, `existing-projects.md`, `current-engine.md`, a
+  specialist routing table in the router, a docs-sample parse gate. Fixed: structure rung and reviews
+  auditing snapshots (field report), `code_only` swallowing code after a `-- [x]` comment, T022/T025
+  false positives. Three field reports closed. 238 tests.
 
 - 0.18.0 (2026-11-16): servertest preflight/ready/client/grace/keep/suites, script-attribute results,
   doctor cloud-vs-local places and gateway reach, 38-tool MCP reference, production-project knowledge
@@ -238,7 +254,14 @@ claim checkable.
 ## Next
 
 - Run the E2E weak-model benchmark (`tests/agent-benchmarks/01-weak-model-obby.md`)
-  — the only thing blocking 1.0.0.
+  — the only thing blocking 1.0.0. The starter kit and `audit` changed what a weak model starts
+  from, so the baseline-versus-Forge comparison is now worth more than before.
+- Starter kit: genre-specific sample services (the kit ships one generic action loop; each genre gets
+  a plan and a recipe, not its own code yet). Data service against a real store: save, rejoin, a
+  forced read failure -> kick (only the Studio in-memory path ran live).
+- `audit`: the handler table follows one level of delegation inside one file; cross-file delegation
+  reads as "no guard seen".
+- Still `field` class (one report, not reproduced): AlwaysOnTop SurfaceGuis not rendering.
 
 ## Known gaps (honest)
 
@@ -257,13 +280,17 @@ claim checkable.
 ```
 python src\rbforge_cli.py doctor
 python src\rbforge_cli.py check . [--scope static unit structure] [--json]
-python src\rbforge_cli.py scaffold <dir> --genre obby
+python src\rbforge_cli.py audit <dir> [--json]      # existing project: ranked fix order
+python src\rbforge_cli.py new <dir> --genre shooter --premise "..."
 python tests\run_tests.py         # RBFORGE_TEST_ONLY=<substring> runs a subset locally
-python mcp_server\server.py        # stdio MCP, 18 tools
+python mcp_server\server.py        # stdio MCP, 19 tools
 rbforge.cmd <command>              # same CLI, from the checkout
 ```
 
 ## Log
+
+- 2026-11-17 — 0.19.0: knowledge audit, audit command, starter kit, genres, lint T026-T044; 238 tests;
+  starter loop proven in live Studio Play.
 
 - 2026-11-16 — 0.18.0: servertest upgrades, doctor place identity, 38-tool MCP surface; 217 tests.
 

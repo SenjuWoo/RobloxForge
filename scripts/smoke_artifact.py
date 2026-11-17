@@ -15,7 +15,7 @@ import threading
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI = os.path.join(ROOT, "src", "rbforge_cli.py")
 SERVER = os.path.join(ROOT, "mcp_server", "server.py")
-EXPECTED_TOOLS = ("rb_check", "rb_verify_receipt", "rb_studio_push", "rb_traps_review")
+EXPECTED_TOOLS = ("rb_check", "rb_verify_receipt", "rb_studio_push", "rb_traps_review", "rb_audit")
 
 
 def fail(message):

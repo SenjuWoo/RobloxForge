@@ -62,6 +62,140 @@ _SLICES = {
             "console clean",
         ],
     },
+    "shooter": {
+        "core_loop": "spawn with one weapon -> aim and fire -> server validates the shot -> target takes damage "
+                     "-> target dies -> reward -> respawn",
+        "authority": {"hit validation and damage": "server", "ammo and fire rate": "server",
+                      "aim, recoil, tracers, muzzle flash, viewmodel": "client"},
+        "build": [
+            "One weapon as data in a shared config module: damage, range, fire interval, magazine size",
+            "Client: input -> ray from the camera -> immediate local tracer and sound -> "
+            "FireServer(aim direction) - a direction, never a damage number or a hit target to trust",
+            "Server: weapon equipped, fire interval elapsed, ammo left -> re-cast the ray from the "
+            "character's own position, range clamped -> Humanoid:TakeDamage on what the server hit",
+            "One static target with a Humanoid, then one moving target",
+            "Reload: ammo is a server value published as an attribute",
+            "Death -> reward once -> respawn",
+        ],
+        "verify": [
+            "firing faster than the fire interval is refused (count the shots the server accepted)",
+            "a shot through a wall does no damage",
+            "a request with an origin far from the character is refused or ignored",
+            "ammo never goes below zero; reload restores it",
+            "a kill grants the reward exactly once",
+            "console clean",
+        ],
+    },
+    "round": {
+        "core_loop": "lobby -> enough players -> intermission countdown -> teleport to the map -> round timer "
+                     "-> win condition -> results -> cleanup -> lobby",
+        "authority": {"round state machine and timer": "server", "who is in the round": "server",
+                      "countdown and results display": "client (reads replicated state)"},
+        "build": [
+            "One server module that owns the state (Lobby, Intermission, Playing, Results), published as "
+            "attributes on workspace: state name and end time",
+            "Minimum player count, with a solo override that only works in Studio",
+            "Start: teleport participants to map spawns; late joiners stay in the lobby",
+            "ONE win condition (last alive, or highest score when the timer ends)",
+            "Cleanup: return everyone, destroy everything the round created, reset per-round state",
+            "Client: countdown and state label driven by the attributes",
+        ],
+        "verify": [
+            "two full cycles run back to back without restarting the server",
+            "a player who dies is not put back into the running round",
+            "a participant leaving mid-round does not hang the round",
+            "nothing created by the round is left after cleanup (count the instances)",
+            "the solo override is refused outside Studio",
+            "console clean",
+        ],
+    },
+    "towerdefense": {
+        "core_loop": "place one tower with currency -> a wave spawns -> enemies follow the path -> the tower "
+                     "attacks -> enemy dies -> currency -> a leak costs base health -> next wave",
+        "authority": {"placement (cost, bounds, overlap)": "server", "enemy position and health": "server",
+                      "base health and wave state": "server", "placement preview": "client"},
+        "build": [
+            "The path as ordered waypoint parts authored in the place",
+            "Enemies as data on the server (distance along the path, health) moved every step; one "
+            "anchored model each, no Humanoid and no PathfindingService",
+            "ONE tower type: range check and attack interval run on the server",
+            "Placement remote: the server checks cost, that the cell is free and off the path",
+            "Waves from a config table; the next wave starts when the current one is cleared",
+            "Base health; reaching the last waypoint removes the enemy and costs health once",
+        ],
+        "verify": [
+            "a tower cannot be placed on the path, on another tower, or without the currency",
+            "an enemy reaching the end reduces base health exactly once",
+            "wave 2 starts after wave 1 is cleared and not before",
+            "50 enemies alive: measure the server step time and record it",
+            "console clean",
+        ],
+    },
+    "rpg": {
+        "core_loop": "accept one quest -> defeat N of one enemy -> gain XP and loot -> level up -> a stat grows "
+                     "-> turn the quest in",
+        "authority": {"quest progress, XP, level, inventory": "server", "damage and kill credit": "server",
+                      "dialogue and quest tracker": "client"},
+        "build": [
+            "A pure stats module (XP needed per level, damage formula) with an offline spec",
+            "One enemy type with a spawner that respawns it",
+            "One melee attack: the server checks range and cooldown, then applies damage",
+            "Quest state per player from a data table; a ProximityPrompt on the quest giver",
+            "Level up applies the stat change once and publishes it",
+            "Save level, XP and quest state - or decide in writing that slice 1 does not persist",
+        ],
+        "verify": [
+            "XP comes only from kills the server confirmed, and goes to the player who dealt the damage",
+            "the quest counter cannot pass its target or count another player's kills",
+            "a level up applies its stat change exactly once",
+            "attacking from out of range or faster than the cooldown is refused",
+            "rejoin restores level and quest state (if persistence is in the slice)",
+            "console clean",
+        ],
+    },
+    "horror": {
+        "core_loop": "enter -> find the key item -> a door unlocks -> one scripted scare -> reach the exit "
+                     "while the threat hunts",
+        "authority": {"item and door state": "server", "the threat's position and kills": "server",
+                      "flashlight, camera effects, sound": "client"},
+        "build": [
+            "A small authored map with one dark lighting preset and one light the player carries",
+            "ONE pickup through a ProximityPrompt: the server records that this player has it",
+            "A locked door that opens only when the server sees the item",
+            "ONE trigger volume that fires a scare once per player",
+            "ONE chaser: pathfinding to the player, line of sight, a kill on contact",
+            "Death -> respawn at a checkpoint with item state as designed",
+        ],
+        "verify": [
+            "the door stays shut without the item, including when the prompt is fired from far away",
+            "the scare fires once per player, not once per touch",
+            "the chaser reaches a player who is standing around a corner",
+            "the map is readable at the lowest graphics quality (not pitch black)",
+            "console clean",
+        ],
+    },
+    "survival": {
+        "core_loop": "leave the safe zone -> gather one resource -> carry it back at risk -> bank it -> craft "
+                     "one upgrade -> go out again better equipped",
+        "authority": {"carried and banked inventory": "server", "resource nodes and loot": "server",
+                      "crafting and damage": "server", "prompts and inventory display": "client"},
+        "build": [
+            "Two inventories per player: carried (lost on death) and banked (saved)",
+            "ONE resource node: the server checks range, grants once, then starts a respawn timer",
+            "ONE hostile between the safe zone and the resource",
+            "Banking at home: the server checks the player is alive and inside the zone",
+            "ONE recipe that spends banked resources and changes a stat the player can feel",
+            "Death drops or clears what was carried; the bank is untouched",
+        ],
+        "verify": [
+            "a node cannot be harvested from out of range or twice before it respawns",
+            "death loses the carried resources and keeps the banked ones",
+            "banking from outside the safe zone is refused",
+            "crafting deducts exactly once and the stat change is visible",
+            "banked resources survive a rejoin (if persistence is in the slice)",
+            "console clean",
+        ],
+    },
     "generic": {
         "core_loop": "player spawns -> performs the core action -> server responds -> visible feedback",
         "authority": {"any persistent state": "server", "input/effects": "client"},
@@ -76,14 +210,37 @@ _SLICES = {
     },
 }
 
+# What people call these genres. An unknown word is an error, not a silent "generic".
+_ALIASES = {
+    "fps": "shooter", "tps": "shooter", "combat": "shooter", "pvp": "shooter",
+    "rounds": "round", "minigame": "round", "minigames": "round",
+    "td": "towerdefense", "tower-defense": "towerdefense", "tower_defense": "towerdefense",
+    "wave": "towerdefense", "waves": "towerdefense",
+    "adventure": "rpg", "story": "horror",
+    "extraction": "survival", "crafting": "survival", "base": "survival",
+    "clicker": "simulator", "incremental": "simulator",
+    "parkour": "obby",
+}
+
+GENRES = ["generic"] + sorted(g for g in _SLICES if g != "generic")
+GENRE_CHOICES = GENRES + sorted(_ALIASES)
+
+
+def resolve(genre):
+    """Canonical genre name for a genre or one of its aliases; raises RBF-ARG-001 otherwise."""
+    g = (genre or "generic").strip().lower()
+    g = _ALIASES.get(g, g)
+    if g not in _SLICES:
+        raise ForgeError("RBF-ARG-001", "unknown genre %r" % genre,
+                         hint="one of: %s" % ", ".join(GENRES))
+    return g
+
 
 def vertical_slice(genre, premise):
-    g = _SLICES.get((genre or "").lower())
-    if not g:
-        raise ForgeError("RBF-ARG-001", "unknown genre %r" % genre,
-                         hint="one of: %s" % ", ".join(sorted(_SLICES)))
+    name = resolve(genre)
+    g = _SLICES[name]
     return {
-        "genre": genre.lower(),
+        "genre": name,
         "premise": premise,
         "rule": "Build ONLY step 1 of the build order. Prove every item in the "
                 "verification list. Then expand one item at a time.",

@@ -6,8 +6,11 @@ Both used to be fooled by a comment or a string that merely names the call.
 """
 
 
-def code_only(src, keep_strings=False):
+def code_only(src, keep_strings=False, keep_lines=False):
     """`src` without comments; also without string literals unless `keep_strings`.
+
+    `keep_lines` keeps every newline of a removed region, so a line number in the result is the line
+    number in the file - which is what a lint that reports `file:line` needs.
 
     Luau allows long brackets at any level (`[[`, `[=[`, `[==[`, ...) for both strings and comments,
     and `--` starts a comment unless it opens a long bracket. A removed comment becomes one space so
@@ -20,6 +23,11 @@ def code_only(src, keep_strings=False):
 
     def long_bracket(at):
         """(level, end_index) for a `[=*[` opener at `at`, else (None, at)."""
+        # `-- [plot] = owner` is a line comment: only a `[` directly after the dashes opens a long one.
+        # Without this check any comment whose second character was `[` swallowed the file up to the
+        # next `]]`, hiding real code from every scan built on this function.
+        if at >= n or src[at] != "[":
+            return None, at
         j = at + 1
         while j < n and src[j] == "=":
             j += 1
@@ -30,6 +38,7 @@ def code_only(src, keep_strings=False):
     while i < n:
         ch = src[i]
         if src.startswith("--", i):
+            start = i
             level, after = long_bracket(i + 2)
             if level is not None:
                 close = "]" + "=" * level + "]"
@@ -39,6 +48,8 @@ def code_only(src, keep_strings=False):
                 end = src.find("\n", i)
                 i = n if end == -1 else end
             out.append(" ")
+            if keep_lines:
+                out.append("\n" * src.count("\n", start, i))
         elif ch == "[":
             level, after = long_bracket(i)
             if level is not None:
@@ -47,6 +58,8 @@ def code_only(src, keep_strings=False):
                 stop = n if end == -1 else end + len(close)
                 if keep_strings:
                     out.append(src[i:stop])
+                elif keep_lines:
+                    out.append("\n" * src.count("\n", i, stop))
                 i = stop
             else:
                 out.append(ch)

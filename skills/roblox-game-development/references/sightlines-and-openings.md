@@ -102,6 +102,30 @@ cut panels, a blast door), all aimed at the wrong cause.
   both own the behaviour, the generator one is authoritative - delete the other and
   write down which survived and why.
 
+## Case notes: a panelled dome with screens (one project, 2026-11)
+
+Specific to building a curved shell out of flat panels that carry SurfaceGuis. Read them if you are
+building one; they are not general Roblox rules.
+
+- **Which face shows the screen.** A panel built with `CFrame.fromMatrix(centre, right, up)` has its
+  LookVector along `right x up`, which on an inward-facing shell points outward, so the screen
+  belongs on `Enum.NormalId.Back`. Probe one panel first:
+  `panel.CFrame.LookVector:Dot((centre - panel.Position).Unit)` - negative means use `Back`.
+- **Planar panels on a curved shell leave wedge gaps at the corners** and the sky shows through as
+  bright spikes. Overlap each panel ~12 % past its true quad and put a dark backing slab behind it.
+- **An ellipsoid's base ring does not touch the ground** when its centre sits above floor level.
+  Add a skirt ring and leave exactly one opening; skip segments whose *endpoints* fall in the
+  corridor (a midpoint-only test skipped nothing and walled the tunnel).
+- **Cutting an opening:** test all four corners of a panel, not its centre; add a height gate or the
+  hole climbs to the top; trim a panel at the opening's edge instead of deleting it; flatten floors
+  in the shell's own space, not the plot's.
+- **Any new collidable shell can invalidate walk routes.** Re-run the route test after adding a
+  skirt, wall or gate.
+- **Carve terrain only where the structure is meant to be open**; a tunnel carved along its whole
+  length lies in an open cut.
+- **Equirectangular slices:** round both edges of each panel's image rect from the shared boundary,
+  never the width, or the seams crawl (`assets.md`).
+
 ## Decorative geometry is not structure
 
 Anything that exists to be looked at - rot, foliage, cables, rubble, decals built as

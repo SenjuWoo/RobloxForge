@@ -1,6 +1,8 @@
 # Roblox architecture — where code and authority belong
 
-Roblox is client/server by default. The server is the authority for shared game state.
+Roblox is client/server by default. The server is the authority for shared game state. Engine-level
+detail (replication, streaming, service catalogue) is in the `roblox-architecture` skill; this file
+is the shape to build.
 
 ## Mental model
 
@@ -39,6 +41,10 @@ Roblox is client/server by default. The server is the authority for shared game 
 | `StarterGui` | ScreenGuis and client presentation |
 | `Workspace` | live world/physics objects; not a dumping ground for application logic |
 
+Everything in `ReplicatedStorage`, `Workspace`, `StarterGui` and `StarterPlayer` is downloaded by
+every client and readable by exploiters. Secrets, drop tables and anti-cheat thresholds stay in
+`ServerScriptService` / `ServerStorage`.
+
 ## Script types
 
 - `Script`: server execution unless RunContext deliberately says otherwise.
@@ -47,14 +53,12 @@ Roblox is client/server by default. The server is the authority for shared game 
 
 ## Small-game baseline
 
-Prefer a few coherent modules over framework ceremony:
+One server Script, one client LocalScript, everything else ModuleScripts - what `rbforge new` writes:
 
-- `ServerScriptService/Server/Game.server.luau`
-- `ServerScriptService/Server/Systems/...`
-- `ReplicatedStorage/Shared/...`
-- `ReplicatedStorage/Remotes/...`
-- `StarterPlayer/StarterPlayerScripts/Client.client.luau`
-- `StarterGui/...`
+- `ServerScriptService/Server/Main.server.luau`
+- `ServerScriptService/Server/Services/...`
+- `ReplicatedStorage/Shared/...` (config, pure rules, remote registry)
+- `StarterPlayer/StarterPlayerScripts/Client/Main.client.luau`
 
 ## Anti-patterns
 
@@ -66,142 +70,169 @@ Prefer a few coherent modules over framework ceremony:
 - loops scanning all descendants every frame
 - scripts sprinkled randomly through Workspace
 - adding Knit/Matter/Fusion/etc. because they are popular rather than needed
+- a server script that rebuilds the whole static map on every start (see "Authored or generated")
+- one builder or one HUD module that keeps growing: past ~800 lines it is several systems
 
 Use architecture proportional to the game.
 
-## Three-stage module loader (the default for anything past a prototype)
+## The loader: explicit lists, isolated steps
 
-Framework ceremony is a trap: Knit is archived and obscures type inference
-across module boundaries. What you actually need is deterministic boot order and
-failure isolation, which is ~40 lines.
-
-Stage 1 — **Require + sort**. Never iterate `GetDescendants()` and hope; sort by
-an explicit `Priority` so persistence and networking come up before gameplay.
+Framework ceremony is a trap (Knit is archived and hides types across module boundaries). What a game
+needs is a deterministic start order and failure isolation. The scaffold (`rbforge new`) ships this
+file as `src/server/Main.server.luau`; read it there, running, rather than retyping it.
 
 ```lua
 --!strict
--- ServerScriptService/Server/Bootstrap.server.luau
-local ServerScriptService = game:GetService("ServerScriptService")
+-- ServerScriptService/Server/Main.server.luau  (the only Script)
 local Players = game:GetService("Players")
 
-local services = {}
-for _, module in ServerScriptService.Server.Services:GetChildren() do
-    if module:IsA("ModuleScript") then
-        local ok, service = pcall(require, module)
-        if ok and type(service) == "table" then
-            table.insert(services, service)
-        else
-            warn(("service %s failed to require: %s"):format(module.Name, tostring(service)))
-        end
-    end
+local DataService = require(script.Parent.Services.DataService)
+local GameService = require(script.Parent.Services.GameService)
+
+type Step = { name: string, fn: () -> () }
+type PlayerStep = { name: string, fn: (Player) -> () }
+
+-- Order is the list. No folder scan, no priorities, and the type checker follows every call.
+local INIT: { Step } = { { name = "DataService.init", fn = DataService.init } }
+local START: { Step } = {
+	{ name = "DataService.start", fn = DataService.start },
+	{ name = "GameService.start", fn = GameService.start },
+}
+local PLAYER_ADDED: { PlayerStep } = { { name = "GameService.playerAdded", fn = GameService.playerAdded } }
+local PLAYER_REMOVING: { PlayerStep } = {
+	{ name = "GameService.playerRemoving", fn = GameService.playerRemoving },
+	{ name = "DataService.playerRemoving", fn = DataService.playerRemoving }, -- saves: always last
+}
+
+local function run(name: string, fn: (...any) -> ...any, ...: any)
+	local ok, err = xpcall(fn, debug.traceback, ...)
+	if not ok then
+		warn(`[Boot] {name} failed:\n{err}`) -- never swallow: a silent pcall hides the real bug
+		workspace:SetAttribute("BootError", name)
+	end
 end
-table.sort(services, function(a, b) return (a.Priority or 100) < (b.Priority or 100) end)
+
+for _, step in INIT do
+	run(step.name, step.fn)
+end
+for _, step in START do
+	run(step.name, step.fn)
+end
+
+local function onPlayerAdded(player: Player)
+	if not DataService.load(player) then -- gameplay never sees a player without data
+		return
+	end
+	for _, step in PLAYER_ADDED do
+		run(step.name, step.fn, player)
+	end
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(function(player: Player)
+	for _, step in PLAYER_REMOVING do
+		run(step.name, step.fn, player)
+	end
+end)
+for _, player in Players:GetPlayers() do -- joined before this line ran
+	task.spawn(onPlayerAdded, player)
+end
+
+workspace:SetAttribute("ServerReady", true) -- tests wait for this, not for task.wait(5)
 ```
 
-Stage 2 — **Init then Start, both isolated**. `Init` builds local state and
-connects its own remotes; it must not call other services, which is what creates
-circular-init deadlocks. `Start` may call others, and one failure must not kill
-the boot.
+Rules the loader encodes:
+
+- **`init` builds a service's own state and calls nobody.** Cross-service calls in `init` are where
+  circular start-up deadlocks come from. `start` may call anything.
+- **A failure is logged with a traceback and named in an attribute.** `pcall(fn)` with the result
+  thrown away turns a typo into a feature that silently never runs.
+- **Existing players and existing characters.** `PlayerAdded` and `CharacterAdded` only fire for
+  what arrives *after* the connection. Always handle what is already there:
 
 ```lua
-for _, service in services do
-    if service.Init then
-        local ok, err = pcall(service.Init, service)
-        if not ok then warn(("Init %s: %s"):format(service.Name, tostring(err))) end
-    end
-end
+local function onCharacter(character: Model) end
 
-local ready = Instance.new("BoolValue")
-ready.Name = "ServerReady"
-ready.Parent = game:GetService("ReplicatedStorage")
-
-for _, service in services do
-    if service.Start and not service._failed then
-        local ok, err = xpcall(service.Start, debug.traceback, service)
-        if not ok then
-            service._failed = true
-            warn(("Start %s: %s"):format(service.Name, tostring(err)))
-        end
-    end
+player.CharacterAdded:Connect(onCharacter)
+if player.Character then
+	onCharacter(player.Character)
 end
 ```
 
-Stage 3 — **player/character hooks, gated on loaded data**. Never run
-`SetupPlayer` before the player's profile exists; never leave a per-character
-connection alive after respawn.
+- **A readiness attribute, set last.** Tests, loading screens and tools wait on it.
+- A service is a table of functions in one ModuleScript. One shape for the whole project - do not mix
+  singletons, classes with `.new` and scripts that run on require.
+
+## Everything that starts must end
+
+Most leaks are a connection, a loop or an instance created per character, per round or per open
+screen that nothing ends. Give each lifetime one owner (the scaffold's `Shared/Cleaner.luau`, or
+Trove/Janitor if the project already uses one):
 
 ```lua
-local function afterProfile(player: Player, profile)
-    for _, service in services do
-        if service.SetupPlayer then pcall(service.SetupPlayer, service, player, profile) end
-    end
-    player.CharacterAdded:Connect(function(character)
-        for _, service in services do
-            if service.SetupCharacter then
-                pcall(service.SetupCharacter, service, player, character)
-            end
-        end
-    end)
-end
+local cleaner = Cleaner.new()
+cleaner:add(humanoid.Died:Connect(onDied))
+cleaner:add(RunService.Heartbeat:Connect(step))
+cleaner:add(effectPart)
+character.Destroying:Connect(function()
+	cleaner:clean()
+end)
 ```
 
-A service is a plain table with `Name`, `Priority`, and any of `Init`, `Start`,
-`SetupPlayer`, `SetupCharacter`, `Destroy`. Comment it, keep it under ~300 lines,
-and delete its connections in `Destroy`.
+- A table keyed by `Player` is cleared in `PlayerRemoving`. Always.
+- A `RunService` connection made inside `CharacterAdded` is disconnected when that character goes.
+- `Destroy()` an instance you are done with; `Parent = nil` keeps it and its connections alive.
+
+## Authored or generated
+
+Two ways to get a world, and they are not interchangeable:
+
+| | Authored (default) | Generated at runtime |
+|---|---|---|
+| Where it lives | built in Edit, saved in the place | a server script builds it on every start |
+| Use for | maps, buildings, props, lighting - anything that is the same every session | roguelike levels, player-built structures, per-round arenas |
+| Start-up | instant | the build runs before anyone can spawn |
+| Editing | by hand in Studio, or by a script run once in Edit | only by changing code |
+| Streaming | works with `StreamingEnabled` as designed | needs care: build order, persistence modes |
+
+Build static content **once**: run the builder through `execute_luau` in the Edit datamodel, look at
+it, and have the place saved (`save_place`). Keep the builder script in the repo as a tool, not as
+start-up code. A server that rebuilds a fixed map of tens of thousands of parts on every boot pays
+for it on every boot, cannot be touched up by hand, and forces a spawn gate (`CharacterAutoLoads =
+false` until the world exists) that an authored world never needs. `rbforge audit` reports when a
+project is built this way, so the choice is a decision instead of an accident.
+
+The same applies to UI: a HUD authored under `StarterGui` (by hand, or by a script run once in Edit)
+with a small controller is easier to restyle than thousands of lines of `Instance.new`. If the UI is
+built in code, build it as small components - one module per panel - not one builder.
 
 ## Dependency injection (this is what makes tests possible)
 
-Any module that touches a Roblox singleton cannot be unit-tested outside the
-engine. Split every system in two:
+Any module that touches a Roblox singleton cannot be unit-tested outside the engine. Split every
+system in two:
 
-- **Pure rule module** in `ReplicatedStorage/Shared` — no `game:GetService`, no
-  `Instance`, deterministic input → output. This is what tests exercise.
-- **Server service** in `ServerScriptService` — owns instances, remotes and time,
-  and *accepts its collaborators as constructor arguments*.
+- **Pure rule module** in `ReplicatedStorage/Shared` (or `ServerScriptService` if it is secret) - no
+  `game:GetService`, no `Instance`, deterministic input to output. This is what specs exercise.
+- **Service** - owns instances, remotes and time, and calls the pure module for every decision.
 
 ```lua
 --!strict
--- Shared/Shared/Economy.luau  (pure: runs in Lune, no engine)
+-- Shared/Economy.luau  (pure: runs in Lune, no engine)
 local Economy = {}
 
 export type Inventory = { [string]: number }
 
 function Economy.canAfford(inventory: Inventory, cost: number): boolean
-    return (inventory.Coins or 0) >= cost
+	return (inventory.Coins or 0) >= cost
 end
 
 function Economy.priceAfterDiscount(base: number, tier: number): number
-    return math.max(0, math.floor(base * (1 - math.min(tier, 5) * 0.05)))
+	return math.max(0, math.floor(base * (1 - math.min(tier, 5) * 0.05)))
 end
 
 return Economy
 ```
 
-```lua
---!strict
--- Server/Services/PurchaseService.luau  (impure: store injected)
-local Economy = require(game:GetService("ReplicatedStorage").Shared.Economy)
-
-local PurchaseService = { Name = "PurchaseService", Priority = 40 }
-
-function PurchaseService.new(store)
-    local self = setmetatable({}, { __index = PurchaseService })
-    self.store = store          -- { Get = function(player), Save = function(player) }
-    return self
-end
-
-function PurchaseService:buy(player: Player, itemId: string)
-    local profile = self.store:Get(player)
-    if not profile then return false, "no profile" end
-    local cost = Economy.priceAfterDiscount(100, profile.Data.Tier or 0)
-    if not Economy.canAfford(profile.Data.Inventory, cost) then return false, "poor" end
-    profile.Data.Inventory.Coins = profile.Data.Inventory.Coins - cost
-    self.store:Save(player)
-    return true
-end
-
-return PurchaseService
-```
-
-Now the test can inject a fake store and assert the rule without Studio.
-`references/persistence.md` carries the matching fake.
+The service reads state, asks the pure module, applies the answer. The scaffold's `Rules.luau`,
+`RateLimiter.luau` and `ProfileSchema.luau` are this pattern with their specs; `persistence.md`
+carries a store fake for services that take their store as an argument.
