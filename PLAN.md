@@ -21,7 +21,7 @@ Evidence format: `cmd:<command> @ <sha> exit=<n>`. `T=python tests/run_tests.py`
 | L5 | `push` refuses while Play is running (Edit sources cannot change mid-playtest) with a clear error instead of a zero-file result | complete | - | `cmd:RBFORGE_TEST_ONLY="live: push" T` | cmd:python tests/run_tests.py @ fce255c exit=0 (242 passed, 0 failed, 0 skipped) |
 | R1 | Full suite, version 0.20.0, CHANGELOG, README, STATE | complete | F1-F6, P1, L4, L5 | `cmd:T` | cmd:python tests/run_tests.py @ fce255c exit=0 (242 passed, 0 failed, 0 skipped) |
 | R2 | Live: `world-audit` against a disposable place with a planted floater, overlap and stray attachment; push refusal during Play | complete | P1, L5 | `cmd:rbforge probe world-audit` in Studio | live 2026-11-18, disposable local place from the fixed scaffold: `cmd:rbforge probe world-audit --run --dm Edit --set root=workspace.AuditFixture --set skip={"Rail$"}` @ fce255c exit=0 (3 planted faults reported, 3 controls quiet, skip listed); `cmd:rbforge push ALL` in Play exit=4 RBF-PLAY-002, after Stop exit=0 (10 pushed) |
-| R3 | Push, CI green on the SHA, alerts queried, tag + release, skills installed, doctor | complete | R1 | `cmd:gh run list` / `rbforge doctor` | CI + Push on main green on fce255c; 0 open Dependabot, code-scanning, secret-scanning alerts; tag/release: see STATE.md log |
+| R3 | Push, CI green on the SHA, alerts queried, tag + release, skills installed, doctor | complete | R1 | `cmd:gh run list` / `rbforge doctor` | CI + Push on main green on fce255c; 0 open Dependabot, code-scanning, secret-scanning alerts; tag v0.20.0 from c9586c0, asset sha256 verified, smoke OK, 350 skill installs current, doctor v0.20.0 |
 
 ## Decisions
 

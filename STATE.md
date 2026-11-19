@@ -305,6 +305,11 @@ rbforge.cmd <command>              # same CLI, from the checkout
 
 - 2026-11-18 — 0.20.0: field lessons from a second production project; world-audit probe, T045,
   push refuses during Play, scaffold dev place fix; 242 tests; probe and push refusal proven live.
+  Released v0.20.0 from c9586c0 (CI green on fce255c and c9586c0; a timing-flaky agents test that failed
+  on 0778564 now asserts overlapping probes instead of a wall-clock budget; 0 open Dependabot,
+  code-scanning and secret-scanning alerts). Published zip sha256-verified (85fa7a72...5b0ccb),
+  `smoke_artifact.py` OK from the extracted asset (25 skills, 19 MCP tools); skills `current` in every
+  agent root (350 installs); `rbforge doctor` reports v0.20.0.
 
 - 2026-11-17 — 0.19.0: knowledge audit, audit command, starter kit, genres, lint T026-T044; 238 tests;
   starter loop proven in live Studio Play.
