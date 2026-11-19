@@ -4630,23 +4630,27 @@ def _():
     import time as _t
     from rbforge import agents
     saved = agents._hermes, agents._claude
+    spans = {}
 
     def slow(name):
         def factory():
             def status(_cfg=None):
+                start = _t.monotonic()
                 _t.sleep(0.6)
+                spans[name] = (start, _t.monotonic())
                 return {"configured": False}
             return {"installed": lambda: True, "status": status, "connect": None, "disconnect": None}
         return factory
     agents._hermes, agents._claude = slow("hermes"), slow("claude")
     try:
-        t0 = _t.time()
         out = agents.status(["hermes", "claude"])
-        took = _t.time() - t0
     finally:
         agents._hermes, agents._claude = saved
     assert list(out) == ["hermes", "claude"], out
-    assert took < 1.0, "agent status took %.2fs for two 0.6s probes" % took
+    # Overlap, not wall time: a loaded CI runner made a 1.0 s budget flaky while the probes still
+    # ran concurrently. Serial probes cannot overlap however fast the machine is.
+    (a0, a1), (b0, b1) = spans["hermes"], spans["claude"]
+    assert max(a0, b0) < min(a1, b1), "agent probes ran one after another: %r" % spans
 
 
 @check("doctor: the toolchain is probed once per report")
