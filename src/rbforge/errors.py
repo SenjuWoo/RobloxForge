@@ -5,7 +5,7 @@ Codes are stable strings; agents may branch on them.
 
     RBF-STUDIO-*   Roblox Studio installation / process / settings
     RBF-MCP-*      official Studio MCP launcher / handshake
-    RBF-PLAY-*     a live playtest is needed and not running (servertest)
+    RBF-PLAY-*     wrong playtest state: Play needed (servertest) or Play must stop first (push)
     RBF-DOCS-*     creator-docs cache
     RBF-PROJECT-*  project detection / analysis
     RBF-TOOLS-*    optional Luau toolchain

@@ -60,6 +60,13 @@ shared state. It is a dependency with its own failure modes; do not add one for 
   the official reference marks it as planned for deprecation in favour of the Input Action System.
 - Show the right glyph: check `UserInputService.PreferredInput` (or `GetLastInputType`) rather than
   assuming a keyboard.
+- **Re-label when the device changes.** A player picks up a gamepad mid-session: listen to
+  `LastInputTypeChanged` (or the `PreferredInput` change) and rebuild every visible prompt from the
+  binding table, so "E climb" becomes the gamepad glyph without a respawn. Keep one function that
+  names the key for an action on the current device; prompts, hints and tutorials all call it.
+- **Every hint you show for touch needs a listener.** A prompt reading "TAP" with nothing bound to
+  a tap is a dead end for a phone player (live 2026-11, a second production project). When you add
+  a touch label, add the `TouchTap`/button route and a test that it fires the same action.
 
 ## Device verification
 

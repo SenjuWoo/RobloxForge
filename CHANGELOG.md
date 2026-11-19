@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.20.0 - 2026-11-18
+
+Field lessons from a second, independent production project (an action RPG): engine traps it measured
+live, Studio MCP behaviour, a measured mesh pipeline and test patterns. Where its evidence contradicts an
+older first-party tip, the tip now says how to measure instead of naming one answer.
+
+### Added
+- Probe `world-audit`: floating anchored pieces, pieces whose parts stand inside another piece's parts
+  (estimated in both parts' frames, so a rotated wall does not swallow its neighbour), and attachments
+  far from their part. A skip list is reported, never silent. Run live against planted faults.
+- Trap lint T045 (`live`): an `Attachment`'s `WorldCFrame`/`WorldPosition` written before it has a
+  parent (the value is kept as a local offset; reproduced in Studio: 240 studs off).
+- References: Studio MCP session behaviour (captures need Studio in front and a settle wait, one
+  StudioMCP owner at a time, held keys for Input Actions, the person at the PC as an input source, GPU
+  contention); sharp edges (rays and collision groups, `PreloadAsync` id strings load as images,
+  ownership moves when welded gear becomes the assembly root, Edit does not re-solve `WeldConstraint`s,
+  Beam axes, `RespectCanCollide` camera rays, literal-union narrowing, renamed shadowing locals, Audio
+  API members not yet enabled); GLB-through-Open-Cloud facts; terrain filled by distance to the surface
+  (no ribbed cliffs); defaults that read wrong at first look; audit-then-look; live-suite patterns
+  (test hooks, client movement, persistence across a real Play restart, suite side effects, staging
+  real-input scenes); blocky R15 joints and client-posed server rigs; prompts that follow the input
+  device and touch hints that have listeners.
+
+### Changed
+- `rbforge push` refuses while a playtest is running (`RBF-PLAY-002`, exit 4) instead of reporting zero
+  files synced with no reason.
+- `assets.md`: the unconditional "imported meshes face +Z, rotate 180 degrees" rule is replaced by a
+  measure-first probe; two projects measured different orientations.
+
+### Fixed
+- The scaffold's `dev.project.json` placed the floor and spawn with `Position`, which Rojo drops: both
+  sat at the origin and the spawn was buried in the floor. Placement now uses `CFrame` (found by the new
+  probe, confirmed in Studio).
+- Lighting samples no longer use the deprecated `Instance.new(class, parent)` form.
+
 ## 0.19.0 - 2026-11-17
 
 A knowledge audit. The first-party references grew out of one production project whose core was

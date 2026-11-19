@@ -51,6 +51,25 @@ Case notes from one procedural-dome project (panel faces, shell openings, skirts
   second. (docs)
 - **Spatial queries and raycasts skip `CanQuery = false` parts.** A clear `GetPartBoundsInBox` does
   not prove an area is empty (`box-scan` probe). (docs)
+- **Raycasts obey collision groups.** A ray cast with the default `RaycastParams` (group `Default`)
+  passes straight through parts whose group does not collide with `Default`. To hit a creature kept
+  in its own group, set `params.CollisionGroup` to a group that meets it; a ray-only `Probe` group
+  works. (docs) (live 2026-11)
+- **Set an `Attachment`'s world position after it has a parent.** Writing `WorldCFrame` or
+  `WorldPosition` on an unparented attachment stores those numbers as its local offset; once
+  parented it sits that far from the part (cables 150 studs up in the sky). Parent first, or set
+  `CFrame` in the part's space. Lint T045; probe `world-audit`. (live 2026-11)
+- **Edit mode does not re-solve `WeldConstraint`s when a joint changes.** Parts welded to a limb
+  stayed behind in an Edit pose sheet when the limb's `Motor6D.C0` changed; an explicit `Weld` with
+  its own `C0` followed. In Play both follow the assembly. (live 2026-11)
+- **A `Beam`'s width runs along its attachments' Y axis** (with `FaceCamera` off), and the texture's
+  vertical axis runs along the beam's length. A curtain built with the attachments' Y pointing
+  sideways lies flat. (live 2026-11)
+- **Network ownership belongs to the assembly root, and welding can change the root.** A large part
+  welded onto a server-controlled NPC (a shield) can become the root, ownership then goes to the
+  nearest player and the NPC falls over on that client. Give the `HumanoidRootPart` `RootPriority`
+  127 and gear -127, and call `SetNetworkOwner(nil)` again after anything is welded on. (docs) (live
+  2026-11)
 
 ## Rendering, lighting, materials
 
@@ -95,6 +114,12 @@ Case notes from one procedural-dome project (panel faces, shell openings, skirts
   `ContentProvider:GetAssetFetchStatus`. (live 2026-11)
 - **Uploaded audio is reviewed before it plays.** "Uploaded" is not "usable"; check the asset state.
   (live 2026-11)
+- **`ContentProvider:PreloadAsync` with bare id strings requests images.** Sound ids passed as
+  strings came back "Asset type does not match requested type" and were treated as failed (54 valid
+  sounds skipped). Preload sounds through `Sound` instances. (live 2026-11)
+- **New Audio API properties can exist in the class list before the engine enables them.** Writing
+  `AudioEmitter.PositionType` threw "not enabled yet". `pcall` the write or leave the property out,
+  and re-check with the class reference before relying on a new member. (live 2026-11)
 
 ## Terrain and building
 
@@ -121,6 +146,15 @@ Case notes from one procedural-dome project (panel faces, shell openings, skirts
 - **`number?` is nullable, not optional at the call site** under `--!strict`: pass the `nil`. (docs)
 - **Untyped parameters report errors at the callers.** `Expected this to be 'Player', but got {...}`
   usually means the function's parameter was never annotated. See `typing-luau.md`. (live 2026-11)
+- **A state field narrowed by one comparison cannot be compared again.** With
+  `state: "Idle" | "Stagger" | ...`, `if f.state == "Stagger" then ... elseif f.state == "Idle"`
+  can report "Type 'Stagger' cannot be compared with 'Idle'" after a call that may change the
+  state. Read it through a function (`local function stateOf(f): State return f.state end`) where
+  the value can change between checks. (live 2026-11)
+- **Renaming a local that shadowed a global leaves the global behind.** After `local tick` became
+  `local frame`, a forgotten `pcall(tick)` still ran - against the deprecated global `tick`, so
+  neither the type checker nor the tests failed. Search for the old name after a rename. (live
+  2026-11)
 - Deprecated globals still run and are still wrong: `wait`, `spawn`, `delay`, `tick`,
   `:connect`, `Instance.new(class, parent)`, `SetPrimaryPartCFrame`, body movers, `FindPartOnRay`,
   `Humanoid:LoadAnimation`. The trap lint lists each with its replacement. (docs)
@@ -137,6 +171,10 @@ Case notes from one procedural-dome project (panel faces, shell openings, skirts
   (live 2026-11)
 - **`UserInputService.InputBegan` passes `gameProcessed`.** Ignore it and typing in chat fires the
   ability. (docs)
+- **A custom camera's occlusion ray should respect `CanCollide`.** Counting every queryable part
+  pulls the camera in for leaves, banners and ropes a body walks through (camera in the hero's hair
+  under trees). `RaycastParams.RespectCanCollide = true` keeps only what blocks a body. (docs) (live
+  2026-11)
 - **Editing `StarterGui` at runtime does nothing for players already in the game** - their copies
   live in `PlayerGui`. (docs)
 - **A client cache built while the server is still creating things is wrong forever.** Wait for a

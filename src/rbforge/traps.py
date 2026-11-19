@@ -116,6 +116,8 @@ _LOAD_FAILURE_HANDLED = re.compile(
     r":Kick\s*\(|\bnot\s+(ok|success|succeeded|loaded|okay)\b|\b(ok|success)\s*==\s*false|"
     r"\berror\s*\(|(?i:\bretr(y|ies)\b|load_?failed)|StartSessionAsync|\bProfileStore\b|\bProfileService\b")
 _CHARACTER_READ = re.compile(r"\.Character\b(?!Added|Removing|AutoLoads|Appearance)")
+# An attachment made without a parent argument; T045 then checks the order of its first writes.
+_ATTACH_NEW = re.compile(r"(?<![.\w])(\w+)\s*(?::\s*\w+\s*)?=\s*Instance\.new\(\s*[\"']Attachment[\"']\s*\)")
 
 
 def _scope(rel):
@@ -265,6 +267,22 @@ def scan_text(rel, text):
             "%s is a test/debug remote any client can fire in a published game" % m.group(1),
             "guard the handler (RunService:IsStudio() or a creator/group check) or delete the remote",
             REF + "security-networking.md")
+
+    # Placement: world coordinates written to an unparented attachment are stored as its local offset.
+    for m in _ATTACH_NEW.finditer(code):
+        name = re.escape(m.group(1))
+        rest = code[m.end():m.end() + 3000]
+        again = re.search(r"(?<![.\w])%s\s*=\s*(?!=)" % name, rest)
+        if again:
+            rest = rest[:again.start()]  # the name is reassigned: later writes are another attachment
+        world = re.search(r"(?<![.\w])%s\.World(CFrame|Position|Axis|SecondaryAxis)\s*=(?!=)" % name, rest)
+        parent = re.search(r"(?<![.\w])%s\.Parent\s*=(?!=)" % name, rest)
+        if world and (not parent or world.start() < parent.start()):
+            add("T045", "medium", line_of(m.end() + world.start()),
+                "%s.World%s is set before the attachment has a parent: the value is kept as a local "
+                "offset, so once parented it lands that far from its part" % (m.group(1), world.group(1)),
+                "set .Parent first, then World*, or set .CFrame in the part's own space",
+                REF + "sharp-edges.md", "live")
     return findings
 
 
@@ -275,7 +293,7 @@ def catalog():
     out.update({"T003": "live", "T004": "field", "T011": "docs", "T013": "docs", "T014": "live",
                 "T022": "live", "T023": "live", "T024": "live", "T037": "docs", "T038": "docs",
                 "T039": "docs", "T040": "docs", "T041": "docs", "T042": "docs", "T043": "docs",
-                "T044": "docs"})
+                "T044": "docs", "T045": "live"})
     return dict(sorted(out.items()))
 
 

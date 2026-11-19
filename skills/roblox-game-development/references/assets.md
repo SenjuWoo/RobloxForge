@@ -242,6 +242,23 @@ open_cloud_invoke(
 `InsertService:LoadAsset(id)` then serves the new revision, so the id in
 config does not churn.
 
+What a GLB uploaded this way (`assetType: "Model"`) turned into, measured with
+a probe asset in a second production project (live 2026-11):
+
+- 1 Blender unit = 1 stud; Blender (x, y, z) arrived as Roblox (-x, z, y).
+- Each Blender object became one `MeshPart` named after it, inside a model
+  named `<Object>_Node`. The file's origin is lost, positions relative to it
+  are kept, so an importer can place every piece exactly (it measured 0.000
+  position and size error across six packs).
+- Materials and colours were dropped (grey Plastic). Vertex colours (a colour
+  attribute) survived and multiply the part's `Color`: author tint in the
+  vertex colours, set material and base colour in the importer.
+- Parts arrive unanchored; anchor or weld them in the importer.
+  `CollisionFidelity` can be set there in Edit.
+- Model uploads were approved at once; `InsertService:LoadAsset(id)` works in
+  Edit, so the importer can be an `rbforge exec --dm Edit` script generated
+  from the pack's JSON.
+
 Limits: at most 5 files of 20 MB per call, and only from a directory the
 creator approved in Assistant Settings -> MCP Permissions. A rejected file means
 "ask for approval", never "copy it into an approved folder". An upload is a real
@@ -267,8 +284,15 @@ For the segmented route:
 
 - Export **one mesh per rig segment** (head, torso, upper arm, ...) and join
   them with `Motor6D`s created from code.
-- Imported meshes face **+Z**; Roblox's forward is -Z. Place each segment with
-  a 180° yaw (`CFrame.Angles(0, math.pi, 0)`), or every limb points backwards.
+- **Measure the orientation once instead of assuming it.** Two production
+  projects disagree: one placed every segment with a 180° yaw because its
+  meshes faced +Z; the other measured GLB uploads mapping Blender (x, y, z) to
+  Roblox (-x, z, y), so a model facing Blender's -Y (its front view) arrives
+  facing Roblox -Z, forward, with no yaw. Which one you get depends on how the
+  source was authored and exported. Upload one asymmetric probe mesh (a wedge
+  with a marked front and left), read its parts' `CFrame` after `LoadAsset`,
+  and fix the direction in the Blender script, not with a yaw scattered through
+  the Luau.
 - Have the Blender script write the rig (segment names, joint pivots, sizes) to
   JSON, and generate a Luau spec module from that JSON. The Luau side never
   hand-copies numbers from Blender.

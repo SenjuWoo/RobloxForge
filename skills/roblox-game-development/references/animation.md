@@ -58,6 +58,25 @@ end
 -- pose:   both    -> j.Transform
 ```
 
+More measured in a second production project (live 2026-11):
+
+- **NPCs built with `Players:CreateHumanoidModelFromDescriptionAsync(HumanoidDescription.new(),
+  Enum.HumanoidRigType.R15)` get the same joints**: 15 kinematic `AnimationConstraint`s and 14
+  `BallSocketConstraint`s (HipHeight 2.192 for the blocky default). Ragdoll is disabling the
+  `AnimationConstraint`s; the ball sockets already hold the limbs together. Enable them again to
+  stand the body back up.
+- **The type definitions lack `Part0`/`Part1`/`C0`/`C1` on `AnimationConstraint`.** Reach the two
+  parts through `Attachment0.Parent` / `Attachment1.Parent` in a small typed helper instead of
+  casting the joint to `any` everywhere.
+- **A client can pose a server-owned rig.** Writing `Transform` from a client in
+  `RunService.PreSimulation` posed both the local player's character and NPCs whose physics the
+  server owns; every client animates every NPC locally from replicated state attributes, and the
+  server never sends a pose.
+- **Check procedural poses on a contact sheet before Play.** An Edit-mode tool that lays out one
+  rig per pose in a row, captured once, catches a wrong sign in seconds; a pose debugged in Play
+  costs a boot per guess. Seen from the front, screen-right is the rig's -X: place the sheet's
+  rigs at negative X in order or it reads reversed.
+
 ## The additive layer
 
 `Transform` is written by the Animator each frame; multiplying it afterwards in

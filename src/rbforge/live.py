@@ -556,6 +556,7 @@ def _push_files(studio_id, allowed_places, files, targets, show, project_file,
                 parent_classes, ledger, project_key, force, results, updates):
     """The Studio half of `push`; fills `results` and `updates`, returns a stop reason or None."""
     with Session(studio_id) as s:
+        preflight_edit(s)
         if allowed_places:
             # Wrong-place protection runs before any source is touched.
             try:
@@ -708,6 +709,25 @@ def preflight_play(session, datamodels=("Server",)):
                          hint="press Play in Studio, or call start_stop_play(is_start=true); "
                               "servertest runs inside a live playtest")
     return have
+
+
+def preflight_edit(session):
+    """Refuse an Edit-datamodel write while a playtest is running.
+
+    During Play `get_studio_state` lists only Client and Server; an Edit `execute_luau` then did not
+    raise but answered with text, so every file came back `unverified` and the push reported zero
+    files synced with no reason (field report from a production project, 2026-11). Unrecognised
+    wording is not a refusal.
+    """
+    state = session.call("get_studio_state", {"studio_id": session.studio_id})
+    have = available_datamodels(state)
+    if have is None or "Edit" in have or not have & {"Server", "Client"}:
+        return have
+    raise ForgeError("RBF-PLAY-002",
+                     "stop Play first: push writes the Edit sources and a playtest is running "
+                     "(available: %s)" % ", ".join(sorted(have)),
+                     hint="press Stop in Studio or call start_stop_play(is_start=false), push, then start "
+                          "Play again so the servers run the new sources")
 
 
 _TEST_HOSTS = {

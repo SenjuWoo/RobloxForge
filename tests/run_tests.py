@@ -21,8 +21,13 @@ from rbforge import errors as err_mod  # noqa: E402
 
 PASS, FAIL, SKIPPED = [], [], []
 
-def _fake_session(out):
-    """A Studio session double that returns `out` from execute_luau."""
+# Studio states the preflights read: servertest needs Play, push needs Edit.
+_PLAY_STATE = "- Current Studio Mode: Play\n- Available DataModels: Client, Server\n"
+_EDIT_STATE = "- Current Studio Mode: Edit\n- Available DataModels: Edit\n"
+
+
+def _fake_session(out, state=_PLAY_STATE):
+    """A Studio session double: `out` from execute_luau, `state` from get_studio_state."""
     class Fake:
         answer = out
 
@@ -34,6 +39,11 @@ def _fake_session(out):
 
         def __exit__(self, *a):
             return False
+
+        studio_id = "s1"
+
+        def call(self, tool, args):  # preflights: servertest wants Play, push wants Edit
+            return state
 
         def luau(self, code, dm="Edit"):
             return Fake.answer
@@ -90,6 +100,8 @@ def _isolated_home():
 
 
 _ONLY = os.environ.get("RBFORGE_TEST_ONLY")  # substring filter for a quick local loop; CI never sets it
+
+
 
 
 def check(name):
@@ -520,7 +532,7 @@ def _():
             for answer, state in [("ROLLED_BACK 3:1", "rolled_back"),
                                   ("ROLLBACK_FAILED 3:1", "rollback_failed"),
                                   ("HIERARCHY X is Folder, the project expects Model", "hierarchy")]:
-                live.Session = _fake_session(answer)
+                live.Session = _fake_session(answer, _EDIT_STATE)
                 r = live.push(["ALL"], os.path.join(d, "default.project.json"))
                 assert r["results"][0]["state"] == state, (answer, r["results"][0])
                 assert r["pushed"] == 0
@@ -575,7 +587,7 @@ def _():
         open(stray, "w").write("return 2\n")
         want = live.adler("return 1\n")
         try:
-            live.Session = _fake_session("SYNCED " + want)
+            live.Session = _fake_session("SYNCED " + want, _EDIT_STATE)
             r = live.push([good, stray], os.path.join(d, "default.project.json"))
             states = sorted(row["state"] for row in r["results"])
             assert states == ["synced", "unmapped"], states
@@ -622,7 +634,7 @@ def _():
                   open(os.path.join(d, "default.project.json"), "w"))
         open(os.path.join(d, "src", "Thing", "init.luau"), "w").write("return 1\n")
         try:
-            live.Session = _fake_session("HIERARCHY Workspace.Thing must be a Script")
+            live.Session = _fake_session("HIERARCHY Workspace.Thing must be a Script", _EDIT_STATE)
             r = live.push(["ALL"], os.path.join(d, "default.project.json"))
             assert r["results"][0]["state"] == "hierarchy", r["results"][0]
             assert r["pushed"] == 0
@@ -1878,27 +1890,8 @@ def _():
         assert ("ServerScriptService.Systems", "A", "ModuleScript") in names, names
 
 
-def _fake_session(out):
-    class Fake:
-        answer = out
 
-        def __init__(self, *a, **k):
-            pass
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        studio_id = "s1"
-
-        def call(self, tool, args):  # servertest's preflight: a running playtest
-            return "- Current Studio Mode: Play\n- Available DataModels: Client, Server\n"
-
-        def luau(self, code, dm="Edit"):
-            return Fake.answer
-    return Fake
 
 @check("live: server test result parsing is exact")
 def _():
@@ -1936,7 +1929,7 @@ def _():
             for answer, state in [("SYNCED " + want, "synced"),
                                   ("MISMATCH " + want, "mismatch"),
                                   ("UNVERIFIED", "unverified")]:
-                live.Session = _fake_session(answer)
+                live.Session = _fake_session(answer, _EDIT_STATE)
                 r = live.push(["ALL"], os.path.join(d, "default.project.json"))
                 assert r["results"][0]["state"] == state, (answer, r["results"][0])
                 assert r["pushed"] == (1 if state == "synced" else 0), r
@@ -2040,7 +2033,7 @@ def _():
                   open(os.path.join(d, "default.project.json"), "w"))
         open(os.path.join(d, "src", "A.luau"), "w").write("return 1\n")
         try:
-            live.Session = _fake_session("9999")
+            live.Session = _fake_session("9999", _EDIT_STATE)
             try:
                 live.push(["ALL"], os.path.join(d, "default.project.json"))
                 raise AssertionError("push accepted the wrong place")
@@ -2322,6 +2315,14 @@ def _():
 
             def __exit__(self, *a):
                 return False
+
+            studio_id = "s1"
+
+
+            def call(self, tool, args):  # push preflight: Studio is in Edit
+
+                return _EDIT_STATE
+
 
             def luau(self, code, dm="Edit"):
                 Sequenced.calls += 1
@@ -4033,6 +4034,14 @@ class _Recorder:
     def __exit__(self, *a):
         return False
 
+    studio_id = "s1"
+
+
+    def call(self, tool, args):  # push preflight: Studio is in Edit
+
+        return _EDIT_STATE
+
+
     def luau(self, code, dm="Edit"):
         _Recorder.sent.append(code)
         return _Recorder.answers.pop(0)
@@ -4097,7 +4106,7 @@ def _():
         proj = _push_fixture(d)
         want = live.adler("return 1\n")
         try:
-            live.Session = _fake_session("SYNCED 1" + want)
+            live.Session = _fake_session("SYNCED 1" + want, _EDIT_STATE)
             r = live.push(["ALL"], proj)
             assert r["pushed"] == 0 and r["results"][0]["state"] == "unverified", r["results"][0]
         finally:
@@ -5452,8 +5461,135 @@ def _():
         dev = json.load(open(os.path.join(target, "dev.project.json"), encoding="utf-8"))
         assert dev["tree"]["Workspace"]["SpawnLocation"]["$className"] == "SpawnLocation"
         assert dev["tree"]["Workspace"]["Baseplate"]["$properties"]["Anchored"] is True
+        # Rojo drops `Position` (not serialized): placement has to be a CFrame, spawn on top of the floor.
+        for name, y in (("Baseplate", -2), ("SpawnLocation", 0.5)):
+            props = dev["tree"]["Workspace"][name]["$properties"]
+            assert "Position" not in props and props["CFrame"][1] == y, (name, props)
         hud = open(os.path.join(target, "src", "client", "Main.client.luau"), encoding="utf-8").read()
         assert "Enum.SortOrder.LayoutOrder" in hud, "a script-made UIListLayout sorts by Name by default"
+
+
+# ---------------------------------------------------------------- 0.20.0 field lessons
+
+@check("probes: world-audit renders, parses, honours its params and is documented")
+def _():
+    from rbforge import probes
+    cat = {p["name"]: p for p in probes.catalog()}
+    assert "world-audit" in cat and cat["world-audit"]["datamodel"] == "any", cat.get("world-audit")
+    for need in ("root", "gap", "overlap", "reach", "skip", "max"):
+        assert need in cat["world-audit"]["params"], need
+    code = probes.render("world-audit", probes.parse_sets(["root=workspace.World", 'skip={"Rail$"}']))["code"]
+    assert "local root = workspace.World" in code and 'local SKIP = {"Rail$"}' in code
+    # The report names what it skipped, the three lead classes, and yields while it works.
+    for need in ("SKIPPED from the floating check", "FLOATING", "INSIDE", "STRAY ATTACHMENT", "task.wait()",
+                 "WORLD-AUDIT"):
+        assert need in code, need
+    with tempdir() as d:
+        cfg = os.path.join(d, "selene.toml")
+        open(cfg, "w").write('std = "lua51"\n')
+        path = os.path.join(d, "world-audit.luau")
+        open(path, "w", encoding="utf-8").write(probes.render("world-audit")["code"])
+        ok, detail = _parse_luau(path, cfg)
+        assert ok, "world-audit does not parse:\n%s" % detail
+    assert "world-audit" in _ref("worldbuilding-lighting.md")
+
+
+@check("traps: T045 fires on a world write before the parent and stays quiet on the fix")
+def _():
+    bad = ('local a = Instance.new("Attachment")\n'
+           "a.WorldCFrame = CFrame.new(10, 150, 0)\n"
+           "a.Parent = part\n")
+    assert "T045" in _trap_ids("src/server/build.luau", bad)
+    pos = 'local a: Attachment = Instance.new("Attachment")\na.WorldPosition = p\n'
+    assert "T045" in _trap_ids("tools/build.luau", pos), "no parent at all is the same bug"
+    good = ('local a = Instance.new("Attachment")\n'
+            "a.Parent = part\n"
+            "a.WorldCFrame = CFrame.new(10, 150, 0)\n")
+    assert "T045" not in _trap_ids("src/server/build.luau", good)
+    local_space = 'local a = Instance.new("Attachment")\na.CFrame = CFrame.new(0, 1, 0)\na.Parent = part\n'
+    assert "T045" not in _trap_ids("src/server/build.luau", local_space)
+    # A comparison is not a write, and a reassigned name is another attachment.
+    cmp_only = 'local a = Instance.new("Attachment")\nif a.WorldPosition == p then end\na.Parent = part\n'
+    assert "T045" not in _trap_ids("src/server/build.luau", cmp_only)
+    reassigned = ('local a = Instance.new("Attachment")\na.Parent = part\n'
+                  "a = other\na.WorldPosition = p\n")
+    assert "T045" not in _trap_ids("src/server/build.luau", reassigned)
+    from rbforge import traps
+    assert traps.catalog()["T045"] == "live"
+    assert "T045" in _ref("sharp-edges.md")
+
+
+@check("live: push refuses while Play is running and says how to recover")
+def _():
+    from rbforge import live
+    orig = live.Session
+    with tempdir() as d:
+        os.makedirs(os.path.join(d, "src"))
+        json.dump({"tree": {"$className": "DataModel", "ServerScriptService": {"$path": "src"}}},
+                  open(os.path.join(d, "default.project.json"), "w"))
+        open(os.path.join(d, "src", "A.luau"), "w").write("return 1\n")
+        want = live.adler("return 1\n")
+        sent = []
+
+        class PlayStudio:
+            studio_id = "s1"
+
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def call(self, tool, args):
+                return _PLAY_STATE
+
+            def luau(self, code, dm="Edit"):
+                sent.append(code)
+                return "UNVERIFIED"
+
+        try:
+            live.Session = PlayStudio
+            try:
+                live.push(["ALL"], os.path.join(d, "default.project.json"))
+                raise AssertionError("push ran during Play")
+            except err_mod.ForgeError as exc:
+                assert exc.code == "RBF-PLAY-002", exc.code
+                assert "stop Play" in str(exc) and "start_stop_play" in (exc.hint or ""), (str(exc), exc.hint)
+            assert sent == [], "push sent Luau to Studio before refusing"
+            # Edit state, and wording the preflight does not recognise, still push.
+            for state in (_EDIT_STATE, "some future wording"):
+                live.Session = _fake_session("SYNCED " + want, state)
+                r = live.push(["ALL"], os.path.join(d, "default.project.json"))
+                assert r["pushed"] == 1, (state, r)
+        finally:
+            live.Session = orig
+
+
+@check("docs: field lessons from the second production project are in the references")
+def _():
+    need = {
+        "studio-mcp.md": ["Bring Studio to the front", "LOD seams", "One StudioMCP process",
+                          "keyDown", "The person at the PC", "GPU-heavy"],
+        "sharp-edges.md": ["Raycasts obey collision groups", "params.CollisionGroup",
+                           "after it has a parent", "RootPriority", "Beam", "RespectCanCollide",
+                           "PreloadAsync", "PositionType", "cannot be compared"],
+        "assets.md": ["Measure the orientation once", "(-x, z, y)", "Vertex colours"],
+        "worldbuilding-lighting.md": ["occupancy", "Audit the built world", "Mud", "Decay"],
+        "testing-debugging.md": ["DebugHandsOff", "humanoid:Move", "real Play restart", "Stage scenes"],
+        "animation.md": ["CreateHumanoidModelFromDescriptionAsync", "BallSocketConstraint", "contact sheet"],
+        "ui-mobile.md": ["LastInputTypeChanged", "Every hint you show for touch"],
+    }
+    for name, phrases in need.items():
+        text = _ref(name)
+        for p in phrases:
+            assert p in text, "%s lacks %r" % (name, p)
+    # The contradicted first-party tip is gone: no unconditional 180-degree yaw for imported meshes.
+    assert "Place each segment with\n  a 180" not in _ref("assets.md")
+    # Samples in the lighting reference no longer use the deprecated parent argument.
+    assert not re.search(r'Instance\.new\("\w+",\s*\w', _ref("worldbuilding-lighting.md"))
 
 
 if __name__ == "__main__":

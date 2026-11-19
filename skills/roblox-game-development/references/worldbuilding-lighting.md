@@ -74,6 +74,21 @@ Notes that prevent the usual disasters:
 - **Chunk it.** A full 512x512 map at 4-stud voxels in one call will freeze Studio
   or drop the MCP connection.
 
+### Steep ground without ribbed cliffs
+
+Column fills (`FillBlock` per voxel column, or `WriteVoxels` with occupancy 1 below the height and 0
+above) make every steep face a staircase of 4-stud ledges. Write fractional occupancy instead, from
+the voxel centre's distance to the surface measured along the slope (live 2026-11, a second
+production project: gorge walls went from visible ribs to 0.15 studs rms roughness):
+
+```text
+occupancy = clamp(0.5 + (h - yCentre) / (RES * min(sqrt(1 + slope^2), 6)), 0, 1)
+```
+
+`h` is the surface height at the column, `yCentre` the voxel's centre, `RES` the voxel size (4) and
+`slope` the height gradient. Write it with `Terrain:WriteVoxels` per region. The surface then sits at
+the height you asked for, so props and abutments can be seated with a downward ray and stay seated.
+
 ## Lighting presets (pick one, then stop)
 
 Set these through `execute_luau` in Edit mode; they are plain property writes.
@@ -94,7 +109,10 @@ Lighting.FogEnd = 2200
 Lighting.FogStart = 400
 
 local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
-    or Instance.new("Atmosphere", Lighting)
+if not atmosphere then
+    atmosphere = Instance.new("Atmosphere")
+    atmosphere.Parent = Lighting
+end
 atmosphere.Density = 0.32
 atmosphere.Haze = 1.8
 atmosphere.Glare = 0.15
@@ -102,13 +120,19 @@ atmosphere.Color = Color3.fromRGB(199, 199, 199)
 atmosphere.Decay = Color3.fromRGB(106, 112, 125)
 
 local bloom = Lighting:FindFirstChildOfClass("BloomEffect")
-    or Instance.new("BloomEffect", Lighting)
+if not bloom then
+    bloom = Instance.new("BloomEffect")
+    bloom.Parent = Lighting
+end
 bloom.Intensity = 0.4
 bloom.Size = 24
 bloom.Threshold = 1.1
 
 local cc = Lighting:FindFirstChildOfClass("ColorCorrectionEffect")
-    or Instance.new("ColorCorrectionEffect", Lighting)
+if not cc then
+    cc = Instance.new("ColorCorrectionEffect")
+    cc.Parent = Lighting
+end
 cc.Saturation = 0.08
 cc.Contrast = 0.12
 cc.TintColor = Color3.fromRGB(255, 246, 235)
@@ -209,6 +233,36 @@ screenshot at once, and is verified by a capture from a fixed pose before the ne
 Rules that held: never move or resize the collision geometry while dressing it; seed every random choice from a
 position so a rebuild is identical; rerun the route and combat suites after any prop that collides.
 
+### Defaults that read wrong at first look (live 2026-11)
+
+Each of these made a second production project's first captures look broken; none is an error, so nothing
+reports it:
+
+- the stock sky is a flat cyan: give the place its own `Sky` (gradient or painted) before judging any colour;
+- a strongly tinted `Atmosphere.Decay` paints every far mountain one colour (teal); keep `Decay` near grey and
+  put mood in `Color` and the grade;
+- `Enum.Material.Mud` renders wet and nearly black at road scale; a dirt road is `Ground`;
+- an imported glow, ember or particle keeps its default colour (cyan-white) until the importer sets one: set a
+  warm colour per effect when the fire's embers come out teal.
+
+## Audit the built world, then look at it
+
+A dressed world hides placement bugs no suite trips over. The second project's world audit (Edit, after the
+build) found cable attachments 150 studs up in the sky (positioned before they had a parent, see sharp-edges),
+a 3.3-stud plinth at each bridgehead, 17 rock spires hovering up to 7 studs over steep ground, standing stones
+through a wagon, a tent inside a watchtower and a signpost inside a tent. Run the `world-audit` probe after
+every rebuild:
+
+```text
+rbforge probe world-audit --run --set root=workspace.World
+```
+
+It reports floating pieces (a downward ray from the piece's footprint finds nothing within the gap), pieces
+whose bounding boxes overlap past a tolerance, and attachments far from their part, each with a position.
+Every line is a lead. **Then look:** the one floater that audit was told to skip (a shield rail in mid-air)
+was found only in a capture. A skip list hides exactly the case you stopped checking, so the probe prints
+what it skipped.
+
 ## Checklist before calling a world done
 
 - [ ] spawn is above terrain and faces the first objective
@@ -216,4 +270,5 @@ position so a rebuild is identical; rerun the route and combat suites after any 
 - [ ] terrain has at least two materials (flat + slope)
 - [ ] exactly one lighting preset, applied and screenshotted - at night too
 - [ ] a landmark is visible from the spawn exit
+- [ ] `world-audit` probe clean (or every lead explained) after the last rebuild
 - [ ] `screen_capture` framed on the playable area, and actually looked at

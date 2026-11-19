@@ -103,6 +103,9 @@ _PROJECT = """{
 
 # A standalone test place: the same code plus a floor and a spawn, so `rojo build` gives something
 # a character can stand in. `default.project.json` stays code-only on purpose.
+# Placement goes through `CFrame`: Rojo writes only serialized properties and silently drops `Position`,
+# which left the floor and the spawn both at the origin with the spawn buried in the floor (found by
+# the world-audit probe, 2026-11-18).
 _DEV_PROJECT = """{
   "name": "{genre}-game-dev",
   "tree": {
@@ -113,7 +116,7 @@ _DEV_PROJECT = """{
         "$properties": {
           "Anchored": true,
           "Size": [512, 4, 512],
-          "Position": [0, -2, 0],
+          "CFrame": [0, -2, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
           "Color": [0.36, 0.38, 0.42],
           "Material": "Concrete"
         }
@@ -123,7 +126,7 @@ _DEV_PROJECT = """{
         "$properties": {
           "Anchored": true,
           "Size": [8, 1, 8],
-          "Position": [0, 0.5, 0]
+          "CFrame": [0, 0.5, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]
         }
       }
     },

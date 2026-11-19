@@ -212,6 +212,34 @@ What the runner does (all verified live, 2026-11-16):
 Paths are relative to the manifest. `datamodel` is `Server` (default) or `Client`; `timeout`
 defaults to 120.
 
+## Live-suite patterns from a second production project (live 2026-11)
+
+- **Suites change the world; order the manifest.** A suite that clears enemies, resets a profile
+  or leaves the hero in a guard state changes what the next one sees. Put the suite that asserts a
+  fresh state (boot) first, and say in the manifest's names which suites leave the place changed
+  (after a full run the valley was empty of enemies until Play restarted).
+- **Client auto-behaviour fights server-side tests.** A guard the test raised on the server was
+  dropped a frame later because the client controller releases the guard when the key is not
+  held; the test timed out "waiting for the blocked hit". Give such controllers a Studio-only
+  player attribute (`DebugHandsOff`) that the test sets and the controller honours only when
+  `RunService:IsStudio()`, instead of weakening the test.
+- **Walk the character the way the engine does.** Replacing an input module's `move` function did
+  not move the hero: the engine's control script drives the `Humanoid`. A client test that needs
+  walking calls `humanoid:Move(direction)` from a `BindToRenderStep` callback bound after the
+  input priority, then asserts the distance walked.
+- **Prove persistence across a real Play restart.** A save read back in the same session proves
+  little (caches, the same server). The manifest lists the persistence suite twice: last ("run 1
+  of 2": build a profile through the real services, save, record a checksum and a mark), and first
+  ("run 2 of 2": the new session loads it and compares). Stop and start Play between two manifest
+  runs. Anything that resets the profile between the runs destroys the mark, so the evidence needs
+  two consecutive runs.
+- **Stage scenes for real-input runs.** A hand-driven (MCP keyboard) fight lost every time the
+  hero idled inside an enemy camp's sight while tool calls arrived: dead in about ten seconds.
+  Keep stage scripts in `tools/stage/` that place the hero just out of sight, set the hour and
+  weather, and optionally narrow enemy sight in Studio only; then walk in with
+  `character_navigation` and send one keyboard macro. Order matters inside a stage too: a reset
+  that wipes the profile must run before the step that marks the tutorial skipped.
+
 ## Place test units at their own level
 
 A ground ray cast from high above a spawn point lands on whatever is on top: roofs, crane beams,

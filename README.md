@@ -192,7 +192,7 @@ it. Whenever push replaces a source it did not write itself, the Studio copy is 
 
 ## Status
 
-0.19.0. Only what was observed is listed as verified.
+0.20.0. Only what was observed is listed as verified.
 
 | Area | Status |
 |---|---|
@@ -203,6 +203,8 @@ it. Whenever push replaces a source it did not write itself, the Studio copy is 
 | `rbforge new` one-command project + plan | verified; the starter kit passes its own gate, and its live server test, client remote path and HUD were run and inspected in Studio Play (0.19.0) |
 | `rbforge audit` ranked project health report | verified offline on fixtures and on a 35k-line production project (0.19.0) |
 | `rbforge push`: checksum readback, rollback, class-change backup | verified against a live Studio place |
+| `rbforge push` refuses during Play (`RBF-PLAY-002`) | verified against a live Studio place (0.20.0): refused in Play with exit 4, 10/10 synced after Stop |
+| `world-audit` probe (floating, inside, stray attachments) | verified against a live Studio place (0.20.0): three planted faults found, three controls quiet, skip list reported |
 | `rbforge push` conflict guard and backup-before-overwrite | verified against a live Studio place (0.17.2): conflict, `--force` backup, ledger re-push |
 | Plugin detection with a free alternative for every entry | verified (filename-based) |
 | Doctor, capabilities matrix | verified |

@@ -111,7 +111,8 @@ the camera, the height and the view before you touch code.
 | Distant area is empty in Play although the server built it | StreamingEnabled streams around the character, not a pinned camera | `goto`, then `camera-pin` |
 | First-person arms or weapon look like wood planks, or glow gold in sunlight | Material texture tiling at viewmodel scale; glossy `SmoothPlastic` | matte untextured material on the viewmodel copy (see sharp-edges) |
 | Walls near the player are paler than the same wall further away | A `PointLight` carried by the camera or viewmodel | list lights under `workspace.CurrentCamera`, disable, capture again |
-| Props float or sink on terrain | Positioned at the height the terrain was filled to; smooth terrain settles below it | raycast down and stand the prop on the hit |
+| Props float or sink on terrain | Positioned at the height the terrain was filled to; smooth terrain settles below it | raycast down and stand the prop on the hit; `world-audit` lists every floater |
+| Ropes or cables hang far from their posts; set pieces stand inside each other | Attachments given a world position before they had a parent; layout offsets never checked | `world-audit` (stray attachments, insides), lint T045 |
 
 ## Input through the MCP
 

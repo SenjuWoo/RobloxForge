@@ -145,6 +145,29 @@ return {
 Then `screen_capture(capture_id = "ScreenCapture_1", camera_position = pos,
 look_at_position = look)`. A screenshot you did not look at is not evidence.
 
+## Session behaviour that costs time (second production project, live 2026-11)
+
+- **Bring Studio to the front before `screen_capture`.** With another window over Studio's 3D view the
+  capture times out, and a timed-out capture can drop the Studio connection for about half a minute;
+  `list_roblox_studios` brings it back. A background Studio also renders at reduced rate and quality.
+- **Let the view settle before capturing.** Move the camera (`execute_luau` or a Studio-only camera
+  attribute your client reads), wait about 2.5 s, then capture. Captured straight after a move, distant
+  terrain shows LOD seams that look like geometry faults but are not.
+- **One StudioMCP process owns Studio's connection at a time.** Every `rbforge` live command starts its
+  own; the agent's own MCP connection then has to find Studio again. After an `rbforge push`, `exec`,
+  `servertest` or `probe` run, call `list_roblox_studios` before the next direct MCP call.
+- **Input Actions need a held key.** An instant `keyPress` may not register with an `InputAction`; send
+  `keyDown`, wait 150-200 ms, `keyUp` in one call. Keys still queued in a macro keep firing after the
+  character dies and respawns. `character_navigation` walks the character to a point; `W` moves relative
+  to the camera, not the character.
+- **The person at the PC is an input source too.** Play locks their mouse; their clicks and key presses
+  reach the game during an automated run. Before calling a stray stamina drain or attack a bug, read
+  `UserInputService` input events in the log, and keep automated Play sessions short.
+- **GPU-heavy jobs on the same machine starve Studio.** A Blender render or an image model running
+  alongside made MCP calls time out. Run one heavy job at a time and render previews only when needed.
+- **Read the console filtered.** `get_console_output` can return thousands of asset-load lines; in Play,
+  `LogService:GetLogHistory()` filtered by message type or text (probe `console`) is the usable view.
+
 ## Subagents
 
 | Type | Use it for |

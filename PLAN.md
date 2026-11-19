@@ -1,63 +1,47 @@
-# PLAN — 0.19.0 knowledge audit and gap fill
+# PLAN — 0.20.0 field lessons from a second production project
 
-Goal: an agent that starts a Roblox game from nothing, or takes over an existing one, gets correct
-current guidance, a working starting point and a lint that names the defects weak models actually ship.
-The first-party references grew out of one production project whose core was written by a weak model;
-this pass separates what is engine fact from what was that project's habit.
+Goal: the forge carries what a second, independent action-RPG project learned the hard way (engine
+traps measured live, Studio MCP behaviour, an asset pipeline, test patterns), corrects the one first-party
+tip that the new evidence contradicts, and turns the repeatable lessons into tooling: a world-audit probe,
+a lint rule and a push that refuses to run during Play.
+The previous plan (0.19.0) is archived in `docs/archive/PLAN-0.19.0.md`.
 
 Evidence format: `cmd:<command> @ <sha> exit=<n>`. `T=python tests/run_tests.py`.
 
 | ID | Task | Status | Depends on | Verify | Evidence |
 |---|---|---|---|---|---|
-| K1 | persistence.md: ProfileStore sample matches upstream API (signal `OnSessionEnd:Connect`, no `ListenToRelease`, real constants); failed read is never a new player; contradiction removed | complete | - | `cmd:RBFORGE_TEST_ONLY="docs: persistence" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| K2 | architecture.md: loader sets readiness, isolates Init, handles existing players/characters, logs instead of swallowing; one service shape; authored-world and module-size rules; cleanup pattern | complete | - | `cmd:RBFORGE_TEST_ONLY="docs: reference samples" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| K3 | animation.md + assets.md: authored-vs-procedural decision first; joint helper used from the first sample; viewmodel light advice no longer contradicts sharp-edges; audio/asset id statement corrected | complete | - | `cmd:RBFORGE_TEST_ONLY="docs: reference samples" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| K4 | sharp-edges.md: general traps only, each with its evidence class; project case notes moved to sightlines-and-openings.md; `CharacterAdded` rule corrected | complete | - | `cmd:RBFORGE_TEST_ONLY="docs: sharp-edges" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| K5 | live-iteration.md, worldbuilding-lighting.md, game-design.md, security-networking.md, ui-mobile.md, performance.md: stale or project-specific advice corrected (see Decisions) | complete | - | `cmd:RBFORGE_TEST_ONLY="docs: stale" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| K6 | New references: `existing-projects.md` (taking over a codebase), `current-engine.md` (what model memory gets wrong, each class checked against the docs cache) | complete | - | `cmd:RBFORGE_TEST_ONLY="docs: current-engine" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| K7 | Router SKILL.md: task -> specialist skill -> first-party reference table; 38 tools; new references listed; under the existing size budget | complete | K1-K6 | `cmd:RBFORGE_TEST_ONLY="skill: router" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| L1 | Trap lint: new rules (failed-read default profile, test/debug remote, missed existing players, ungated input, client-supplied value, deprecated calls, purchase granted outside ProcessReceipt, name-keyed store, InvokeClient); T022 narrowed; project-specific T025 removed; T004 downgraded | complete | - | `cmd:RBFORGE_TEST_ONLY="traps:" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| L2 | Structure rung and reviews skip snapshot directories and git-ignored files (field report) | complete | - | `cmd:RBFORGE_TEST_ONLY="check: snapshot" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| L3 | `rbforge audit` / MCP `rb_audit`: ranked health report for an existing project (data safety, authority, remotes table, lifecycle, size, runtime-built world/UI, tests) with a fix order | complete | L1, L2 | `cmd:RBFORGE_TEST_ONLY="audit:" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| S1 | Scaffold ships a working starter kit (loader, remotes registry, rate limiter, safe data service, cleanup, HUD, pure rules + specs) that passes its own gate | complete | - | `cmd:RBFORGE_TEST_ONLY="scaffold:" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| S2 | Genres: shooter, round, towerdefense, rpg, horror, survival in plan/scaffold/templates | complete | S1 | `cmd:RBFORGE_TEST_ONLY="plan:" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| Q1 | Docs sample gate: every fenced Luau block in the first-party references parses (StyLua), with a negative control | complete | K1-K6 | `cmd:RBFORGE_TEST_ONLY="docs: reference samples" T` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped) |
-| R1 | Full suite, self-check, version 0.19.0, CHANGELOG, README, STATE, field reports cleared | complete | all | `cmd:T` and `cmd:python src/rbforge_cli.py check . --scope static` | cmd:python tests/run_tests.py @ 5184530 exit=0 (238 passed, 0 failed, 0 skipped); repo-root `check . --scope static` is not a project gate (probe templates carry placeholders) - the scaffold's own `rbforge check` is: exit=0 |
-| R2 | Live: scaffolded project built, opened in Studio, Play, console clean, starter loop exercised | complete | S1 | `cmd:rbforge servertest` against the scaffold | run on the tree that became 5184530, live Studio Play, disposable local place: `cmd:rbforge servertest tests/Starter.server.luau --ready workspace.ServerReady=true` exit=0 (PASS, twice); Client `DoAction` 0 -> 2 coins; capture inspected; console clean |
-| R3 | Push, CI green on the SHA, alerts queried, tag + release, skills installed, doctor | complete | R1 | `cmd:gh run list` / `rbforge doctor` | v0.19.0 @ 1abefb5: CI green, 0 open alerts, asset sha256 verified, smoke OK, skills current, doctor v0.19.0 |
+| F1 | studio-mcp.md: capture needs Studio in front and a settle wait (terrain LOD seams); a timed-out capture drops the connection; one StudioMCP owner at a time (CLI vs agent); held keys for Input Actions; the person at the PC is also an input source; GPU-heavy jobs starve Studio | pending | - | `cmd:RBFORGE_TEST_ONLY="docs: field lessons" T` | - |
+| F2 | sharp-edges.md: rays obey collision groups; `PreloadAsync` id strings load as images; network owner is the assembly root (welded gear); `Attachment.WorldCFrame` before a parent; Edit does not re-solve `WeldConstraint`s; Beam axes; camera boom `RespectCanCollide`; literal-union compare in strict mode; `AudioEmitter.PositionType` | pending | - | `cmd:RBFORGE_TEST_ONLY="docs: field lessons" T` | - |
+| F3 | assets.md: GLB through Open Cloud measured facts (axes, scale, per-object MeshParts, materials dropped, vertex colours kept, unanchored); the absolute "+Z, rotate 180°" rule replaced by a measure-first probe | pending | - | `cmd:RBFORGE_TEST_ONLY="docs: field lessons" T` | - |
+| F4 | worldbuilding-lighting.md: terrain filled by distance to the surface (no ribbed cliffs); audit the built world and also look; first-look defaults that read wrong (cyan stock sky, teal haze, wet-black Mud, default glow colours) | pending | - | `cmd:RBFORGE_TEST_ONLY="docs: field lessons" T` | - |
+| F5 | testing-debugging.md: Studio-only test hooks for client auto-behaviour; driving movement in a client test; persistence across a real Play restart; suites change the world (order, reset); staging scenes for real-input runs | pending | - | `cmd:RBFORGE_TEST_ONLY="docs: field lessons" T` | - |
+| F6 | animation.md + ui-mobile.md: blocky R15 from a description (constraint counts, ragdoll), client `Transform` writes pose server-owned rigs, pose contact sheets; prompts follow the last input device and every shown touch hint has a listener | pending | - | `cmd:RBFORGE_TEST_ONLY="docs: field lessons" T` | - |
+| P1 | Probe `world-audit`: floating pieces, pieces inside each other, attachments far from their part, with a skip list that still reports what it skipped | pending | - | `cmd:RBFORGE_TEST_ONLY="probes:" T` | - |
+| L4 | Trap T045: an `Attachment` placed by world position before it has a parent; positive and negative fixtures | pending | - | `cmd:RBFORGE_TEST_ONLY="traps:" T` | - |
+| L5 | `push` refuses while Play is running (Edit sources cannot change mid-playtest) with a clear error instead of a zero-file result | pending | - | `cmd:RBFORGE_TEST_ONLY="live: push" T` | - |
+| R1 | Full suite, version 0.20.0, CHANGELOG, README, STATE | pending | F1-F6, P1, L4, L5 | `cmd:T` | - |
+| R2 | Live: `world-audit` against a disposable place with a planted floater, overlap and stray attachment; push refusal during Play | pending | P1, L5 | `cmd:rbforge probe world-audit` in Studio | - |
+| R3 | Push, CI green on the SHA, alerts queried, tag + release, skills installed, doctor | pending | R1 | `cmd:gh run list` / `rbforge doctor` | - |
 
 ## Decisions
 
-- **Specialist skills are the API authority; first-party references are workflow and field evidence.**
-  The 24 vendored skills are typechecked against the current API. Where a first-party reference
-  duplicated one with weaker content (persistence, UI framework, remotes), it is cut to the rule plus a
-  pointer rather than maintained twice.
-- **Authored world by default.** Static geometry is built once in Edit and saved with the place; a
-  server script rebuilds only what is genuinely dynamic or procedural per session. The runtime-builder
-  workflow stays documented as the route for procedural games, not as the default.
-- **Authored animation by default, procedural as a measured choice.** Per-frame joint writes for every
-  NPC are a CPU cost that needs distance LOD; the references say so and give the decision table.
-- **Plain typed remote arguments by default.** Buffer packets and schema compilers are level C in
-  `optimization-levels.md`; `security-networking.md` now agrees with it.
-- **No UI framework by default.** Fusion stays as an optional section; the default is instances plus a
-  small controller, which is what a weak model can verify.
-- **Evidence classes on every trap:** `docs` (official reference), `live` (observed in Studio, dated),
-  `field` (one project report). A `field` item is a lead, not a rule, and the lint severity follows it.
-- **Starter kit has no package dependency.** Its data service is a correct single-server pattern
-  (retrying load, refuses to save a profile that never loaded, `UpdateAsync`, `BindToClose`) and says
-  when to move to ProfileStore.
-- **`audit` is a ranked reading list, not a verdict**, like the other static reviews.
+- **Source:** the second project's own docs (`VALIDATION.md`, `STATE.md`), its commits and its session notes.
+  Only general engine and workflow facts move into the forge; its tuning numbers, layout and lore stay there.
+- **Evidence class per item,** as in sharp-edges: what that project measured in Studio is `live` with the
+  month; what it inferred once is `field`.
+- **Where the new evidence contradicts a first-party tip, the tip is rewritten to "measure it"**, not
+  swapped for the new project's number: two projects disagreeing about mesh orientation means the answer
+  depends on how the source was authored.
+- **The world-audit probe is generic:** it reads any root, reports leads with positions, never edits.
 
 ## Assumptions
 
-- StyLua can parse every documentation sample that claims to be Luau; fragments that cannot stand
-  alone are fenced as `text`.
-- Studio can be started from the command line with a local place for R2; if it cannot, R2 is reported
-  unverified and nothing else depends on it.
+- A disposable local place can be opened in Studio for R2; if not, R2 is reported unverified.
+- `get_studio_state` lists `Server`/`Client` among available datamodels while Play runs (the servertest
+  preflight already relies on this wording; unrecognised wording does not refuse).
 
 ## Risks
 
-- The MCP catalog has a character budget (10,600); `rb_audit` must fit.
-- New lint rules are regex heuristics; each ships with a negative fixture to bound false positives, and
-  is run against a 35k-line production project before release.
-- The `execute_luau` "no compound assignment" note cannot be re-checked without a live session.
+- Overlap detection by bounding boxes reports intended nesting (a sign on a wall); the probe states its
+  tolerance and keeps the report a reading list.
+- T045 is a regex heuristic over one function body; it ships with a negative fixture.
