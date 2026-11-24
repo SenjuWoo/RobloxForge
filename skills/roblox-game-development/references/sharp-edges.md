@@ -155,6 +155,13 @@ Case notes from one procedural-dome project (panel faces, shell openings, skirts
   `local frame`, a forgotten `pcall(tick)` still ran - against the deprecated global `tick`, so
   neither the type checker nor the tests failed. Search for the old name after a rename. (live
   2026-11)
+- **A reference named like a function shadows it.** A controller kept a HUD label under the same
+  name as its draught-count function: the drink key threw "attempt to call a Instance value" while
+  the same action from a button worked. Give instance references noun names (`countLabel`) and
+  functions verb names (`countDraughts`). (live 2026-11)
+- **selene's Roblox standard library lags the engine.** `Vector3.yAxis:Cross(v)` runs but failed
+  selene; `Vector3.new(0, 1, 0):Cross(v)` passes both. When selene rejects an API the docs list,
+  rewrite the expression rather than turning the lint off. (live 2026-11)
 - Deprecated globals still run and are still wrong: `wait`, `spawn`, `delay`, `tick`,
   `:connect`, `Instance.new(class, parent)`, `SetPrimaryPartCFrame`, body movers, `FindPartOnRay`,
   `Humanoid:LoadAnimation`. The trap lint lists each with its replacement. (docs)
@@ -171,10 +178,23 @@ Case notes from one procedural-dome project (panel faces, shell openings, skirts
   (live 2026-11)
 - **`UserInputService.InputBegan` passes `gameProcessed`.** Ignore it and typing in chat fires the
   ability. (docs)
-- **A custom camera's occlusion ray should respect `CanCollide`.** Counting every queryable part
-  pulls the camera in for leaves, banners and ropes a body walks through (camera in the hero's hair
-  under trees). `RaycastParams.RespectCanCollide = true` keeps only what blocks a body. (docs) (live
-  2026-11)
+- **A custom camera's occlusion ray should respect `CanCollide`, and what it ignores must fade.**
+  Counting every queryable part pulls the camera in for leaves, banners and ropes a body walks
+  through (camera in the hero's hair under trees); `RaycastParams.RespectCanCollide = true` keeps
+  only what blocks a body. But the ignored canopy then sits between camera and hero: a
+  non-collidable pine bough 5 studs down a 12-stud boom blacked the hero out. Cast the boom a
+  second time for non-collidable parts and set their `LocalTransparencyModifier` on this client,
+  restoring it once they clear. A client suite at that spot failed before the fade and passed
+  after. (docs) (live 2026-11)
+- **A player's character is simulated by that player's client.** A server-side impulse or
+  ragdoll throw on it is overwritten by the owner's next physics step. Replicate the push (an
+  attribute with a counter) and let the owning client apply it; the server applies pushes only to
+  creatures and puppets it owns. (docs) (live 2026-11)
+- **Firing an input action does not walk the character.** `InputAction:Fire` (deprecated; use
+  `InputBinding:Fire` on a `Scriptable` binding) updates the action's state and signals, but the
+  stock control script moves the character through `Player:Move`. Measured: firing `Move` alone
+  moved the character 0.00 studs in a second; `Player:Move` from a render step walked 19.0. (docs)
+  (live 2026-11)
 - **Editing `StarterGui` at runtime does nothing for players already in the game** - their copies
   live in `PlayerGui`. (docs)
 - **A client cache built while the server is still creating things is wrong forever.** Wait for a

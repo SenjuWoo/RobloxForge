@@ -5596,6 +5596,104 @@ def _():
     assert not re.search(r'Instance\.new\("\w+",\s*\w', _ref("worldbuilding-lighting.md"))
 
 
+# ---------------------------------------------------------------- 0.21.0 one-instance QA, current APIs
+
+@check("agents: connect writes a stable interpreter, not an app's private venv")
+def _():
+    from rbforge import agents
+    saved_env = os.environ.get("UABS_PYTHON")
+    saved = (sys.executable, sys.prefix, sys.base_prefix, getattr(sys, "_base_executable", None))
+    with tempdir() as d:
+        shared = os.path.join(d, "shared", "python.exe")
+        base_dir = os.path.join(d, "base")
+        venv_py = os.path.join(d, "app", "venv", "Scripts", "python.exe")
+        for f in (shared, os.path.join(base_dir, "python.exe"), venv_py):
+            os.makedirs(os.path.dirname(f), exist_ok=True)
+            open(f, "w").write("")
+        try:
+            # 1. The machine's shared runtime wins.
+            os.environ["UABS_PYTHON"] = shared
+            assert agents._forge_argv()[0] == shared.replace("\\", "/")
+            # 2. Inside a venv with no shared runtime: the base interpreter, never the venv's.
+            os.environ.pop("UABS_PYTHON", None)
+            sys.executable, sys.prefix, sys.base_prefix = venv_py, os.path.dirname(os.path.dirname(venv_py)), base_dir
+            sys._base_executable = venv_py  # some launchers report the venv here too
+            got = agents._stable_python()
+            assert os.path.normcase(got) == os.path.normcase(os.path.join(base_dir, "python.exe")), got
+            # A UABS_PYTHON that does not exist is ignored, not written.
+            os.environ["UABS_PYTHON"] = os.path.join(d, "gone", "python.exe")
+            assert os.path.normcase(agents._stable_python()) == os.path.normcase(os.path.join(base_dir, "python.exe"))
+            # 3. Not in a venv: sys.executable stays.
+            os.environ.pop("UABS_PYTHON", None)
+            sys.prefix = sys.base_prefix = base_dir
+            sys.executable = os.path.join(base_dir, "python.exe")
+            assert agents._stable_python() == sys.executable
+        finally:
+            sys.executable, sys.prefix, sys.base_prefix, base_exe = saved
+            if base_exe is None:
+                if hasattr(sys, "_base_executable"):
+                    del sys._base_executable
+            else:
+                sys._base_executable = base_exe
+            if saved_env is None:
+                os.environ.pop("UABS_PYTHON", None)
+            else:
+                os.environ["UABS_PYTHON"] = saved_env
+    # The TOML block keeps forward slashes whatever interpreter was chosen.
+    block = agents._toml_block("robloxforge", agents._forge_argv())
+    assert "\\" not in block, block
+
+
+@check("traps: T046 flags deprecated AnalyticsService Fire* and InputAction:Fire, not their replacements")
+def _():
+    assert "T046" in _trap_ids("a.server.luau", 'AnalyticsService:FireCustomEvent(player, "Kill", 1)')
+    assert "T046" in _trap_ids("a.server.luau", "Analytics:FireInGameEconomyEvent(player, 'Buy')")
+    assert "T046" not in _trap_ids("a.server.luau", 'AnalyticsService:LogCustomEvent(player, "Kill", 1)')
+    pilot = 'local ctx = Instance.new("InputContext")\nInput.action(name):Fire(true)\n'
+    assert "T046" in _trap_ids("src/client/Pilot.luau", pilot)
+    # A helper that returns the action counts even when the file never names the Input Action classes.
+    assert "T046" in _trap_ids("src/client/Pilot.luau", 'Input.action("Move"):Fire(Vector2.new(0, 1))\n')
+    fixed = 'local ctx = Instance.new("InputContext")\nbinding:Fire(true)\n'
+    assert "T046" not in _trap_ids("src/client/Pilot.luau", fixed)
+    # A BindableEvent in a file that has nothing to do with input actions is not this rule.
+    assert "T046" not in _trap_ids("src/server/a.luau", "actionDone:Fire(result)\n")
+    from rbforge import traps
+    assert traps.catalog()["T046"] == "docs"
+
+
+@check("docs: one-instance QA, active ragdoll, shared world state and current APIs are in the references")
+def _():
+    need = {
+        "testing-debugging.md": ["Proving it in one Studio instance", "QaSlot", "Puppets", "The Pilot",
+                                 "InputBinding:Fire", "Player:Move", "Clock.advance", "proof ladder",
+                                 "let a bot play them"],
+        "studio-mcp.md": ["plugin rights", "ExecuteMultiplayerTestAsync", "scripted camera ignores",
+                          "One Studio, one operator"],
+        "sharp-edges.md": ["what it ignores must fade", "LocalTransparencyModifier",
+                           "simulated by that player's client", "Firing an input action does not walk",
+                           "A reference named like a function", "Vector3.yAxis:Cross"],
+        "animation.md": ["Active ragdoll", "IsKinematic", "MaxTorque", "Throw the whole body",
+                         "MaxFrictionTorque", "PlatformStand", "IKControl"],
+        "current-engine.md": ["InputBindingType.Scriptable", "LogCustomEvent", "LevelOfDetail",
+                              "PlaybackRegion", "CreateEditableMeshAsync", "MaxPlayers", "SetTeleportData",
+                              "NPCs (even on an R15 rig)"],
+        "persistence.md": ["World facts every server must agree on", "applied", "best effort",
+                           "lose the acknowledgement", "45 days"],
+        "development-loop.md": ["Delegating build work", "integrator's files", "one Studio and one operator"],
+    }
+    for name, phrases in need.items():
+        text = _ref(name)
+        for p in phrases:
+            assert p in text, "%s lacks %r" % (name, p)
+    # The 0.20.0 advice to fight through MCP keystrokes is gone.
+    assert "send one keyboard macro" not in _ref("testing-debugging.md")
+    # A forge that teaches InputAction:Fire as the route would teach a deprecated call.
+    for name in ("testing-debugging.md", "sharp-edges.md"):
+        for line in _ref(name).splitlines():
+            if "InputAction:Fire" in line:
+                assert "deprecated" in line.lower() or "deprecated" in _ref(name), (name, line)
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed, %d skipped" % (len(PASS), len(FAIL), len(SKIPPED)))
     for name, why in SKIPPED:

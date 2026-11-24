@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.21.0 - 2026-11-24
+
+Lessons from the second production project's latest work: proving multiplayer, input-driven and
+long-timer behaviour inside one Studio window, an active ragdoll on the current avatar joints, state that
+every server shares, and current API facts. Every API member named was re-checked against the
+creator-docs cache; where that project uses a call the reference now marks deprecated, the forge teaches
+the replacement.
+
+### Added
+- `testing-debugging.md`: proving it in one Studio instance - QA slots that make the owner's save
+  impossible to wipe from a test, puppets (services take a player or an actor) for multi-party tests with
+  conserved-totals checks, a Pilot bot that plays through scriptable input bindings and `Player:Move`,
+  careful and reckless policies as a difficulty oracle, a game Clock a suite can advance, fixtures that
+  outlive the test script, and the cheapest-first proof ladder.
+- `animation.md`: an active ragdoll on force-based `AnimationConstraint`s with measured torques, throwing
+  the whole body, socket friction, root collision, rising from where the body lies, `IKControl` on
+  constraint rigs.
+- `persistence.md`: world facts every server must agree on - one `UpdateAsync` as the only atomic step,
+  deltas, request ids in an applied ring, MemoryStore leases, messages as hints, per-key budgets, a port
+  with three injected faults.
+- `development-loop.md`: delegating build work without collisions.
+- `studio-mcp.md`: `execute_luau` in Edit has plugin rights (a multi-client test opens windows on the
+  owner's screen), a scripted camera ignores capture camera arguments in Play, sharing one Studio.
+- `current-engine.md`: `InputBinding:Fire` on a `Scriptable` binding replaces the deprecated
+  `InputAction:Fire`; `AnalyticsService` `Log*` replaces the deprecated `Fire*` (with the event limits);
+  SLIM level of detail and which avatars it covers; `EditableMesh` publish switch; `AudioPlayer`
+  regions; `Players.MaxPlayers` is read-only; teleport data is client-visible.
+- Trap lint T046 (`docs`): deprecated `AnalyticsService:Fire*` and `InputAction:Fire`.
+
+### Changed
+- `sharp-edges.md`: the camera-boom entry now also fades the non-collidable canopy it ignores (it still
+  hid the hero); new entries for player-owned physics, input actions that do not walk, a reference named
+  like a function, and selene lagging the engine.
+- The 0.20.0 advice to drive fights through MCP keystrokes is replaced by staging plus a Pilot.
+
+### Fixed
+- `rbforge agents connect` wrote `sys.executable` into agent configs; run from an app's private venv the
+  MCP server died when the app replaced that venv. It now writes `UABS_PYTHON`, else the base interpreter
+  behind a venv, else `sys.executable` (field report).
+
 ## 0.20.0 - 2026-11-18
 
 Field lessons from a second, independent production project (an action RPG): engine traps it measured

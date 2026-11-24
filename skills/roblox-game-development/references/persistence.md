@@ -60,6 +60,37 @@ Frequently changing cross-server state (matchmaking queues, live leaderboards, s
 in MemoryStore, not a persistent data store. Check current quotas in the official docs
 (`rb_docs_search "MemoryStore"`).
 
+### World facts every server must agree on
+
+Guild treasuries, market stock, a war's front, a season: small documents many servers change. A
+pattern from a second production project (its specs pass under Lune with injected faults, 2026-11):
+
+- **The only atomic step is one `UpdateAsync` on one key.** Build everything on that; never read,
+  modify and `SetAsync`.
+- **Deltas, never overwrites.** The update function applies `stock.iron += 12` to whatever is stored
+  when it runs, so two servers' changes both land. It must be pure: `UpdateAsync` may call it more
+  than once.
+- **A change that must happen once carries a request id**, written into the document's `applied`
+  ring (the last 64 ids) in the same update. A resend, a retry after a lost acknowledgement, or a
+  second server replaying the request finds the id and changes nothing. A call without an id is not
+  retried, because the caller cannot know whether it landed.
+- **Leases for "one server does this job":** `MemoryStoreHashMap:UpdateAsync(key, fn, expiration)`
+  claims a name with an expiry (at most 45 days; keep it short and renew).
+- **Messages are hints.** `MessagingService` delivery is best effort and not guaranteed, a message is
+  at most 1 kB, and publish/subscribe rates scale with servers and players
+  (`cloud-services/cross-server-messaging.md`). Batch hints, let every server re-read a document when
+  its cached copy is older than a bound (30 s), and never wait on another server.
+- **Know the per-key budget.** Data store writes are limited per key per minute (4 MB of writes and
+  25 MB of reads in the last 60 s, each request rounded up to 1 KB; `UpdateAsync` spends from both):
+  a hot shared document needs batching, not one write per player action
+  (`cloud-services/data-stores/error-codes-and-limits.md`).
+- **Every outside call goes through a port.** The same module runs on Roblox services in a server
+  and on an in-memory port under Lune and in a Studio QA slot. The memory port can be told to fail a
+  call, to commit and then lose the acknowledgement, and to run the update function twice; every
+  service built on it has a spec that uses all three.
+- **Slot test documents.** In Studio tests, suffix keys with the QA slot (`kind/id@slot`) and use a
+  dev store name, so a test war never touches the live world (`testing-debugging.md`).
+
 ## Session locking: ProfileStore
 
 One server holding a player's data at a time is the assumption every simple save loop makes. It

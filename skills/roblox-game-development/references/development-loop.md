@@ -59,3 +59,24 @@ Before adding a major system, answer:
 - Can the new loop be tested in under a few minutes?
 
 If the previous loop is still broken, do not expand.
+
+## Delegating build work (second production project, 2026-11)
+
+A long project goes faster when cheaper agents take the work they can finish from a complete brief,
+and slower when they collide. What held up:
+
+| Work | Hand it to | The brief carries |
+|---|---|---|
+| "Where is X used?", call sites before a refactor | a search agent | the names, the folders, "paths and line numbers only" |
+| an API, limit or release note to look up | a research agent | the exact question, the primary sources allowed; the answer is recorded with its source |
+| a pure-rules module and its Lune spec from a written spec section | a build agent | the spec section, the file paths, an existing rules module as the shape, the spec command to pass; "do not touch Studio" |
+| content tables, Blender pack scripts, receipts and changelog text | a cheaper agent | the source section, the type or schema it must satisfy, the command that checks it |
+| anything that calls Studio: push, Play, suites, captures, builders, `save_place` | the main session, one call at a time | - |
+| a service, its remote handler and its live suite; tuning; a red suite | the main session | - |
+
+- Workers get disjoint paths and never the integrator's files (the loader's service list, the remote
+  registry, the profile schema, the suite manifest, the asset id table).
+- A worker returns a diff plus the command that proves it; the main session runs that command itself
+  before accepting.
+- There is one Studio and one operator: nothing that touches Studio is delegated or run in parallel.
+- If delegation fails (a provider out of credits did, once), do the work inline and move on.

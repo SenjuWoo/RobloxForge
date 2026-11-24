@@ -77,6 +77,36 @@ More measured in a second production project (live 2026-11):
   costs a boot per guess. Seen from the front, screen-right is the rig's -X: place the sheet's
   rigs at negative X in order or it reads reversed.
 
+### Active ragdoll on the same joints (live 2026-11, same project)
+
+`AnimationConstraint` has `IsKinematic`, `MaxTorque`, `MaxForce`, `AngularDamping`, `LinearDamping`
+and `Transform`. Kinematic, a joint follows the animator exactly. With `IsKinematic = false` it becomes
+a motor that pulls its limb toward `Transform` with at most `MaxTorque`, while gravity, the ground and
+whatever hit the body pull the other way. That gives a knockdown that is neither a canned clip nor a sack
+of limbs: the body is thrown, and each frame code picks what the muscles try (arms toward the fall,
+curled while tumbling, loose at rest) and scales every torque by one `tone` value that drains to 0 on
+death.
+
+- Measured in that rig: at `MaxTorque` 150 a shoulder and a knee held their pose through a fall; at 40
+  they hung. Trunk and hips need more than wrists: keep a torque per joint in a config table.
+- **Throw the whole body.** Loose, every limb is its own assembly: 26 studs/s given to the torso alone
+  carried the body 1.4 studs, because the torso is a seventh of the weight. Give every part the same
+  velocity change, plus a turn about the axis that tips it the way it is going.
+- **Stiff sockets make a statue.** With the `BallSocketConstraint`s' `MaxFrictionTorque` as built, a
+  body with no muscle at all stayed upright after an 11 studs/s shove. Scale it down when the body goes
+  down (keep the original in an attribute to restore on rise).
+- **A solid box at the root lands on a brick and stops dead.** On going limp: limbs `CanCollide = true`,
+  the root `CanCollide = false`, `Humanoid.PlatformStand = true`, `AutoRotate = false`.
+- **Boxes slide where flesh rolls.** A body of boxes stops on a stair it should tumble down; carrying it
+  over an edge that falls away ahead of its motion makes each tread a real fall.
+- **Rise from where it lies.** Solve the standing root from the lying pose (on its back it rises facing
+  its feet) and blend the joints from their current transforms, so nothing jumps on the first frame.
+- **Who runs it:** the side that simulates the body. The server for creatures and puppets, the owning
+  client for a player's character (sharp-edges: the server's impulse would be overwritten).
+- `IKControl` accepted this rig's parts (`ChainRoot = RightUpperArm`, `EndEffector = RightHand`) on
+  `AnimationConstraint` joints, although its reference page is worded for `Motor6D` and `Bone`. Prove
+  the solve moves the arm in Play before building on it.
+
 ## The additive layer
 
 `Transform` is written by the Animator each frame; multiplying it afterwards in

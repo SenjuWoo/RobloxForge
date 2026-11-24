@@ -167,6 +167,17 @@ look_at_position = look)`. A screenshot you did not look at is not evidence.
   alongside made MCP calls time out. Run one heavy job at a time and render previews only when needed.
 - **Read the console filtered.** `get_console_output` can return thousands of asset-load lines; in Play,
   `LogService:GetLogHistory()` filtered by message type or text (probe `console`) is the usable view.
+- **`execute_luau` in Edit runs with plugin rights.** `StudioTestService` methods are callable from it:
+  `ExecuteMultiplayerTestAsync(2, ...)` returned `ok=true` and opened a server window plus one window per
+  client. That is the owner's screen: do not start a multi-client test, a Team Test or a second Studio
+  without asking. Puppets and QA slots (`testing-debugging.md`) prove multi-party behaviour in one window.
+- **A scripted camera ignores `screen_capture`'s camera arguments in Play.** A game that sets the camera
+  every frame overwrites them. In Play, stage the character where the game's own camera sees the subject,
+  or give the camera controller a Studio-only override attribute it honours; camera arguments work in Edit.
+- **One Studio, one operator.** When another agent or the owner is working in the place, a live call from
+  you takes their MCP connection, and Play/Stop changes their session. Verify offline instead, or wait;
+  never kill a Studio process you did not start. Select the instance by place id from
+  `list_roblox_studios`, not by a remembered session id: session ids change between launches.
 
 ## Subagents
 

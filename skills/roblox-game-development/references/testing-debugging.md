@@ -233,12 +233,74 @@ defaults to 120.
   ("run 2 of 2": the new session loads it and compares). Stop and start Play between two manifest
   runs. Anything that resets the profile between the runs destroys the mark, so the evidence needs
   two consecutive runs.
-- **Stage scenes for real-input runs.** A hand-driven (MCP keyboard) fight lost every time the
-  hero idled inside an enemy camp's sight while tool calls arrived: dead in about ten seconds.
-  Keep stage scripts in `tools/stage/` that place the hero just out of sight, set the hour and
-  weather, and optionally narrow enemy sight in Studio only; then walk in with
-  `character_navigation` and send one keyboard macro. Order matters inside a stage too: a reset
-  that wipes the profile must run before the step that marks the tutorial skipped.
+- **Stage scenes, then let a bot play them.** A fight driven by MCP keystrokes is lost to tool-call
+  latency: a hero idling in an enemy camp's sight died in about ten seconds, and every later attempt
+  depended on timing the agent does not control. Keep stage scripts in `tools/stage/` (or named
+  stages in a dev service) that set the hour, the weather and the hero's spot, and say in their
+  output when they change difficulty. Then drive the scene with a Pilot (next section), not with
+  keystrokes. A stage is a fixture, never proof of the thing it shortcuts. Order matters inside a
+  stage too: a reset that wipes the profile must run before the step that marks the tutorial skipped.
+
+## Proving it in one Studio instance (second production project, live 2026-11)
+
+The owner of that project works in one Studio window and forbade anything that opens more: no
+`StudioTestService:ExecuteMultiplayerTestAsync`, no Test -> "Server & Clients", no second copy of the
+place. Everything below makes multiplayer, input-driven and long-timer behaviour provable inside the one
+Play session anyway. Ask the owner before opening windows; never assume.
+
+**QA slots: a disposable save that cannot touch the owner's.** A Studio-only attribute set in Edit
+before Play (`ServerStorage.QaSlot`) picks the save: `"mem"` reads and writes nothing (an in-memory
+store), `"t-<task>"` gives a fresh save that still persists across Play restarts, unset is the owner's
+own returning character. The refusal lives in the code every test goes through: with no slot set,
+`DataService.wipe` returns false and the dev reset returns nil, so no suite can replace the owner's
+save. Slot the shared-world documents the same way (a key suffix `@<slot>`), and refuse `save_place`
+while a slot or a stage's Edit changes are in the place.
+
+**Puppets: the second to eighth player.** Make services take a `Who`: a connected `Player` or an actor
+table with the same four fields services read (`UserId`, `Parent`, `Character`, how to message it) and
+an inbox in place of a client. A puppet then fights, trades, loots and dies through the same code path
+as a player, and what a client would have been sent lands in `actor.inbox` for the suite to assert.
+Drive a puppet by calling the function a remote handler calls after validation; prove the handler's
+validation separately with hostile arguments (wrong types, out of range, stale request id, another
+actor's id). Every multi-party feature gets: the happy path, each party cancelling at each step, one
+party leaving at each step, the same request twice, and a conserved-totals check (items and currency
+across every pack, mailbox and document before and after).
+
+**The Pilot: real input without a person.** A Studio-only client module that reads only what a player
+can see (positions, replicated state attributes, prompts) and acts only through the player's own
+routes:
+
+- buttons through the authored input actions: `InputBinding:Fire(state)` on a binding whose `Type` is
+  `Enum.InputBindingType.Scriptable` (`InputAction:Fire` is marked deprecated in the reference);
+- walking through `Player:Move(direction, relativeToCamera)` from a render step bound after the stock
+  control script. Measured: firing the `Move` action alone set its state and moved nobody (0.00 studs
+  in a second); `Player:Move` walked 19.0 studs;
+- looking through the look-stick action the camera already reads.
+
+It never calls a remote, a service or `Humanoid:MoveTo`. Give it policies: a careful one (guards what
+is telegraphed, parries what it can see, heals when hurt) and a reckless one (never defends). A fight
+only the careful policy wins is tuned right, one the reckless policy wins is too easy, one the careful
+policy loses three times in five is too hard - a difficulty oracle you can rerun at every commit. Know
+its limits (straight-line walking, weaker than a person against several enemies) and write them down.
+A client suite requires the Pilot from `PlayerScripts` and asks the server for fixtures through a
+Studio-only `RemoteFunction`.
+
+**A game Clock for anything longer than a minute.** Weather fronts, respawns, cooldowns, crops, jail
+terms: read `Clock.now()` (server time plus a skip held in a workspace attribute, so clients agree),
+never `os.clock()`. A suite calls `Clock.advance(86400)` instead of waiting a day. Keep animation and
+sky stamps on raw server time: they are measured in frames and must not jump. Without `game` (under
+Lune) the Clock keeps the skip in a local, so pure rules can be specced with time moving.
+
+**Fixtures that outlive the test.** Threads a `servertest` script starts die when it reports (see the
+cleanup rule above). A fixture that must keep running (enemies thrown down a stair every nine seconds,
+a staged event) lives in a dev service, driven from a connection the service owns, and the test only
+asks for it by name.
+
+**The proof ladder, cheapest first:** Lune spec (pure rules, shared state on an in-memory port, the
+Clock advanced) -> server suite with puppets -> client suite with the Pilot -> capture inspected ->
+the owner plays it. Use the cheapest rung that can actually fail for the thing claimed. A receipt
+names the commit it proved; a small script can refuse a receipt whose `src`/`tests` files differ
+between that commit and `HEAD`.
 
 ## Place test units at their own level
 

@@ -92,6 +92,9 @@ _LINE_RULES = [
     ("T036", r"HttpService\s*:\s*(GetAsync|PostAsync|RequestAsync)|:(GetAsync|PostAsync|RequestAsync)\s*\(\s*[\"']https?:",
      "client", "high", "docs", "HttpService requests only work on the server",
      "ask the server through a remote; never ship a URL or key to the client", REF + "architecture.md"),
+    ("T046", r"\b\w*[Aa]nalytics\w*\s*:\s*Fire(Event|CustomEvent|InGameEconomyEvent|PlayerProgressionEvent|LogEvent)\s*\(",
+     "any", "low", "docs", "AnalyticsService Fire* methods are deprecated",
+     "LogCustomEvent / LogEconomyEvent / LogProgressionEvent / LogFunnelStepEvent", REF + "current-engine.md"),
 ]
 _LINE_RULES = [(i, re.compile(p), s, sev, ev, w, f, r) for i, p, s, sev, ev, w, f, r in _LINE_RULES]
 
@@ -117,6 +120,10 @@ _LOAD_FAILURE_HANDLED = re.compile(
     r"\berror\s*\(|(?i:\bretr(y|ies)\b|load_?failed)|StartSessionAsync|\bProfileStore\b|\bProfileService\b")
 _CHARACTER_READ = re.compile(r"\.Character\b(?!Added|Removing|AutoLoads|Appearance)")
 # An attachment made without a parent argument; T045 then checks the order of its first writes.
+# `:Fire(` on something named like an input action. A call that returns one (`Input.action(name)`) always
+# counts; a bare variable (`jumpAction`) only in a file that uses the Input Action System, since
+# BindableEvents are fired the same way.
+_ACTION_FIRE = re.compile(r"\b\w*[Aa]ction\w*(\([^()]*\))?\s*:\s*Fire\s*\(")
 _ATTACH_NEW = re.compile(r"(?<![.\w])(\w+)\s*(?::\s*\w+\s*)?=\s*Instance\.new\(\s*[\"']Attachment[\"']\s*\)")
 
 
@@ -268,6 +275,14 @@ def scan_text(rel, text):
             "guard the handler (RunService:IsStudio() or a creator/group check) or delete the remote",
             REF + "security-networking.md")
 
+    uses_input_actions = re.search(r"\bInput(Action|Context|Binding)\b", code) is not None
+    for m in _ACTION_FIRE.finditer(code):
+        if m.group(1) or uses_input_actions:
+            add("T046", "low", line_of(m.start()),
+                "InputAction:Fire is deprecated",
+                "add an InputBinding with Type = Enum.InputBindingType.Scriptable and call binding:Fire(state)",
+                REF + "current-engine.md")
+
     # Placement: world coordinates written to an unparented attachment are stored as its local offset.
     for m in _ATTACH_NEW.finditer(code):
         name = re.escape(m.group(1))
@@ -293,7 +308,7 @@ def catalog():
     out.update({"T003": "live", "T004": "field", "T011": "docs", "T013": "docs", "T014": "live",
                 "T022": "live", "T023": "live", "T024": "live", "T037": "docs", "T038": "docs",
                 "T039": "docs", "T040": "docs", "T041": "docs", "T042": "docs", "T043": "docs",
-                "T044": "docs", "T045": "live"})
+                "T044": "docs", "T045": "live", "T046": "docs"})
     return dict(sorted(out.items()))
 
 

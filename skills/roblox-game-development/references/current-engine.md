@@ -22,6 +22,8 @@ the API.
 | `Humanoid:LoadAnimation` | `Animator:LoadAnimation` | `animation.md` |
 | `Player:LoadCharacter()` | `Player:LoadCharacterAsync()` | the reference marks the old one superseded |
 | `Mouse.KeyDown`, `GetMouse()` for keys | `UserInputService` with `gameProcessed`, or the Input Action System | |
+| `InputAction:Fire(state)` to press an action from code | `InputBinding:Fire(state)` on a binding with `Type = Enum.InputBindingType.Scriptable` | the reference marks `InputAction:Fire` deprecated; firing an `Automatic` binding throws |
+| `AnalyticsService:FireEvent`, `FireCustomEvent`, `FireInGameEconomyEvent`, `FirePlayerProgressionEvent`, `FireLogEvent` | `LogCustomEvent`, `LogEconomyEvent`, `LogProgressionEvent`, `LogFunnelStepEvent`, `LogOnboardingFunnelStepEvent` | all five `Fire*` are tagged deprecated |
 | `Instance:Remove()` | `Instance:Destroy()` | |
 | `game.Workspace`, `game.Players` | `workspace`, `game:GetService("Players")` | |
 | `pairs()` / `ipairs()` everywhere | `for key, value in tbl do` | generalized iteration; the old forms still work |
@@ -55,7 +57,23 @@ the API.
 - **ConfigService** - live, per-experience configuration values that can change without publishing.
   `rb_docs_read production/configs.md`.
 - **EditableImage / EditableMesh** - runtime pixel and vertex editing; permission-gated and
-  memory-heavy, so read the limits first.
+  memory-heavy, so read the limits first. `AssetService:CreateEditableMeshAsync` loads only assets the
+  owner or the player owns, and fails by default in a published game until it is enabled in
+  Experience Settings: that switch is an owner step, so plan a fallback.
+- **SLIM level of detail** - `Model.LevelOfDetail = Enum.ModelLevelOfDetail.SLIM` on a static model
+  keeps an engine stand-in visible after the model streams out and merges draw calls up close. It
+  needs streaming, a place saved to Roblox and Team Create; not for models that move, animate or hold
+  a `Humanoid`. SLIM avatars (`Workspace.EnableSLIMAvatars`) cover player characters on a standard
+  or advanced R15 rig, including a `StarterCharacter`; NPCs (even on an R15 rig) and R6 are excluded.
+  `rb_docs_read workspace/streaming/slim.md`.
+- **AnalyticsService `Log*` methods** - custom, economy, progression and funnel events. Limits from
+  the docs: 100 custom event names an experience, three custom fields an event
+  (`Enum.AnalyticsCustomFieldKeys.CustomField01..03`, string values), 8,000 distinct field
+  combinations. Keep event names in one module; never put a player or item id in a field.
+- **AudioPlayer regions** - `PlaybackRegion` and `LoopRegion` play or loop a slice of one asset, so
+  several cues can live in one uploaded file (audio uploads are counted per month).
+- **Players.MaxPlayers is read-only in scripts** - server size is set per place on the Creator
+  Dashboard, not in code.
 - **Parallel Luau** - `Actor`, `task.desynchronize`, `ConnectParallel`, `SharedTableRegistry`. Level C
   in `optimization-levels.md`: only with a profile that shows a script bottleneck.
 - **Luau language** - `--!strict` typing, `buffer` and `vector` libraries, `if ... then ... else`
@@ -78,9 +96,17 @@ the API.
 - A data store call can fail; a failed read is not a new player (`persistence.md`).
 - `PlayerAdded` and `CharacterAdded` miss what already exists.
 - Nothing done in Play survives Stop; nothing built by a script at runtime is saved.
+- Teleport data set with `TeleportOptions:SetTeleportData` reaches the client and the client can change
+  it: never carry currency, items or authority in it.
+
+Members and deprecation tags added on 2026-11-24 were read from the cache at `a23352b`:
+`InputAction:Fire` (deprecated), `InputBinding:Fire`, `Enum.InputBindingType`, the `Log*` and
+deprecated `Fire*` methods, `AudioPlayer.PlaybackRegion` / `LoopRegion`, `Model.LevelOfDetail`,
+`Enum.ModelLevelOfDetail.SLIM`, `CreateEditableMeshAsync`, `Players.MaxPlayers` (ReadOnly),
+`SetTeleportData`, `Player:Move`.
 
 Checked classes: InputContext, InputAction, InputBinding, AnimationConstraint, IKControl, UIFlexItem,
 CanvasGroup, UIDragDetector, StyleSheet, StyleRule, Path2D, DragDetector, ConfigService,
 EditableImage, EditableMesh, Actor, SharedTableRegistry, AudioTextToSpeech, AudioPlayer,
 AudioEmitter, AudioListener, Wire, TextChatService, LinearVelocity, AlignOrientation, AlignPosition,
-VectorForce, Animator.
+VectorForce, Animator, AnalyticsService, AssetService, TeleportOptions.

@@ -62,7 +62,29 @@ def _forge_argv():
     `\\U` in `C:\\Users` is a unicode escape that bricks codex's config)."""
     from . import paths
     script = os.path.join(paths.REPO_ROOT, "mcp_server", "server.py")
-    return [sys.executable or "python", script.replace("\\", "/")]
+    return [_stable_python().replace("\\", "/"), script.replace("\\", "/")]
+
+
+def _stable_python():
+    """An interpreter that outlives the process that wrote the config.
+
+    The MCP server is stdlib-only, so any Python 3 runs it. `sys.executable` alone pinned whatever
+    launched `connect`: run from an agent app's private venv it wrote that venv's python.exe into the
+    agent config, the app replaced the venv on its next update and the server went dead (field report,
+    2026-11-23). Order: UABS_PYTHON (the machine's shared runtime), the base interpreter behind a venv,
+    then sys.executable.
+    """
+    shared = os.environ.get("UABS_PYTHON")
+    if shared and os.path.isfile(shared):
+        return shared
+    if sys.prefix != sys.base_prefix:
+        base = getattr(sys, "_base_executable", None)
+        if base and os.path.isfile(base) and os.path.normcase(base) != os.path.normcase(sys.executable or ""):
+            return base
+        for cand in (os.path.join(sys.base_prefix, "python.exe"), os.path.join(sys.base_prefix, "bin", "python3")):
+            if os.path.isfile(cand):
+                return cand
+    return sys.executable or "python"
 
 
 def _toml_block(name, argv):

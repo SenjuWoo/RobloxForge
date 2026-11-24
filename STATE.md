@@ -10,12 +10,15 @@ claim checkable.
 
 ## Version
 
-0.20.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.21.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 ## What is proven, and how
 
 | Area | Evidence |
 |---|---|
+| Field lessons (0.21.0) | from the second production project's specs, builder guide, platform research, receipts and source headers (2026-11-19..24, read-only; another session was working in it). Every API member named re-read from the creator-docs cache at `a23352b` (presence and Deprecated/ReadOnly tags); doc-page claims (SLIM requirements and avatar scope, analytics limits, EditableMesh publish switch, messaging best effort, data store per-key budget, 45-day MemoryStore expiry, teleport data) checked in the cached pages; one claim corrected against them (SLIM avatars include StarterCharacter, exclude NPCs). No live Studio run: the owner's only Studio instance was in use |
+| T046 (0.21.0) | fixtures incl. a BindableEvent control; run read-only over the production project: 12 hits, all real `InputAction:Fire` calls |
+| Agent connect interpreter (0.21.0) | fixtures: UABS_PYTHON wins, a missing one is ignored, inside a venv the base interpreter is written even when `_base_executable` reports the venv, outside a venv `sys.executable` stays; TOML keeps forward slashes |
 | Field lessons (0.20.0) | from a second production project's VALIDATION/STATE, commits and session notes; new engine claims (`RaycastParams.CollisionGroup`/`RespectCanCollide`, `BasePart.RootPriority`, `PreloadAsync` takes instances) checked against the creator-docs cache; a docs test asserts each lesson is present and the contradicted 180-degree yaw tip is gone |
 | `world-audit` probe (0.20.0) | parses and typechecks (luau-lsp, Roblox definitions); live 2026-11-18 on a disposable place with planted faults: Floater (20 studs up), Crate inside Wagon (100%), CableEnd 100 studs from its post all reported; controls quiet (sign hung on a wall, box beside a 45-degree thin wall), skipped ShieldRail listed; on the whole place it exposed the scaffold's buried spawn (fixed, re-run clean) |
 | T045 (0.20.0) | positive/negative fixtures incl. comparison and reassignment; the bug itself reproduced live: an attachment given `WorldCFrame` before its parent landed 240 studs (then 100 after the fixture moved) from its post |
@@ -30,7 +33,7 @@ claim checkable.
 | CLI surface | `check <path>`, `check --root <path>` and `check <path> --scope static` are run from a cwd that is **not** the project, and each report's `root` and `rungs_run` are asserted; a positional/`--root` conflict exits 2 (tests `cli: ...`) |
 | Luau semantic examples | extracted from `typing-luau.md` and re-analysed by pinned luau-lsp 1.70.1; CI job `luau-semantics` runs them with `RBFORGE_REQUIRE_LUAU_LSP=1` |
 | Diagnostic map | keyed by the whole project-relative path, so `src/Server/init.luau` and `tests/Server/init.luau` are two files; containment is `commonpath`, so a sibling `proj2` is not inside `proj` (tests `check: same-named files at different depths...`, `check: a sibling directory...`) |
-| Offline gate (`check`, traps, probes, review) | 242 automated tests + fixture projects |
+| Offline gate (`check`, traps, probes, review) | 245 automated tests + fixture projects |
 | Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
 | Push guard (0.17.0) | the exact push code is executed under Lune against `tests/lune/mock_datamodel.luau`: new script, first push (backup), unchanged ledger (no backup), Studio edit (`CONFLICT`, source untouched), `force` (backup + write), other place (first-push rules); Luau stamp equals Python `adler` |
 | MCP wire | negotiation (2025-06-18/2025-03-26/2024-11-05), parse error -32700, non-object arguments -32602, annotations on every tool, catalog <= 10,800 chars (19 tools) |
@@ -77,6 +80,10 @@ claim checkable.
    through the documented API.
 
 ## Done (verified)
+
+- 0.21.0 (2026-11-24): one-instance QA (QA slots, puppets, Pilot, Clock, proof ladder), active ragdoll,
+  shared world state, delegation, current APIs (`InputBinding:Fire`, `Log*` analytics, SLIM), lint
+  T046, camera-boom entry corrected, field report closed (agents connect interpreter). 245 tests.
 
 - 0.20.0 (2026-11-18): field lessons from a second production project (PLAN.md; previous plan in
   `docs/archive/PLAN-0.19.0.md`). New `world-audit` probe, lint T045, push refuses during Play
@@ -302,6 +309,9 @@ rbforge.cmd <command>              # same CLI, from the checkout
 ```
 
 ## Log
+
+- 2026-11-24 — 0.21.0: field lessons (one-instance QA, ragdoll, shared state, APIs), T046,
+  agents connect interpreter fix; 245 tests; offline only (Studio in use by another session).
 
 - 2026-11-18 — 0.20.0: field lessons from a second production project; world-audit probe, T045,
   push refuses during Play, scaffold dev place fix; 242 tests; probe and push refusal proven live.
