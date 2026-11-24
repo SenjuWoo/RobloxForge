@@ -83,7 +83,7 @@ claim checkable.
 
 - 0.21.0 (2026-11-24): one-instance QA (QA slots, puppets, Pilot, Clock, proof ladder), active ragdoll,
   shared world state, delegation, current APIs (`InputBinding:Fire`, `Log*` analytics, SLIM), lint
-  T046, camera-boom entry corrected, field report closed (agents connect interpreter). 245 tests.
+  T046, camera-boom entry corrected, field report closed (`rbforge agent connect` interpreter). 245 tests.
 
 - 0.20.0 (2026-11-18): field lessons from a second production project (PLAN.md; previous plan in
   `docs/archive/PLAN-0.19.0.md`). New `world-audit` probe, lint T045, push refuses during Play
@@ -311,7 +311,11 @@ rbforge.cmd <command>              # same CLI, from the checkout
 ## Log
 
 - 2026-11-24 — 0.21.0: field lessons (one-instance QA, ragdoll, shared state, APIs), T046,
-  agents connect interpreter fix; 245 tests; offline only (Studio in use by another session).
+  `rbforge agent connect` interpreter fix; 245 tests; offline only (Studio in use by another session).
+  Released v0.21.0 from 8bc6095 (CI green on dec6642 and 8bc6095; 0 open Dependabot, code-scanning
+  and secret-scanning alerts). Published zip sha256-verified (79faa378...727aae), `smoke_artifact.py`
+  OK from the extracted asset (25 skills, 19 MCP tools); skills `current` in every agent root (350);
+  `rbforge doctor --no-probe` reports v0.21.0 (the probe was skipped to leave the busy Studio alone).
 
 - 2026-11-18 — 0.20.0: field lessons from a second production project; world-audit probe, T045,
   push refuses during Play, scaffold dev place fix; 242 tests; probe and push refusal proven live.

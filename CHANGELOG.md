@@ -36,7 +36,7 @@ the replacement.
 - The 0.20.0 advice to drive fights through MCP keystrokes is replaced by staging plus a Pilot.
 
 ### Fixed
-- `rbforge agents connect` wrote `sys.executable` into agent configs; run from an app's private venv the
+- `rbforge agent connect` wrote `sys.executable` into agent configs; run from an app's private venv the
   MCP server died when the app replaced that venv. It now writes `UABS_PYTHON`, else the base interpreter
   behind a venv, else `sys.executable` (field report).
 
