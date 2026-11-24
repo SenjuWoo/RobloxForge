@@ -325,7 +325,10 @@ rbforge.cmd <command>              # same CLI, from the checkout
 ## Log
 
 - 2026-11-24 — 0.22.0: streaks, failure forensics, run ledger, 41-tool MCP surface, starter refusal
-  reasons, field lessons from a production milestone (read-only). Offline only. Run ledger and failure
+  reasons, field lessons from a production milestone (read-only). Offline only; 258 tests.
+  Released v0.22.0 from 59f9be2 (CI green on d22a96e and 59f9be2, CodeQL green; 0 open Dependabot,
+  code-scanning, secret-scanning alerts; asset sha256 1e8e28de...e197 verified, smoke OK; 355 skill
+  installs current; doctor v0.22.0, 41 MCP tools). Run ledger and failure
   logs live in `RBFORGE_HOME/runs/` (`%LOCALAPPDATA%\RobloxForge\runs`).
 - 2026-11-24 — 0.21.0: field lessons (one-instance QA, ragdoll, shared state, APIs), T046,
   `rbforge agent connect` interpreter fix; 245 tests; offline only (Studio in use by another session).
