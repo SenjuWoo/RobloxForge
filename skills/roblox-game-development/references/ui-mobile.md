@@ -55,7 +55,7 @@ shared state. It is a dependency with its own failure modes; do not add one for 
   or typing in chat fires the ability.
 - Actions that need rebinding, touch buttons and gamepad from one definition: the **Input Action
   System** (`InputAction`, `InputBinding`, `InputContext` instances) is the current engine route;
-  read `skill "rbx-input-action-system"` or `rb_docs_read input/input-action-system.md` before
+  read the `rbx-input-action-system` skill (`get_roblox_skill`) or `rb_docs_read input/input-action-system.md` before
   writing it. `ContextActionService:BindAction` still runs and is what most existing code uses, but
   the official reference marks it as planned for deprecation in favour of the Input Action System.
 - Show the right glyph: check `UserInputService.PreferredInput` (or `GetLastInputType`) rather than
@@ -70,7 +70,7 @@ shared state. It is a dependency with its own failure modes; do not add one for 
 
 ## Device verification
 
-If the Studio MCP exposes `skill`, use `rbx-device-simulator-lua` for form-factor checks: phone
+If the Studio MCP exposes `get_roblox_skill`, use `rbx-device-simulator-lua` for form-factor checks: phone
 portrait and landscape, tablet, desktop, console focus. If it is not available, say so and use the
 Studio device emulator by hand. Do not claim a device test that did not happen.
 

@@ -195,7 +195,7 @@ light and a consequence. Pattern used for an anchored blast gate:
 `Workspace.StreamingEnabled` is on by default in new places and is a Studio
 property, not something a script can set. Keep it on for any large map and
 write client code that tolerates parts that have not arrived. For an old place
-that has it off, load `skill "rbx-convert-to-streaming"` first (streaming
+that has it off, load the `rbx-convert-to-streaming` skill first (streaming
 targets, `Model.ModelStreamingMode`, persistence): turning it on without
 reading that is how "my script cannot find the part" bugs happen.
 

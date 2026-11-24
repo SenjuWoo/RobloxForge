@@ -10,12 +10,19 @@ claim checkable.
 
 ## Version
 
-0.21.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.22.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+
+NEXT ACTION: first live use of `servertest --repeat N --restart` (a place the owner says may be restarted;
+Shattered Nations' R03 streak is the intended first run), then record what `get_console_output` held
+for a failed Client run in the proven table. PLAN.md (0.22.0) rows S1-R3.
 
 ## What is proven, and how
 
 | Area | Evidence |
 |---|---|
+| Streaks / forensics / run ledger (0.22.0) | offline only: a session double whose `get_studio_state`, `start_stop_play` and `get_console_output` answer in the formats read live on 2026-11-24 (Edit `Available DataModels: Edit`, console plain text, oldest first, no timestamps). Tests: restart order from Edit and from Play, the failed run's console sliced at its marker (earlier runs and older noise excluded), Play untouched after a failure, keep-going counts, a Play that never comes up (`RBF-PLAY-003`), unreadable state refused before any Stop, execute_luau errors become `error` outcomes with console, ledger rates/streaks/torn lines, git sha + dirty flag, CLI round trip under an isolated home. **No live run**: the only Studio holds the owner's production place |
+| Studio MCP surface (0.22.0) | live `tools/list` 2026-11-24 (read-only, Edit mode): 41 tools; `get_roblox_skill`/`list_roblox_skills` replace `skill`/`list_skills`; new `video_capture`, `list_plugin_actions`, `open_plugin`; `list_roblox_skills` returned 17 `rbx-*` skills. A docs test fails on any old name taught as current |
+| Starter refusal reasons (0.22.0) | scaffold gate (StyLua, selene, luau-lsp strict) passes with `(boolean, string?)` returns; the extended live starter test has not run in Studio |
 | Field lessons (0.21.0) | from the second production project's specs, builder guide, platform research, receipts and source headers (2026-11-19..24, read-only; another session was working in it). Every API member named re-read from the creator-docs cache at `a23352b` (presence and Deprecated/ReadOnly tags); doc-page claims (SLIM requirements and avatar scope, analytics limits, EditableMesh publish switch, messaging best effort, data store per-key budget, 45-day MemoryStore expiry, teleport data) checked in the cached pages; one claim corrected against them (SLIM avatars include StarterCharacter, exclude NPCs). No live Studio run: the owner's only Studio instance was in use |
 | T046 (0.21.0) | fixtures incl. a BindableEvent control; run read-only over the production project: 12 hits, all real `InputAction:Fire` calls |
 | Agent connect interpreter (0.21.0) | fixtures: UABS_PYTHON wins, a missing one is ignored, inside a venv the base interpreter is written even when `_base_executable` reports the venv, outside a venv `sys.executable` stays; TOML keeps forward slashes |
@@ -80,6 +87,11 @@ claim checkable.
    through the documented API.
 
 ## Done (verified)
+
+- 0.22.0 (2026-11-24): `servertest --repeat/--restart/--keep-going`, failure console capture
+  (`console_log`), per-project run ledger and `rbforge runs`, `rbforge --version`, starter refusal reasons
+  (`LastRefusal`), 41-tool Studio MCP reference with the renamed skill tools, streak/oracle/fixture/bot
+  lessons. Tests: see PLAN.md evidence.
 
 - 0.21.0 (2026-11-24): one-instance QA (QA slots, puppets, Pilot, Clock, proof ladder), active ragdoll,
   shared world state, delegation, current APIs (`InputBinding:Fire`, `Log*` analytics, SLIM), lint
@@ -305,11 +317,16 @@ python src\rbforge_cli.py audit <dir> [--json]      # existing project: ranked f
 python src\rbforge_cli.py new <dir> --genre shooter --premise "..."
 python tests\run_tests.py         # RBFORGE_TEST_ONLY=<substring> runs a subset locally
 python mcp_server\server.py        # stdio MCP, 19 tools
+python src\rbforge_cli.py servertest <file> --repeat 3 --restart   # live streak (needs Studio)
+python src\rbforge_cli.py runs --text                              # run ledger for the cwd's project
 rbforge.cmd <command>              # same CLI, from the checkout
 ```
 
 ## Log
 
+- 2026-11-24 — 0.22.0: streaks, failure forensics, run ledger, 41-tool MCP surface, starter refusal
+  reasons, field lessons from a production milestone (read-only). Offline only. Run ledger and failure
+  logs live in `RBFORGE_HOME/runs/` (`%LOCALAPPDATA%\RobloxForge\runs`).
 - 2026-11-24 — 0.21.0: field lessons (one-instance QA, ragdoll, shared state, APIs), T046,
   `rbforge agent connect` interpreter fix; 245 tests; offline only (Studio in use by another session).
   Released v0.21.0 from 8bc6095 (CI green on dec6642 and 8bc6095; 0 open Dependabot, code-scanning

@@ -1,13 +1,15 @@
 # Roblox-authored Assistant skills as specialist accelerators
 
-Roblox documents built-in Assistant skills maintained by Roblox. When the official
-Studio MCP exposes the `skill` capability, these can act like domain sub-agents for
-Hermes/Claude/Codex.
+Studio ships skills maintained by Roblox. When the official Studio MCP exposes
+`list_roblox_skills` and `get_roblox_skill`, they act like domain sub-agents for
+Hermes/Claude/Codex. Their old names, before Studio builds of late 2026:
+`list_skills` and `skill` (old names; a client still calling them gets "unknown tool").
 
 ## Route by problem
 
-Discover first: `list_skills` returns what this Studio build actually exposes.
-The set below was verified live on 2026-11-01 (14 skills).
+Discover first: `list_roblox_skills` returns what this Studio build exposes, with
+when to use each; a creator's own skills appear in the same list. The set below
+was verified live on 2026-11-24 (17 skills; 14 on 2026-11-01).
 
 | Need | Load |
 |---|---|
@@ -25,11 +27,14 @@ The set below was verified live on 2026-11-01 (14 skills).
 | enable streaming, fix streaming artifacts | `rbx-convert-to-streaming` |
 | accurate API/docs detail | `rbx-docs-search` |
 | authoring or editing a custom skill | `rbx-create-skill` |
+| import a Blender/Maya/FBX/glTF model through Open Cloud and verify it | `rbx-import-asset` |
+| products, passes, assets and settings through `open_cloud_invoke` | `rbx-open-cloud-usage` |
+| Open Cloud scopes, 403s, "not granted", HTTP allowlist, data store access | `rbx-permissions` |
 
 ## Usage policy
 
-1. `list_skills` first — never assume a name exists on this build.
-2. Load with `skill "rbx-..."` **before** writing the code it covers.
+1. `list_roblox_skills` first — never assume a name exists on this build.
+2. Load with `get_roblox_skill {"skill_name": "rbx-..."}` **before** writing the code it covers.
 3. Use normal Studio tools to implement the fix.
 4. Re-test with runtime evidence.
 5. Do not load every skill "just in case" — one per problem.

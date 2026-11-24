@@ -738,10 +738,15 @@ _TEST_HOSTS = {
 }
 
 
-def _server_test_code(src, attr, timeout, datamodel="Server", ready=None, grace=0.0, keep=False):
+def _server_test_code(src, attr, timeout, datamodel="Server", ready=None, grace=0.0, keep=False, marker=None):
     klass, parent = _TEST_HOSTS[datamodel]
     a = _quote(attr)
-    code = "workspace:SetAttribute(%s, nil)\nlocal t0 = os.clock()\n" % a
+    code = ""
+    if marker:
+        # The console has no timestamps and outlives runs; this line is where this run's output begins,
+        # so a failure keeps only what the run printed (console_since).
+        code += "print(%s)\n" % long_string(marker)
+    code += "workspace:SetAttribute(%s, nil)\nlocal t0 = os.clock()\n" % a
     if ready:
         rpath, rattr, rvalue = ready
         segs = ", ".join(_quote(x) for x in rpath)
@@ -808,8 +813,45 @@ def _check_test_args(attr, datamodel, grace):
         raise ForgeError("RBF-ARG-002", "grace %r is not a non-negative number of seconds" % (grace,))
 
 
+CONSOLE_FALLBACK_LINES = 200
+_CONSOLE_ERROR = re.compile(r"(?i)\berror\b|stack begin|\bexception\b|attempt to |script '[^']*', line \d+|"
+                            r"infinite yield|\bFAIL\b")
+
+
+def console_since(session, marker):
+    """What the Studio console printed from `marker` on: {text, found, tail, errors} or {error}.
+
+    `get_console_output` is plain text, oldest first, with no timestamps, and it outlives a run, so the
+    marker printed at the start of the run is the only reliable boundary. Without it (a console Studio
+    trimmed, or a run that died before printing) the last CONSOLE_FALLBACK_LINES lines are kept and
+    `found` says so.
+    """
+    try:
+        text = session.call("get_console_output", {"studio_id": session.studio_id}) or ""
+    except ForgeError as exc:
+        return {"error": "%s: %s" % (exc.code, exc.message)}
+    lines = text.splitlines()
+    start = None
+    if marker:
+        for i in range(len(lines) - 1, -1, -1):
+            if marker in lines[i]:
+                start = i
+                break
+    kept = lines[start:] if start is not None else lines[-CONSOLE_FALLBACK_LINES:]
+    meaningful = [ln.rstrip() for ln in kept if ln.strip() and (not marker or marker not in ln)]
+    errors = []
+    for ln in meaningful:
+        if _CONSOLE_ERROR.search(ln) and ln not in errors:
+            errors.append(ln)
+    return {"text": "\n".join(kept), "found": start is not None, "tail": meaningful[-15:], "errors": errors[:20]}
+
+
+def _run_id():
+    return "%s-%s" % (time.strftime("%Y%m%d-%H%M%S"), os.urandom(3).hex())
+
+
 def server_test(path, attr, timeout=120, studio_id=None, datamodel="Server", ready=None, grace=0.0,
-                keep=False, session=None):
+                keep=False, session=None, forensics=False):
     """Run a test file as a temporary Script in a running Play session, so it shares the game's module
     cache (execute_luau has its own). The test sets `attr` to "PASS ..." or "FAIL ..." on workspace or on
     its own Script.
@@ -818,6 +860,10 @@ def server_test(path, attr, timeout=120, studio_id=None, datamodel="Server", rea
     `path.Attribute=value` spec waited for before the test starts. Cleanup destroys the test Script,
     which kills every thread it started: `grace` waits that many seconds after the result first, and
     `keep` leaves the Script in place (stopping Play discards it).
+
+    `forensics=True`: the run prints a marker first; a run that does not pass reads the console before
+    returning (`console` in the result, see console_since), and an execute_luau error becomes an `error`
+    outcome instead of an exception, so a streak or suite keeps its evidence. Nothing is written to disk.
     """
     _check_test_args(attr, datamodel, grace)
     ready_spec = parse_ready(ready) if ready else None
@@ -836,15 +882,33 @@ def server_test(path, attr, timeout=120, studio_id=None, datamodel="Server", rea
                       'workspace:SetAttribute("%s", "PASS ...") or "FAIL ..." '
                       "(script:SetAttribute works too)" % attr,
         }
-    code = _server_test_code(src, attr, timeout, datamodel, ready_spec, float(grace), keep)
-    if session is not None:
-        out = session.luau(code, datamodel)
-    else:
-        with Session(studio_id, timeout=timeout + float(grace) + 30) as s:
-            preflight_play(s, (datamodel,))
+    run_id = _run_id()
+    marker = "[rbforge] run %s begins: %s" % (run_id, os.path.basename(path)) if forensics else None
+    code = _server_test_code(src, attr, timeout, datamodel, ready_spec, float(grace), keep, marker)
+
+    def go(s):
+        try:
             out = s.luau(code, datamodel)
-    first, outcome = _classify(out)
-    return {"test": path, "result": first, "outcome": outcome, "passed": outcome == "pass"}
+        except ForgeError as exc:
+            if not forensics:
+                raise
+            res = {"test": path, "result": "ERROR %s: %s" % (exc.code, exc.message), "outcome": "error",
+                   "passed": False}
+        else:
+            first, outcome = _classify(out)
+            res = {"test": path, "result": first, "outcome": outcome, "passed": outcome == "pass"}
+        if forensics:
+            res["run_id"] = run_id
+            if not res["passed"]:
+                # Read now: the next run, a restart or the agent's Stop would take this state away.
+                res["console"] = console_since(s, marker)
+        return res
+
+    if session is not None:
+        return go(session)
+    with Session(studio_id, timeout=timeout + float(grace) + 30) as s:
+        preflight_play(s, (datamodel,))
+        return go(s)
 
 
 def load_suite(manifest):
@@ -882,28 +946,145 @@ def load_suite(manifest):
     return out
 
 
-def run_suite(manifest, studio_id=None, report=None):
+def _run_entries(sess, suites, forensics=False, report=None):
+    """Every entry once in an open session; one broken entry is that entry's failure, not the run's."""
+    results = []
+    for suite in suites:
+        t0 = time.time()
+        try:
+            r = server_test(suite["file"], suite["attr"], suite["timeout"], datamodel=suite["datamodel"],
+                            ready=suite["ready"], grace=suite["grace"], keep=suite["keep"], session=sess,
+                            forensics=forensics)
+        except ForgeError as exc:
+            # One broken suite (a script error, a missing file) is that suite's failure, not the run's.
+            r = {"test": suite["file"], "result": "ERROR %s: %s" % (exc.code, exc.message),
+                 "outcome": "error", "passed": False}
+        r["name"] = suite["name"]
+        r["datamodel"] = suite["datamodel"]
+        r["seconds"] = round(time.time() - t0, 2)
+        results.append(r)
+        if report:
+            report("%-5s %s (%s, %.1fs) %s" % (r["outcome"].upper(), r["name"], r["datamodel"],
+                                               r["seconds"], r["result"]))
+            for line in ((r.get("console") or {}).get("errors") or [])[:5]:
+                report("      console: %s" % line)
+    return results
+
+
+def run_suite(manifest, studio_id=None, report=None, forensics=False):
     """Run every suite in one Studio session. `report(line)` gets one line per suite as it finishes."""
     suites = load_suite(manifest)
     longest = max(s["timeout"] + s["grace"] for s in suites)
-    results = []
     with Session(studio_id, timeout=longest + 30) as sess:
         preflight_play(sess, sorted({s["datamodel"] for s in suites}))
-        for suite in suites:
-            t0 = time.time()
-            try:
-                r = server_test(suite["file"], suite["attr"], suite["timeout"], datamodel=suite["datamodel"],
-                                ready=suite["ready"], grace=suite["grace"], keep=suite["keep"], session=sess)
-            except ForgeError as exc:
-                # One broken suite (a script error, a missing file) is that suite's failure, not the run's.
-                r = {"test": suite["file"], "result": "ERROR %s: %s" % (exc.code, exc.message),
-                     "outcome": "error", "passed": False}
-            r["name"] = suite["name"]
-            r["datamodel"] = suite["datamodel"]
-            r["seconds"] = round(time.time() - t0, 2)
-            results.append(r)
-            if report:
-                report("%-5s %s (%s, %.1fs) %s" % (r["outcome"].upper(), r["name"], r["datamodel"],
-                                                   r["seconds"], r["result"]))
+        results = _run_entries(sess, suites, forensics, report)
     failed = sum(1 for r in results if not r["passed"])
     return {"manifest": manifest, "suites": results, "passed": len(results) - failed, "failed": failed}
+
+
+# ------------------------------------------------------------------ streaks
+#
+# "Three passes in a row, Play restarted between runs" was done by hand: Stop, Play, wait, run, count.
+# A streak run owns that loop, and keeps the console of the run that broke it.
+
+_PLAY_DMS = {"Server", "Client"}
+
+
+def _modes(session):
+    return available_datamodels(session.call("get_studio_state", {"studio_id": session.studio_id}))
+
+
+def _wait_modes(session, want, what, timeout, poll):
+    deadline = time.time() + timeout
+    have = None
+    while True:
+        have = _modes(session)
+        if have is not None and want(have):
+            return have
+        if time.time() >= deadline:
+            raise ForgeError("RBF-PLAY-003", "Studio did not reach %s within %.0fs (available: %s)"
+                             % (what, timeout, ", ".join(sorted(have or ())) or "unknown"),
+                             hint="look at Studio: a dialog, a compile error or a long load can hold Play; "
+                                  "raise --play-timeout for a slow place")
+        time.sleep(poll)
+
+
+def restart_play(session, datamodels=("Server",), timeout=90.0, poll=0.5):
+    """Stop any running playtest, start a fresh one and wait until `datamodels` exist.
+
+    `start_stop_play` can answer before the datamodels are up, so the state is polled. Unrecognised
+    state wording is a refusal here (unlike the preflights): restarting blind could stop Play mid-load.
+    """
+    have = _modes(session)
+    if have is None:
+        raise ForgeError("RBF-PLAY-003", "cannot read get_studio_state; Play was not restarted",
+                         hint="restart Play by hand and run without --restart")
+    if have & _PLAY_DMS:
+        session.call("start_stop_play", {"is_start": False, "studio_id": session.studio_id})
+        _wait_modes(session, lambda h: "Edit" in h and not h & _PLAY_DMS, "Edit", timeout, poll)
+    session.call("start_stop_play", {"is_start": True, "studio_id": session.studio_id})
+    return _wait_modes(session, lambda h: all(dm in h for dm in datamodels),
+                       "Play (%s)" % "/".join(datamodels), timeout, poll)
+
+
+def single_entry(path, attr="RbforgeTest", timeout=120, datamodel="Server", ready=None, grace=0.0, keep=False):
+    """One test file as a suite entry, validated the same way a manifest entry is."""
+    _check_test_args(attr, datamodel, grace)
+    if ready:
+        parse_ready(ready)
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
+        raise ForgeError("RBF-ARG-002", "timeout %r is not a positive integer" % (timeout,))
+    _read_source(path, "test file")
+    return {"name": path, "file": path, "attr": attr, "datamodel": datamodel, "timeout": timeout,
+            "ready": ready, "grace": float(grace), "keep": bool(keep)}
+
+
+def run_streak(entries, repeat, restart=False, keep_going=False, studio_id=None, report=None,
+               play_timeout=90.0, poll=0.5):
+    """Run `entries` (from load_suite or single_entry) `repeat` times in one Studio session.
+
+    A run passes when every entry passes. Without `keep_going` the first failed run ends the streak
+    and Play is left as that run left it, so the failure can be inspected. `restart` gives every run,
+    the first included, a fresh Play session (and starts Play from Edit). Every non-passing entry
+    carries the console it printed (server_test forensics).
+    """
+    if isinstance(repeat, bool) or not isinstance(repeat, int) or not 1 <= repeat <= 100:
+        raise ForgeError("RBF-ARG-002", "--repeat %r is not a whole number from 1 to 100" % (repeat,))
+    if not entries:
+        raise ForgeError("RBF-ARG-002", "nothing to run")
+    dms = sorted({e["datamodel"] for e in entries})
+    longest = max(e["timeout"] + e["grace"] for e in entries)
+    batch = _run_id()
+    runs = []
+    with Session(studio_id, timeout=max(longest, play_timeout) + 30) as sess:
+        if not restart:
+            preflight_play(sess, dms)
+        for i in range(1, repeat + 1):
+            t0 = time.time()
+            if restart:
+                try:
+                    restart_play(sess, dms, play_timeout, poll)
+                except ForgeError as exc:
+                    runs.append({"run": i, "passed": False, "restarted": False, "seconds": 0.0,
+                                 "error": "%s: %s" % (exc.code, exc.message), "tests": []})
+                    if report:
+                        report("run %d/%d: Play restart failed: %s" % (i, repeat, exc.message))
+                    break
+            tests = _run_entries(sess, entries, True,
+                                 (lambda line, i=i: report("  [%d] %s" % (i, line))) if report else None)
+            ok = all(t["passed"] for t in tests)
+            runs.append({"run": i, "passed": ok, "restarted": restart, "seconds": round(time.time() - t0, 2),
+                         "tests": tests})
+            if report:
+                report("run %d/%d: %s" % (i, repeat, "PASS" if ok else "FAIL"))
+            if not ok and not keep_going:
+                break
+    best = cur = 0
+    for r in runs:
+        cur = cur + 1 if r["passed"] else 0
+        best = max(best, cur)
+    passes = sum(1 for r in runs if r["passed"])
+    return {"batch": batch, "wanted": repeat, "restart": restart, "runs": runs, "ran": len(runs),
+            "passes": passes, "failures": len(runs) - passes, "best_streak": best,
+            "passed": len(runs) == repeat and passes == repeat,
+            "play_left": "running as the last run left it" if runs else "untouched"}

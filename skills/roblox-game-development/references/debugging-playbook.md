@@ -113,6 +113,9 @@ the camera, the height and the view before you touch code.
 | Walls near the player are paler than the same wall further away | A `PointLight` carried by the camera or viewmodel | list lights under `workspace.CurrentCamera`, disable, capture again |
 | Props float or sink on terrain | Positioned at the height the terrain was filled to; smooth terrain settles below it | raycast down and stand the prop on the hit; `world-audit` lists every floater |
 | Ropes or cables hang far from their posts; set pieces stand inside each other | Attachments given a world position before they had a parent; layout offsets never checked | `world-audit` (stray attachments, insides), lint T045 |
+| A bot or a player pressed a prompt and nothing happened, no error | The server silently refused (range, tag, state, rate limit) or two input handlers took the key | the run's `console_log`; a Studio-only `LastRefusal` attribute from the handler's `check`; search the client for every handler of that action |
+| A live suite fails once in three runs | Random loot or spawn rolls meet an oracle that assumes one outcome; leftover state from the previous run | `rbforge servertest ... --repeat 5 --restart --keep-going`, then `rbforge runs --text` and each failure's `console_log` |
+| A staged fight is "too hard" only in the suite | The stage refilled encounters a player would already have cleared | list the enemies alive around the hero right after the stage runs |
 
 ## Input through the MCP
 

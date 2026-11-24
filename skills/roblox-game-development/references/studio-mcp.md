@@ -1,8 +1,9 @@
 # Studio MCP reference (official built-in server)
 
-Verified against a live handshake on Windows 11, 2026-11-16: **38 tools**
-(2026-11-01: 34; added since: `save_place`, `open_cloud_invoke`,
-`submit_feedback`, `generate_animation`; none removed). The surface moves with
+Verified against a live handshake on Windows 11, 2026-11-24: **41 tools**
+(2026-11-16: 38. Renamed since: `skill` -> `get_roblox_skill`, `list_skills` ->
+`list_roblox_skills`. Added: `video_capture`, `list_plugin_actions`,
+`open_plugin`. Nothing else removed). The surface moves with
 Studio updates - always confirm via `tools/list`, `list_roblox_studios` and
 `rb_capabilities`, never from memory. A tool named here that is absent is
 absent; say so instead of pretending.
@@ -14,17 +15,38 @@ absent; say so instead of pretending.
 | Scripts | `script_read`, `multi_edit` (creates scripts too), `script_search`, `script_grep` |
 | Data model | `search_game_tree`, `inspect_instance` |
 | Luau execution | `execute_luau` (datamodel_type: Edit / Client / Server) |
-| Playtest | `get_studio_state`, `start_stop_play`, `get_console_output`, `screen_capture` |
+| Playtest | `get_studio_state`, `start_stop_play`, `get_console_output`, `screen_capture`, `video_capture` |
 | Input | `character_navigation`, `user_keyboard_input`, `user_mouse_input` |
 | Generative | `generate_procedural_model`, `generate_mesh`, `generate_texture`, `generate_material`, `generate_scene`, `generate_avatar`, `generate_animation`, `auto_setup_avatar`, `segment_mesh` |
 | Assets | `search_asset`, `insert_asset`, `store_image`, `upload_image` |
 | Open Cloud | `open_cloud_invoke` (authenticated Open Cloud requests, multipart file upload) |
 | Saving | `save_place` |
 | Async | `wait_job_finished` |
-| Docs/skills | `http_get`, `skill`, `list_skills`, `create_skill`, `edit_skill` |
+| Docs/skills | `http_get`, `get_roblox_skill`, `list_roblox_skills`, `create_skill`, `edit_skill` |
+| Studio UI | `list_plugin_actions`, `open_plugin` |
 | Delegation | `subagent` (`explore`, `playtest`; the argument also accepts `screen_capture`, `unit_test`) |
 | Feedback | `submit_feedback` |
 | Sessions | `list_roblox_studios` |
+
+## `video_capture`: motion, not stills
+
+`video_capture(is_start=true, datamodel_type="Client")` during Play, do the
+actions, then `is_start=false`. The stop call returns JSON: `recording_id`,
+`status` (`completed` or `partial`), artifact paths (video, manifest,
+frame_times) and capture warnings. `partial` means capture ended early (a
+duration limit), not that gameplay ended. Media is not inlined: open the file
+only when needed. Use it for what still frames miss - animation smoothness,
+stutter, flicker, a ragdoll's fall - and `screen_capture` for everything else; a
+recording costs far more to inspect than three framed stills.
+
+## `list_plugin_actions` / `open_plugin`: Studio windows and toggles
+
+`list_plugin_actions` lists toggle actions (plugin windows, settings, tools)
+with `dataModel`, `pluginType`, `pluginId`, `itemId`, the Studio label and
+on/off state. Pick a row by its label, pass its four ids to `open_plugin`
+(`open: false` closes). Built-in plugins only; a cloud or local plugin opens by
+setting its `PluginGuiService` widget's `Enabled` through `execute_luau`. These
+change the owner's Studio layout: open what the task needs, close it after.
 
 ## Which place is this?
 
@@ -186,7 +208,7 @@ look_at_position = look)`. A screenshot you did not look at is not evidence.
 | `explore` | map an unfamiliar place, find scripts, query live state - without flooding your context with `search_game_tree` JSON |
 | `playtest` | run a gameplay scenario start to finish; it drives `start_stop_play` itself |
 | `screen_capture` | visual verification loops |
-| `unit_test` | run Luau unit tests (pairs with `skill "rbx-unit-test"`) |
+| `unit_test` | run Luau unit tests (pairs with `get_roblox_skill` `rbx-unit-test`) |
 
 Subagents are one-shot: they return a final text summary, cannot be asked
 follow-ups, and cannot nest. Give the whole task and the exact evidence you want

@@ -17,7 +17,7 @@ Do not replace three scripts because one nil error appeared.
 ## Roblox built-in Assistant skills
 
 The current Studio Assistant documents Roblox-maintained skills. If the official
-Studio MCP exposes the `skill` tool, use these specialized capabilities when they
+Studio MCP exposes `get_roblox_skill` (list them with `list_roblox_skills`), use these specialized capabilities when they
 fit instead of manually reinventing them:
 
 - `rbx-debug` — breakpoints, call stacks, locals/thread state.
@@ -212,6 +212,37 @@ What the runner does (all verified live, 2026-11-16):
 Paths are relative to the manifest. `datamodel` is `Server` (default) or `Client`; `timeout`
 defaults to 120.
 
+## Streaks, flake numbers and failure context
+
+A live suite that drives a bot through a fight is a sample, not a proof: one pass says it can pass.
+Close a milestone on a streak, and keep the denominator.
+
+```
+rbforge servertest tests/BossKill.client.luau --dm Client --ready workspace.ServerReady=true \
+    --timeout 480 --repeat 3 --restart          # three passes in a row, a fresh Play session each
+rbforge servertest --suite tests/suites.json --repeat 2 --restart   # the whole manifest, twice
+rbforge runs --text                             # every recorded run: rate, current and best streak
+```
+
+- **`--repeat N`** runs the test (or the whole `--suite`) N times in one Studio session and exits 0 only
+  for N passes in a row. **`--restart`** stops Play, waits for Edit, starts Play and waits for the
+  datamodels before every run, the first included (it starts Play from Edit), so no run inherits the
+  previous one's enemies, loot or guard state. Without it the runs share one Play session.
+- **The first failure ends the streak and leaves that Play session running.** The state that failed is
+  the evidence; inspect it (probes, `execute_luau`, a capture) before you stop anything. `--keep-going`
+  runs all N anyway and reports the best streak - use it to measure a rate, not to close a gate.
+- **Every failed run keeps its console, read before anything stops Play.** Each run prints a marker
+  line; on a FAIL, TIMEOUT or error the runner reads `get_console_output` from that marker on and puts
+  the error lines and the last lines in the JSON report, with the whole text in a log file named by
+  `console_log`. A one-line verdict such as "the sack is taken" is a symptom; the console beside it
+  is usually the cause, and it is gone once Play stops.
+- **The run ledger is the denominator.** Every CLI `servertest` run (single, suite or streak) appends
+  one line per test to `RBFORGE_HOME/runs/<project>.jsonl` with the commit, a dirty flag, the outcome
+  and the log path. `rbforge runs` (`--test`, `--last N`, `--text`) prints per test the runs, passes,
+  pass rate, current streak and last failure: "cleared in 8 of 12 runs" is a query, not a memory.
+  The ledger is memory, not proof; a receipt (`rb_collect_evidence`) is the proof. `--no-record` keeps
+  a throwaway run out of it.
+
 ## Live-suite patterns from a second production project (live 2026-11)
 
 - **Suites change the world; order the manifest.** A suite that clears enemies, resets a profile
@@ -301,6 +332,45 @@ Clock advanced) -> server suite with puppets -> client suite with the Pilot -> c
 the owner plays it. Use the cheapest rung that can actually fail for the thing claimed. A receipt
 names the commit it proved; a small script can refuse a receipt whose `src`/`tests` files differ
 between that commit and `HEAD`.
+
+## When a bot-driven suite fails (field 2026-11, a production milestone)
+
+A boss-fight suite needed three passes in a row and cost several sessions. What it taught, in the
+order an agent meets it:
+
+- **Every guarded server handler returns a refusal reason, and Studio can read it.** An interaction
+  handler that checked tag, handler, living body and distance and then did nothing on a miss left
+  "the bot pressed Take, the sack stayed" a guess between several causes. Make `check` return
+  `(ok, reason)` (it already exists for tests), and in Studio only publish the last refusal on the
+  player (`player:SetAttribute("LastRefusal", reason .. " " .. kind)`, guarded by
+  `RunService:IsStudio()`), or `warn` it. A suite prints that attribute in its FAIL line. A shipped game
+  stays quiet; the test gets the reason for free.
+- **Assert the design's outcome, not a proxy for it.** The design said "opening takes what fits; the
+  rest stays in the sack". The suite asserted "the sack is gone", which is false whenever the pack
+  cannot hold everything (for example a stack already at its cap for an item the loot rolled). Assert
+  what the player received (pack and purse before and after), and treat the container's removal as a
+  separate, conditional fact. With random loot such a proxy can pass one run and fail the next for a
+  reason that is not a bug.
+- **Fixtures rebuild the world a player would have, not a refilled one.** A stage that respawned
+  every camp brought back a camp on the road the hero had already cleared; its archers shot the hero in
+  the back for the whole next fight, and the fight looked "too hard". A stage that jumps the hero
+  forward clears what a player would have cleared on the way and leaves the rest at its own numbers.
+  Say in the stage's output which encounters it removed.
+- **Bot navigation hygiene.** Before backing off, dodging or retreating, probe for ground in that
+  direction (a short downward raycast a few studs out); in melee keep solid ground behind it. When a
+  ledge or a drop sits between the bot and its target, give up after a few seconds and return
+  `unreachable` instead of walking into the drop: a stalemate at a cliff edge is a fixture problem, not
+  a fight lost. Heal only when no attacker is within reach. Before pressing a world prompt, release any
+  combat lock (it turns the body back toward the old foe) and face the prompt (prompts often need the
+  thing in front of the eyes).
+- **Give tuning a budget.** After three tuning attempts on one encounter without a streak, stop
+  tuning: record the numbers (runs, passes, how each failure ended), move the gate's suite past the
+  encounter with a named stage, keep the encounter as a measurement suite outside the manifest, and
+  take it to the owner as a design question with the evidence. Do not lower the enemy or raise the
+  hero to make a test pass; that changes the game to fit the bot.
+- **Read a clean kill as a clean kill.** When the gate's last step fails after the hard part passed,
+  the hard part is not the bug. Diagnose the last step on its own (the console of that run, the
+  refusal reason) before running the whole fight again.
 
 ## Place test units at their own level
 

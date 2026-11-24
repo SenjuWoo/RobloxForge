@@ -184,7 +184,7 @@ Rules that keep this honest:
   a payload that fits in theory can still exceed the cap after encoding — test
   with the real data shape, and treat 1,000 bytes as the ceiling, not a target.
 - Sample the rate yourself. Sending 200 messages/second per player is a design
-  decision, not an accident; measure with `skill "rbx-network-simulator"`.
+  decision, not an accident; measure with the `rbx-network-simulator` skill (`get_roblox_skill`).
 
 ## Schema libraries (optional)
 

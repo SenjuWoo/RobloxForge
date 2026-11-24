@@ -25,7 +25,8 @@ treated as outdated and not relied upon.
 
 - Source: https://github.com/EL4CTEO/roblox-skills (October 2026 snapshot)
 - Licence: MIT -- full text in `skills/ROBLOX-SKILLS-LICENSE.txt`
-- Contents: 23 Roblox Agent Skills under `skills/roblox-*`, copied unmodified
+- Contents: 23 Roblox Agent Skills under `skills/roblox-*`, copied unmodified, then maintained here
+  (for example the Studio MCP tool names in `roblox-studio-mcp` follow the live surface)
 - Added: 2026-11-06, so this repository owns and versions them independently
 
 ## Trademarks

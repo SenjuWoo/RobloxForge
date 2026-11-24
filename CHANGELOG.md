@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.22.0 - 2026-11-24
+
+Closing a live gate on a streak, with the evidence of every failure kept. A production project spent
+whole sessions restarting Play by hand for "three passes in a row", counting runs in its head, and
+losing the reason for a failure when Play stopped. The forge now owns that loop. The Studio MCP surface
+moved again (41 tools, two renamed) and the knowledge follows it.
+
+### Added
+- `rbforge servertest --repeat N`: N runs of one test or a whole `--suite` in one Studio session; exit 0
+  only for N passes in a row. `--restart` gives every run a fresh Play session (stop, wait for Edit,
+  start, wait for the datamodels; starts Play from Edit); `--play-timeout` bounds the wait
+  (`RBF-PLAY-003`). The first failure ends the streak and leaves that Play session running for
+  inspection; `--keep-going` runs all N and reports the best streak.
+- Failure forensics: every run prints a marker; a FAIL, TIMEOUT or execute_luau error reads
+  `get_console_output` from that marker before anything else touches Play, puts the error lines and the
+  last lines in the report and the whole text in a log file (`console_log`). Single runs and suites get it
+  too.
+- Run ledger: every CLI `servertest` run appends one line per test to `RBFORGE_HOME/runs/<project>.jsonl`
+  (commit, dirty flag, outcome, seconds, log path). `rbforge runs [--root] [--test] [--last N] [--text]`
+  reports runs, passes, pass rate, current and best streak and the last failure per test. `--no-record`
+  skips it.
+- `rbforge --version`.
+- Starter kit: every refusal in `GameService` names its reason (`false, why`), and in Studio leaves it on
+  the player as `LastRefusal`; the starter's live test asserts both.
+- `testing-debugging.md`: streaks, flake numbers and failure context; what a bot-driven boss suite taught
+  (refusal reasons, oracles that match the design, fixtures that rebuild the world a player would have,
+  bot navigation hygiene, a tuning budget). `debugging-playbook.md`: three symptom rows.
+  `sharp-edges.md`: two handlers on one input action both run.
+- `studio-mcp.md`: `video_capture`, `list_plugin_actions` and `open_plugin`.
+
+### Changed
+- Studio MCP reference brought to the 2026-11-24 handshake: 41 tools; `skill` and `list_skills` are now
+  `get_roblox_skill` and `list_roblox_skills` everywhere the skills teach them; 17 Roblox-authored skills
+  routed (new: `rbx-import-asset`, `rbx-open-cloud-usage`, `rbx-permissions`). A test fails on any old
+  name taught as current.
+- A single `servertest` whose execute_luau call errors now reports an `error` outcome with its console
+  (exit 1) instead of a JSON error; refusals before the run (Edit mode, a bad argument) are unchanged.
+
 ## 0.21.0 - 2026-11-24
 
 Lessons from the second production project's latest work: proving multiplayer, input-driven and

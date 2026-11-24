@@ -108,12 +108,18 @@ rbforge skills install all          # install all 25 RobloxForge skills, every p
 rbforge capabilities                # honest capability matrix (probed, not assumed)
 rbforge servertest tests/Combat.server.luau CombatTest --ready "workspace.BootStage=players-wired"
 rbforge servertest --suite tests/suites.json   # exit code = number of failed suites
+rbforge servertest tests/Boss.client.luau --dm Client --repeat 3 --restart   # 3 passes in a row, fresh Play each
+rbforge runs --text                 # every recorded live run: pass rate, streaks, last failure
 ```
 
-`servertest` needs a running playtest (it refuses Edit mode with exit 4). The test reports by setting
-the attribute to `"PASS ..."` or `"FAIL ..."` on `workspace` or on its own Script. Cleanup destroys the
-test Script, which kills the threads it started; use `--grace <seconds>` when the test triggers deferred
-game work. Details: `skills/roblox-game-development/references/testing-debugging.md`.
+`servertest` needs a running playtest (it refuses Edit mode with exit 4) unless `--restart` owns Play. The
+test reports by setting the attribute to `"PASS ..."` or `"FAIL ..."` on `workspace` or on its own Script.
+Cleanup destroys the test Script, which kills the threads it started; use `--grace <seconds>` when the
+test triggers deferred game work. `--repeat N` exits 0 only for N passes in a row; the first failure
+stops the streak and leaves that Play session running for inspection. A failed run keeps the console
+it printed (error lines in the report, the whole text in `console_log`), and every run lands in a
+per-project ledger that `rbforge runs` reads. Details:
+`skills/roblox-game-development/references/testing-debugging.md`.
 
 Nothing here costs money. Roblox Studio, the official MCP server, every
 recommended library and every asset path in the skill are free; `rbforge
@@ -192,15 +198,16 @@ it. Whenever push replaces a source it did not write itself, the Studio copy is 
 
 ## Status
 
-0.21.0. Only what was observed is listed as verified.
+0.22.0. Only what was observed is listed as verified.
 
 | Area | Status |
 |---|---|
-| Studio + official MCP detection & live handshake probe | verified on Windows 11 (38 tools, 2026-11-16) |
+| Studio + official MCP detection & live handshake probe | verified on Windows 11 (41 tools, 2026-11-24) |
 | `rbforge servertest`: Play preflight, `--ready`, Client tests, `--grace`/`--keep`, `--suite` | verified against a live Studio place (0.18.0) |
+| `servertest --repeat/--restart`, failure console capture, run ledger (`rbforge runs`) | verified offline against a session double that answers `get_studio_state`, `start_stop_play` and `get_console_output` in the formats a live handshake returned (0.22.0); **not yet run against a live place** |
 | creator-docs sparse cache + ranked search | verified (2,214 docs indexed) |
 | `rbforge check` offline gate (static / unit / structure) | verified; skips reported as `incomplete`, never `pass` |
-| `rbforge new` one-command project + plan | verified; the starter kit passes its own gate, and its live server test, client remote path and HUD were run and inspected in Studio Play (0.19.0) |
+| `rbforge new` one-command project + plan | verified; the starter kit passes its own gate, and its live server test, client remote path and HUD were run and inspected in Studio Play (0.19.0). The 0.22.0 refusal reasons (`LastRefusal`) pass the static gate; the extended live test has not been run in Studio yet |
 | `rbforge audit` ranked project health report | verified offline on fixtures and on a 35k-line production project (0.19.0) |
 | `rbforge push`: checksum readback, rollback, class-change backup | verified against a live Studio place |
 | `rbforge push` refuses during Play (`RBF-PLAY-002`) | verified against a live Studio place (0.20.0): refused in Play with exit 4, 10/10 synced after Stop |

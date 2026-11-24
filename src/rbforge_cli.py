@@ -7,6 +7,7 @@ All output is JSON (machine-readable by default).
 import argparse
 import json
 import sys
+import time
 
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,6 +39,8 @@ def main(argv=None):
     _utf8_output()
     parser = argparse.ArgumentParser(prog="rbforge",
                                      description="RobloxForge - AI-operable Roblox development workbench")
+    from rbforge import __version__
+    parser.add_argument("--version", action="version", version="rbforge %s" % __version__)
     sub = parser.add_subparsers(dest="cmd")
 
     p_doc = sub.add_parser("doctor", help="full health report")
@@ -152,6 +155,22 @@ def main(argv=None):
                            "(destroying it kills the threads it started)")
     p_st.add_argument("--keep", action="store_true", help="leave the test Script in place (stopping Play discards it)")
     p_st.add_argument("--suite", help="JSON manifest of suites; exit code is the number of failed suites")
+    p_st.add_argument("--repeat", type=int, default=None,
+                      help="run the test (or the whole --suite) N times; exit 0 only for N passes in a row")
+    p_st.add_argument("--restart", action="store_true",
+                      help="with --repeat: a fresh Play session before every run (starts Play from Edit)")
+    p_st.add_argument("--keep-going", action="store_true",
+                      help="with --repeat: run all N even after a failure (default: stop and leave Play running)")
+    p_st.add_argument("--play-timeout", type=float, default=90.0,
+                      help="seconds to wait for Play to stop or start with --restart (default 90)")
+    p_st.add_argument("--no-record", action="store_true",
+                      help="do not append this run to the project's run ledger (`rbforge runs`)")
+
+    p_runs = sub.add_parser("runs", help="live test history for a project: pass rate and streaks per test")
+    p_runs.add_argument("--root", default=".", help="project directory (default: the current one)")
+    p_runs.add_argument("--test", help="only tests whose name contains this")
+    p_runs.add_argument("--last", type=int, help="only each test's N newest runs")
+    p_runs.add_argument("--text", action="store_true", help="a table instead of JSON")
 
     p_proj = sub.add_parser("project", help="analyze an existing project layout")
     p_proj.add_argument("path", nargs="?", default=".")
@@ -384,22 +403,59 @@ def _dispatch(args):
         return ExitCode.OK
 
     if args.cmd == "servertest":
-        from rbforge import live
+        from rbforge import live, runs
+        progress = lambda line: print(line, file=sys.stderr, flush=True)  # noqa: E731 - stdout stays JSON
+        if args.suite and (args.file or args.attr):
+            raise ForgeError("RBF-ARG-001", "pass either --suite or FILE ATTR, not both")
+        if not args.suite and not args.file:
+            raise ForgeError("RBF-ARG-001", "servertest needs FILE [ATTR], or --suite MANIFEST")
+        if args.repeat is None and (args.restart or args.keep_going):
+            raise ForgeError("RBF-ARG-001", "--restart and --keep-going belong to --repeat N",
+                             hint="for one fresh run: --repeat 1 --restart")
+        root = runs.project_root(args.suite or args.file)
+
+        def keep(res, streak):
+            # Ledger + logs, then the full console text leaves the JSON either way (logs hold it).
+            if args.no_record:
+                runs.compact(streak)
+            else:
+                res["record"] = runs.record_streak(root, streak)
+
+        if args.repeat is not None:
+            entries = live.load_suite(args.suite) if args.suite else [live.single_entry(
+                args.file, args.attr or "RbforgeTest", args.timeout, args.dm, args.ready, args.grace, args.keep)]
+            res = live.run_streak(entries, args.repeat, restart=args.restart, keep_going=args.keep_going,
+                                  studio_id=args.studio, report=progress, play_timeout=args.play_timeout)
+            keep(res, res)
+            _emit(res)
+            return ExitCode.OK if res["passed"] else 1
         if args.suite:
-            if args.file or args.attr:
-                raise ForgeError("RBF-ARG-001", "pass either --suite or FILE ATTR, not both")
             # One progress line per suite on stderr; the JSON report stays the only stdout.
-            res = live.run_suite(args.suite, args.studio,
-                                 report=lambda line: print(line, file=sys.stderr, flush=True))
+            res = live.run_suite(args.suite, args.studio, report=progress, forensics=True)
+            keep(res, {"runs": [{"run": 1, "tests": res["suites"]}]})
             _emit(res)
             return min(res["failed"], 100)
-        if not args.file:
-            raise ForgeError("RBF-ARG-001", "servertest needs FILE [ATTR], or --suite MANIFEST")
         # The documented default: a test that reports through `RbforgeTest` needs no second argument.
+        t0 = time.time()
         res = live.server_test(args.file, args.attr or "RbforgeTest", args.timeout, args.studio, datamodel=args.dm,
-                               ready=args.ready, grace=args.grace, keep=args.keep)
+                               ready=args.ready, grace=args.grace, keep=args.keep, forensics=True)
+        res.setdefault("name", args.file)
+        res.setdefault("datamodel", args.dm)
+        res.setdefault("seconds", round(time.time() - t0, 2))
+        keep(res, {"runs": [{"run": 1, "tests": [res]}]})
         _emit(res)
         return ExitCode.OK if res["passed"] else 1
+
+    if args.cmd == "runs":
+        from rbforge import runs
+        if args.last is not None and args.last < 1:
+            raise ForgeError("RBF-ARG-002", "--last must be 1 or more")
+        summary = runs.summarize(runs.project_root(args.root), test=args.test, last=args.last)
+        if args.text:
+            print(runs.render(summary))
+        else:
+            _emit(summary)
+        return ExitCode.OK
 
     if args.cmd == "project":
         from rbforge import project

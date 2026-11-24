@@ -197,6 +197,12 @@ Case notes from one procedural-dome project (panel faces, shell openings, skirts
   (live 2026-11)
 - **Editing `StarterGui` at runtime does nothing for players already in the game** - their copies
   live in `PlayerGui`. (docs)
+- **Two handlers on one input action both run.** A climb controller and an interact controller each
+  connected to the same action's `Pressed`; standing by a creature's body and a loot sack, one press
+  can start a climb and send the take request together. Signals do not arbitrate.
+  Give each action one owner that decides what the press means (nearest valid target, a priority
+  list), or bind the second meaning to its own action. (field) Read from a production project's code,
+  2026-11.
 - **A client cache built while the server is still creating things is wrong forever.** Wait for a
   server-set readiness attribute or count, and refresh when it changes. (live 2026-11)
 - **Never restore a saved `LocalTransparencyModifier`.** The engine also writes it for the local

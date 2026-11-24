@@ -42,12 +42,21 @@ local ok, err = pcall(function()
 	end
 	assert(accepted < 20, `200 instant requests must be rate limited, {accepted} were accepted`)
 
-	assert(GameService.buyUpgrade(player, "NoSuchUpgrade") == false, "an unknown upgrade id is refused")
+	local refusedOk, refusedWhy = GameService.buyUpgrade(player, "NoSuchUpgrade")
+	assert(
+		refusedOk == false and refusedWhy == "unknown upgrade",
+		`an unknown upgrade id is refused by name ({refusedWhy})`
+	)
+	assert(
+		player:GetAttribute("LastRefusal") == "BuyUpgrade: unknown upgrade",
+		"in Studio the refusal reason is readable on the player"
+	)
 	assert(GameService.buyUpgrade(player, 12345) == false, "a non-string upgrade id is refused")
 	assert(GameService.buyUpgrade(player, { "Power" }) == false, "a table upgrade id is refused")
 
 	profile.Coins = 0
-	assert(GameService.buyUpgrade(player, "Power") == false, "an upgrade is refused without the coins")
+	local poorOk, poorWhy = GameService.buyUpgrade(player, "Power")
+	assert(poorOk == false and poorWhy == "cannot afford", `an upgrade is refused without the coins ({poorWhy})`)
 	profile.Coins = 25
 	local level = profile.Upgrades.Power or 0
 	assert(GameService.buyUpgrade(player, "Power") == true, "an affordable upgrade is bought")

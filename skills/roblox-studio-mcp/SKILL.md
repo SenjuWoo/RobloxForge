@@ -42,10 +42,11 @@ confirms the connection. Only connect clients you trust: they can read and modif
 | Explore | `search_game_tree` (filter by path/class/keyword, depth), `inspect_instance` (properties, attributes, children), `script_search` (fuzzy by name), `script_grep` (text across scripts, ≤ 50 hits), `script_read` (dot path like `game.ServerScriptService.Main`, line ranges) |
 | Edit | `multi_edit` (several edits to one script, creates it if missing; `datamodel_type = Edit`) |
 | Run | `execute_luau` (`datamodel_type` = `Edit`, `Server`, or `Client`; returns the result or error) |
-| Playtest | `start_stop_play`, `get_console_output`, `screen_capture` (optional camera position/look-at), `character_navigation`, `user_keyboard_input`, `user_mouse_input` |
+| Playtest | `start_stop_play`, `get_console_output`, `screen_capture` (optional camera position/look-at), `video_capture` (motion: stutter, flicker, animation timing), `character_navigation`, `user_keyboard_input`, `user_mouse_input` |
 | Assets | `search_asset` (Creator Store / inventory), `insert_asset`, `upload_image`, `store_image`, `generate_mesh`, `generate_material`, `generate_procedural_model` + `wait_job_finished` |
 | Delegation | `subagent` (`explore` or `playtest` types for multi-step investigations) |
-| Knowledge | `http_get` (Roblox docs, API reference, Cloud docs), `skill` (Roblox-authored skills: debugging, device simulation, docs search, profiling, scene analysis, unit tests) |
+| Knowledge | `http_get` (Roblox docs, API reference, Cloud docs), `list_roblox_skills` + `get_roblox_skill` (Roblox-authored skills: debugging, device simulation, docs search, profiling, scene analysis, unit tests, Open Cloud, permissions, asset import) |
+| Studio UI | `list_plugin_actions` + `open_plugin` (open or close a built-in plugin window or toggle by its label) |
 
 ## The working loop
 
@@ -91,7 +92,7 @@ return table.concat(results, "\n")
 
 ## Roblox-authored skills and conversions
 
-Studio exposes Roblox-authored skills through the `skill` tool (e.g. `rbx-debug`, `rbx-perf-profiling`,
+Studio exposes Roblox-authored skills through `list_roblox_skills` and `get_roblox_skill` (e.g. `rbx-debug`, `rbx-perf-profiling`,
 `rbx-scene-analysis`, `rbx-unit-test`, `rbx-docs-search`, `rbx-device-simulator-lua`). Roblox also
 publishes an official **streaming conversion** skill (`/rbx-convert-to-streaming`, downloadable from the
 "Techniques and conversion" streaming docs) that runs through this MCP server; back up the place first.

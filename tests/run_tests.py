@@ -4138,7 +4138,8 @@ def _():
         for i, code in enumerate([
                 live._server_test_code('script:SetAttribute("A", "PASS ]=]")', "A", 30),
                 live._server_test_code("x", "A", 30, "Client", ready, 2.5, False),
-                live._server_test_code("x", "A", 30, "Server", ready, 0.0, True)]):
+                live._server_test_code("x", "A", 30, "Server", ready, 0.0, True),
+                live._server_test_code("x", "A", 30, "Client", None, 0.0, False, "[rbforge] run 1 begins: t]]=]")]):
             path = os.path.join(d, "st%d.luau" % i)
             open(path, "w", encoding="utf-8").write(code)
             ok, detail = _parse_luau(path, cfg)
@@ -4941,7 +4942,8 @@ def _():
     orig = live.run_suite
     live.run_suite = lambda *a, **k: {"suites": [], "passed": 1, "failed": 3}
     try:
-        code, out = _cli("servertest", "--suite", "whatever.json")
+        with _isolated_home():
+            code, out = _cli("servertest", "--suite", "whatever.json")
     finally:
         live.run_suite = orig
     assert code == 3 and out["failed"] == 3, (code, out)
@@ -5428,7 +5430,7 @@ def _():
 def _():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     skill = open(os.path.join(root, "skills", "roblox-game-development", "SKILL.md"), encoding="utf-8").read()
-    assert "all 38 live tools" in skill and "34 live tools" not in skill
+    assert "all 41 live tools" in skill and "38 live tools" not in skill and "34 live tools" not in skill
     assert "rbforge audit" in skill and "rbforge new" in skill
     for name in re.findall(r"`(roblox-[a-z-]+)`", skill):
         assert os.path.isfile(os.path.join(root, "skills", name, "SKILL.md")), \
@@ -5453,7 +5455,7 @@ def _():
     old = live.server_test
     live.server_test = fake
     try:
-        with contextlib.redirect_stdout(io.StringIO()):
+        with _isolated_home(), contextlib.redirect_stdout(io.StringIO()):
             code = rbforge_cli.main(["servertest", "tests/x.server.luau"])
     finally:
         live.server_test = old
@@ -5692,6 +5694,333 @@ def _():
         for line in _ref(name).splitlines():
             if "InputAction:Fire" in line:
                 assert "deprecated" in line.lower() or "deprecated" in _ref(name), (name, line)
+
+
+# ---------------------------------------------------------------- 0.22.0 streaks, forensics, run ledger
+
+def _studio_double(answers, start_mode="Play", lag=1, never_play=False, state_text=None, console_prefix=""):
+    """A Session double with a playtest state machine, a console and scripted test answers.
+
+    `start_stop_play` flips the mode after `lag` state polls (Studio answers before the datamodels
+    exist). Every execute_luau prints its marker (the code's first `print([[...]])`) and the answer
+    into the console, as Studio's Output does; `get_console_output` returns all of it.
+    """
+    log = {"calls": [], "console": [console_prefix] if console_prefix else [], "mode": start_mode,
+           "pending": None, "polls": 0}
+    queue = list(answers)
+
+    class Fake:
+        studio_id = "s1"
+        opened = 0
+
+        def __init__(self, *a, **k):
+            Fake.opened += 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def call(self, tool, args):
+            log["calls"].append((tool, args.get("is_start")))
+            if tool == "get_studio_state":
+                if state_text is not None:
+                    return state_text
+                if log["pending"] is not None:
+                    log["polls"] += 1
+                    if log["polls"] >= lag:
+                        log["mode"], log["pending"] = log["pending"], None
+                dms = "Client, Server" if log["mode"] == "Play" else "Edit"
+                return "- Current Studio Mode: %s\n- Available DataModels: %s\n" % (log["mode"], dms)
+            if tool == "start_stop_play":
+                want = "Play" if args["is_start"] else "Edit"
+                if not (never_play and want == "Play"):
+                    log["pending"], log["polls"] = want, 0
+                return "ok"
+            if tool == "get_console_output":
+                return "\n".join(log["console"])
+            return ""
+
+        def luau(self, code, dm="Edit"):
+            m = re.match(r"print\(\[(=*)\[\n?(.*?)\]\1\]\)", code, re.S)
+            if m:
+                log["console"].append(m.group(2))  # Luau drops the newline after the opening bracket
+            nxt = queue.pop(0) if len(queue) > 1 else queue[0]
+            if isinstance(nxt, Exception):
+                log["console"].append("Script 'RbforgeServerTest', Line 3 - error boom")
+                raise nxt
+            log["console"].append("test said: " + nxt)
+            return nxt
+    return Fake, log
+
+
+@contextlib.contextmanager
+def _swap_session(fake):
+    from rbforge import live
+    orig = live.Session
+    live.Session = fake
+    try:
+        yield
+    finally:
+        live.Session = orig
+
+
+@check("streak: --restart gives every run a fresh Play session and three passes make a streak")
+def _():
+    from rbforge import live
+    fake, log = _studio_double(["PASS a", "PASS b", "PASS c"], start_mode="Edit", lag=2)
+    with tempdir() as d, _swap_session(fake):
+        entry = live.single_entry(_reporting_test(d), "Attr", timeout=5)
+        lines = []
+        res = live.run_streak([entry], 3, restart=True, report=lines.append, poll=0)
+    assert res["passed"] and res["passes"] == 3 and res["best_streak"] == 3, res
+    plays = [c[1] for c in log["calls"] if c[0] == "start_stop_play"]
+    # From Edit: start; then stop+start before runs 2 and 3. Play is left running after the last run.
+    assert plays == [True, False, True, False, True], plays
+    assert all(r["restarted"] for r in res["runs"]) and fake.opened == 1, res
+    assert lines[-1] == "run 3/3: PASS", lines
+
+
+@check("streak: the first failure ends it, keeps that run's console only, and leaves Play running")
+def _():
+    from rbforge import live
+    fake, log = _studio_double(["PASS one", "FAIL the sack is taken", "PASS never"],
+                               console_prefix="old noise from before the run")
+    with tempdir() as d, _swap_session(fake):
+        entry = live.single_entry(_reporting_test(d), "Attr", timeout=5)
+        res = live.run_streak([entry], 3, restart=True, poll=0)
+    assert not res["passed"] and res["ran"] == 2 and res["passes"] == 1, res
+    failed = res["runs"][1]["tests"][0]
+    console = failed["console"]
+    assert failed["outcome"] == "fail" and console["found"], failed
+    assert "old noise" not in console["text"] and "test said: PASS one" not in console["text"], console
+    assert console["tail"] == ["test said: FAIL the sack is taken"], console
+    assert console["errors"] == ["test said: FAIL the sack is taken"], console
+    plays = [c[1] for c in log["calls"] if c[0] == "start_stop_play"]
+    assert plays == [False, True, False, True], "nothing after the failed run may touch Play: %s" % plays
+    assert log["mode"] == "Play" or log["pending"] == "Play", log
+
+
+@check("streak: --keep-going runs all N and reports the best streak, not a pass")
+def _():
+    from rbforge import live
+    fake, _log = _studio_double(["PASS", "FAIL x", "PASS", "PASS"])
+    with tempdir() as d, _swap_session(fake):
+        entry = live.single_entry(_reporting_test(d), "Attr", timeout=5)
+        res = live.run_streak([entry], 4, keep_going=True, poll=0)
+    assert res["ran"] == 4 and res["passes"] == 3 and res["best_streak"] == 2 and not res["passed"], res
+
+
+@check("streak: a Play that never comes up is a failed run with RBF-PLAY-003, and unknown state text refuses")
+def _():
+    from rbforge import live
+    from rbforge.errors import ForgeError
+    fake, _log = _studio_double(["PASS"], start_mode="Edit", never_play=True)
+    with tempdir() as d, _swap_session(fake):
+        entry = live.single_entry(_reporting_test(d), "Attr", timeout=5)
+        res = live.run_streak([entry], 2, restart=True, play_timeout=0.05, poll=0)
+    assert not res["passed"] and res["ran"] == 1 and "RBF-PLAY-003" in res["runs"][0]["error"], res
+    fake2, log2 = _studio_double(["PASS"], state_text="something new")
+    try:
+        live.restart_play(fake2(), ("Server",), 0.05, 0)
+    except ForgeError as exc:
+        assert exc.code == "RBF-PLAY-003" and exc.exit_code == 4, exc
+    else:
+        raise AssertionError("restart_play went ahead on state text it cannot read")
+    assert not [c for c in log2["calls"] if c[0] == "start_stop_play"], log2["calls"]
+
+
+@check("streak: bad --repeat values and an unreadable test are refused before Studio is opened")
+def _():
+    from rbforge import live
+    from rbforge.errors import ForgeError
+    fake, _log = _studio_double(["PASS"])
+    with tempdir() as d, _swap_session(fake):
+        entry = live.single_entry(_reporting_test(d), "Attr", timeout=5)
+        for bad in (0, 101, True, "3"):
+            try:
+                live.run_streak([entry], bad)
+            except ForgeError as exc:
+                assert exc.code == "RBF-ARG-002", (bad, exc)
+            else:
+                raise AssertionError("accepted --repeat %r" % (bad,))
+        try:
+            live.single_entry(os.path.join(d, "missing.luau"))
+        except ForgeError:
+            pass
+        else:
+            raise AssertionError("a missing test file became an entry")
+    assert fake.opened == 0, fake.opened
+
+
+@check("forensics: an execute_luau error becomes an error outcome carrying its console")
+def _():
+    from rbforge import live
+    from rbforge.errors import ForgeError
+    fake, _log = _studio_double([ForgeError("RBF-STUDIO-002", "boom")])
+    with tempdir() as d, _swap_session(fake):
+        res = live.server_test(_reporting_test(d), "Attr", timeout=5, forensics=True)
+        assert res["outcome"] == "error" and "RBF-STUDIO-002" in res["result"], res
+        assert any("error boom" in e for e in res["console"]["errors"]), res
+        # Without forensics the error still raises, as before.
+        try:
+            live.server_test(_reporting_test(d), "Attr", timeout=5)
+        except ForgeError:
+            pass
+        else:
+            raise AssertionError("the plain path swallowed an execute_luau error")
+
+
+@check("forensics: a pass reads no console; a console without the marker keeps its last lines and says so")
+def _():
+    from rbforge import live
+    fake, log = _studio_double(["PASS ok"])
+    with tempdir() as d, _swap_session(fake):
+        res = live.server_test(_reporting_test(d), "Attr", timeout=5, forensics=True)
+    assert res["passed"] and "console" not in res, res
+    assert not [c for c in log["calls"] if c[0] == "get_console_output"], log["calls"]
+
+    class Trimmed:
+        studio_id = "s1"
+
+        def call(self, tool, args):
+            return "\n".join("line %d" % i for i in range(500))
+    got = live.console_since(Trimmed(), "[rbforge] run X begins: t.luau")
+    assert not got["found"] and len(got["text"].splitlines()) == live.CONSOLE_FALLBACK_LINES, got["found"]
+    assert got["tail"][-1] == "line 499", got["tail"]
+
+
+@check("runs: the ledger records each run, saves failed consoles, and reports rate and streaks per test")
+def _():
+    from rbforge import runs
+    with _isolated_home(), tempdir() as d:
+        open(os.path.join(d, "default.project.json"), "w").write("{}")
+        os.makedirs(os.path.join(d, "tests"))
+        assert runs.project_root(os.path.join(d, "tests")) == os.path.abspath(d)
+        streak = {"batch": "b1", "runs": [
+            {"run": 1, "restarted": True, "tests": [
+                {"name": os.path.join(d, "tests", "Kill.client.luau"), "outcome": "pass", "passed": True,
+                 "result": "PASS kill", "datamodel": "Client", "seconds": 3.0}]},
+            {"run": 2, "restarted": True, "tests": [
+                {"name": os.path.join(d, "tests", "Kill.client.luau"), "outcome": "fail", "passed": False,
+                 "result": "FAIL the sack is taken", "datamodel": "Client", "seconds": 4.0, "run_id": "r2",
+                 "console": {"text": "marker\nInteract refused: too far", "found": True,
+                             "tail": ["Interact refused: too far"], "errors": []}}]},
+            {"run": 3, "restarted": True, "tests": [
+                {"name": os.path.join(d, "tests", "Kill.client.luau"), "outcome": "pass", "passed": True,
+                 "result": "PASS kill", "datamodel": "Client", "seconds": 3.0}]},
+        ]}
+        rec = runs.record_streak(d, streak)
+        assert rec["written"] == 3 and not rec.get("error"), rec
+        failed = streak["runs"][1]["tests"][0]
+        assert "text" not in failed["console"], "the full console must leave the JSON once it is on disk"
+        log = failed["console_log"]
+        assert open(log, encoding="utf-8").read().endswith("Interact refused: too far"), log
+        with open(runs.ledger_path(d), "a", encoding="utf-8") as fh:
+            fh.write('{"torn": \n')  # a killed writer leaves half a line; it must not break reading
+        summary = runs.summarize(d)
+        t = summary["tests"][0]
+        assert t["test"] == "tests/Kill.client.luau", t
+        assert (t["runs"], t["passes"], t["current_streak"], t["best_streak"]) == (3, 2, 1, 1), t
+        assert t["last_failure"]["log"] == log and abs(t["pass_rate"] - 0.667) < 0.001, t
+        text = runs.render(summary)
+        assert "tests/Kill.client.luau" in text and "67%" in text and log in text, text
+        assert runs.summarize(d, test="nothing")["tests"] == []
+        assert runs.summarize(d, last=1)["tests"][0]["runs"] == 1
+
+
+@check("runs: git state names the project's commit and whether it is dirty")
+def _():
+    import shutil as _shutil
+    import subprocess
+    from rbforge import runs
+    if not _shutil.which("git"):
+        return "skip: git not on PATH"
+    with tempdir() as d:
+        assert runs.git_state(d) == (None, None)
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+                   GIT_COMMITTER_EMAIL="t@t")
+        for argv in (["init", "-q"], ["add", "."], ["commit", "-q", "-m", "x"]):
+            if argv[0] == "add":
+                open(os.path.join(d, "a.txt"), "w").write("1")
+            subprocess.run(["git", "-C", d] + argv, check=True, env=env, capture_output=True)
+        sha, dirty = runs.git_state(d)
+        assert sha and len(sha) == 12 and dirty is False, (sha, dirty)
+        open(os.path.join(d, "a.txt"), "w").write("2")
+        assert runs.git_state(d)[1] is True
+
+
+@check("cli: servertest --repeat --restart records every run, `runs --text` reads it, misuse exits 2")
+def _():
+    fake, _log = _studio_double(["PASS a", "PASS b"], start_mode="Edit")
+    with _isolated_home(), tempdir() as d, _swap_session(fake):
+        open(os.path.join(d, "default.project.json"), "w").write("{}")
+        test = _reporting_test(d)
+        code, out = _cli("servertest", test, "Attr", "--repeat", "2", "--restart", "--play-timeout", "5")
+        assert code == 0 and out["passed"] and out["record"]["written"] == 2, (code, out)
+        code, out = _cli("runs", "--root", d)
+        assert code == 0 and out["tests"][0]["runs"] == 2 and out["tests"][0]["current_streak"] == 2, out
+        import rbforge_cli
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            assert rbforge_cli.main(["runs", "--root", d, "--text"]) == 0
+        assert "t.luau" in buf.getvalue() and "100%" in buf.getvalue(), buf.getvalue()
+        code, out = _cli("servertest", test, "Attr", "--restart")
+        assert code == 2 and "--repeat" in out["error"]["message"], out
+        code, out = _cli("runs", "--root", d, "--last", "0")
+        assert code == 2, out
+
+
+@check("cli: --version prints the package version")
+def _():
+    import rbforge_cli
+    from rbforge import __version__
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            rbforge_cli.main(["--version"])
+        except SystemExit as exc:
+            assert exc.code == 0, exc.code
+    assert buf.getvalue().strip() == "rbforge %s" % __version__, buf.getvalue()
+
+
+@check("docs: studio mcp surface matches the 2026-11-24 handshake and no stale tool name survives")
+def _():
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    mcp = _ref("studio-mcp.md")
+    assert "**41 tools**" in mcp, "studio-mcp.md does not state the live count"
+    for name in ("get_roblox_skill", "list_roblox_skills", "video_capture", "list_plugin_actions", "open_plugin"):
+        assert "`%s`" % name in mcp, "studio-mcp.md lacks %s" % name
+    stale = re.compile(r"`list_skills`|`skill`|skill \"rbx-|\b14 (built-in|maintained)")
+    hits = []
+    for base, _dirs, files in os.walk(os.path.join(root, "skills")):
+        for f in files:
+            if f.endswith(".md"):
+                p = os.path.join(base, f)
+                for i, line in enumerate(open(p, encoding="utf-8"), 1):
+                    # A line that names the old tool as the old name (a changelog of the surface) is fine.
+                    if stale.search(line) and not re.search(r"(?i)renamed|old name", line):
+                        hits.append("%s:%d: %s" % (os.path.relpath(p, root), i, line.strip()[:90]))
+    assert not hits, "renamed Studio MCP tools still taught:\n" + "\n".join(hits)
+    skills = _ref("assistant-skills.md")
+    listed = set(re.findall(r"`(rbx-[a-z0-9-]+)`", skills))
+    assert len(listed) >= 17, "assistant-skills.md lists %d rbx-* skills, Studio shows 17" % len(listed)
+
+
+@check("docs: streak lessons - repeat runs, console before Stop, refusal reasons, oracles, input owners")
+def _():
+    need = {
+        "testing-debugging.md": ["--repeat", "--restart", "rbforge runs", "before anything stops Play",
+                                 "refusal reason", "the design's outcome", "world a player would have",
+                                 "unreachable", "Give tuning a budget"],
+        "debugging-playbook.md": ["silently refused", "console_log"],
+        "sharp-edges.md": ["Two handlers on one input action"],
+    }
+    for name, phrases in need.items():
+        text = _ref(name)
+        for p in phrases:
+            assert p in text, "%s lacks %r" % (name, p)
 
 
 if __name__ == "__main__":

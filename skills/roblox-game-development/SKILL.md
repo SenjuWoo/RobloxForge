@@ -155,12 +155,12 @@ Manage MCP Servers → Enable"). Never hand them code to paste. Full playbook:
 
 ## Ask Roblox before you write (cheapest win available)
 
-Studio ships 14 maintained `rbx-*` skills and four subagent types. They encode
+Studio ships 17 maintained `rbx-*` skills (2026-11-24) and four subagent types. They encode
 current APIs that model memory gets wrong.
 
 ```
-list_skills                       -> what is actually available right now
-skill "rbx-input-action-system"   -> read it BEFORE writing input code
+list_roblox_skills                                  -> what is actually available right now
+get_roblox_skill {"skill_name": "rbx-input-action-system"}  -> read it BEFORE writing input code
 subagent(explore)                 -> map an unfamiliar place without flooding context
 subagent(unit_test)               -> run Luau unit tests
 subagent(playtest)                -> scenario testing; it drives start_stop_play itself
@@ -180,7 +180,7 @@ Before Studio, run `rbforge review --kind traps` (MCP `rb_traps_review`).
 - `references/debugging-playbook.md` - START HERE when something looks or behaves wrong: symptom -> cause -> probe, and the fix protocol
 - `references/existing-projects.md` - taking over a codebase: audit order, characterization tests, strangler refactors, patterns to question
 - `references/current-engine.md` - what model memory gets wrong: replaced APIs and engine features newer than most training data
-- `references/studio-mcp.md` - all 38 live tools, exact argument quirks, subagents
+- `references/studio-mcp.md` - all 41 live tools, exact argument quirks, subagents, video capture
 - `references/live-iteration.md` - code loop (`rbforge push`) vs world loop (Edit + `save_place`), require-cache rebuilds, capture limits
 - `references/development-loop.md` - the vertical-slice method per genre
 - `references/architecture.md` - ownership, the explicit loader, lifetimes and cleanup, authored vs generated worlds, dependency injection
@@ -201,12 +201,12 @@ Before Studio, run `rbforge review --kind traps` (MCP `rb_traps_review`).
 - `references/free-stack.md` - the $0 rule, what is free, what to never pay for
 - `references/beginner-guide.md` - zero-experience walkthrough and vocabulary
 - `references/tooling.md` - pinned Rokit toolchain and what each tool buys you
-- `references/assistant-skills.md` - routing to Roblox's 14 built-in rbx-* skills
+- `references/assistant-skills.md` - routing to Roblox's 17 built-in rbx-* skills
 
 ## When unsure about an API
 
 Do not trust model memory. `rb_docs_search "TweenService:Create"` against the
 official creator-docs cache, then `rb_docs_read` the hit. If the cache is absent,
-`rbforge docs update` once (sparse clone, ~27MB) - or `skill "rbx-docs-search"`
+`rbforge docs update` once (sparse clone, ~27MB) - or `get_roblox_skill` `rbx-docs-search`
 for the live web fetch. Current official documentation beats your training data
 every time.
