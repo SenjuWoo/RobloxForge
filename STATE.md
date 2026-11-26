@@ -10,16 +10,17 @@ claim checkable.
 
 ## Version
 
-0.22.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.22.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 NEXT ACTION: first live use of `servertest --repeat N --restart` (a place the owner says may be restarted;
-Shattered Nations' R03 streak is the intended first run), then record what `get_console_output` held
+a production project's streak milestone is the intended first run), then record what `get_console_output` held
 for a failed Client run in the proven table. PLAN.md (0.22.0) rows S1-R3.
 
 ## What is proven, and how
 
 | Area | Evidence |
 |---|---|
+| Gate exclusions (0.22.1) | reproduced both field reports on a scaffolded project with a vendored `src/server/ServerPackages/Vendor.luau` (type error + StyLua diff) and a real `git worktree` under `.claude/worktrees/wt` (with and without `.claude/` in .gitignore): before, FAIL with 7 luau-lsp type errors, a StyLua diff and 31 files audited; after, PASS 10/0/0 with both dirs named as not checked, 7 diagnostics not counted, 15 files audited; a real type error in `src/shared` still fails with a project-relative worst-files line. Tests: `project: vendored packages and nested worktrees...`, `check: static rung skips...`, `check: --changed-only never hands a vendored file...` (all three fail on the 0.22.0 code) |
 | Streaks / forensics / run ledger (0.22.0) | offline only: a session double whose `get_studio_state`, `start_stop_play` and `get_console_output` answer in the formats read live on 2026-11-24 (Edit `Available DataModels: Edit`, console plain text, oldest first, no timestamps). Tests: restart order from Edit and from Play, the failed run's console sliced at its marker (earlier runs and older noise excluded), Play untouched after a failure, keep-going counts, a Play that never comes up (`RBF-PLAY-003`), unreadable state refused before any Stop, execute_luau errors become `error` outcomes with console, ledger rates/streaks/torn lines, git sha + dirty flag, CLI round trip under an isolated home. **No live run**: the only Studio holds the owner's production place |
 | Studio MCP surface (0.22.0) | live `tools/list` 2026-11-24 (read-only, Edit mode): 41 tools; `get_roblox_skill`/`list_roblox_skills` replace `skill`/`list_skills`; new `video_capture`, `list_plugin_actions`, `open_plugin`; `list_roblox_skills` returned 17 `rbx-*` skills. A docs test fails on any old name taught as current |
 | Starter refusal reasons (0.22.0) | scaffold gate (StyLua, selene, luau-lsp strict) passes with `(boolean, string?)` returns; the extended live starter test has not run in Studio |
@@ -88,6 +89,10 @@ for a failed Client run in the proven table. PLAN.md (0.22.0) rows S1-R3.
 
 ## Done (verified)
 
+- 0.22.1 (2026-11-25): rung 1 of `rbforge check` skips vendored, snapshot, git-ignored and nested-worktree
+  paths (two field reports); nested worktrees skipped by rung 3, audit, review and traps; type-error
+  summaries project-relative for sourcemap-resolved paths; README rebuilt with real terminal captures.
+  261 tests.
 - 0.22.0 (2026-11-24): `servertest --repeat/--restart/--keep-going`, failure console capture
   (`console_log`), per-project run ledger and `rbforge runs`, `rbforge --version`, starter refusal reasons
   (`LastRefusal`), 41-tool Studio MCP reference with the renamed skill tools, streak/oracle/fixture/bot
@@ -324,6 +329,7 @@ rbforge.cmd <command>              # same CLI, from the checkout
 
 ## Log
 
+- 2026-11-25 — 0.22.1: gate exclusions (two field reports cleared), README presentation pass; 261 tests.
 - 2026-11-24 — 0.22.0: streaks, failure forensics, run ledger, 41-tool MCP surface, starter refusal
   reasons, field lessons from a production milestone (read-only). Offline only; 258 tests.
   Released v0.22.0 from 59f9be2 (CI green on d22a96e and 59f9be2, CodeQL green; 0 open Dependabot,

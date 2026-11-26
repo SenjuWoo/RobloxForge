@@ -71,6 +71,30 @@ def _luau_files(root):
     return sorted(out)
 
 
+def _skipped_dirs(root):
+    """Project-relative directories the static rung must not format or analyze.
+
+    Snapshot and vendored directories (`project.SNAPSHOT_DIRS`, the rule rung 3 uses) and nested work
+    trees (a directory with its own `.git`). Git-ignored paths are not listed: StyLua already honours
+    .gitignore, and the typechecker's diagnostics are filtered with `project.excluded` instead.
+    """
+    out = []
+    root_abs = os.path.abspath(root)
+    for base, dirs, _files in os.walk(root_abs):
+        keep = []
+        for d in dirs:
+            if d in (".git", "node_modules"):
+                continue
+            full = os.path.join(base, d)
+            rel = _rel(root_abs, full)
+            if project_mod.is_snapshot(rel + "/x") or os.path.exists(os.path.join(full, ".git")):
+                out.append(rel)
+            else:
+                keep.append(d)
+        dirs[:] = keep
+    return sorted(out)
+
+
 def _rel(root, path):
     return os.path.relpath(path, root).replace("\\", "/")
 
@@ -111,9 +135,13 @@ def _project_relative(path, root_abs):
     never counts as being inside `/proj`. A different drive cannot be contained.
     Anything outside the root keeps the path the analyzer printed.
     """
+    # luau-lsp names a file resolved through the sourcemap as `c:\...\X.luau [game/...]`: the
+    # DataModel suffix is not part of the path, and the drive letter's case may differ from ours.
+    path = re.sub(r"\s+\[[^\]]*\]\s*$", "", path)
     absolute = os.path.abspath(path)
     try:
-        inside = os.path.commonpath([absolute, root_abs]) == root_abs
+        inside = (os.path.normcase(os.path.commonpath([absolute, root_abs]))
+                  == os.path.normcase(root_abs))
     except ValueError:
         inside = False
     return (os.path.relpath(absolute, root_abs) if inside else path).replace("\\", "/")
@@ -159,17 +187,36 @@ def rung_static(root, changed=None):
     """
     rung = {"id": "static", "name": "Rung 1 - format/lint/typecheck", "checks": []}
     scoped = [p for p in (changed or []) if p.endswith((".luau", ".lua"))] if changed is not None else None
+    if scoped:
+        # Files named on the command line bypass StyLua's globs, so vendored and worktree copies are
+        # dropped here, by the same rule rung 3 uses.
+        rels = {p: _rel(root, p) for p in scoped}
+        drop = project_mod.excluded(root, rels.values())
+        scoped = [p for p in scoped if rels[p] not in drop]
+    skipped_dirs = _skipped_dirs(root) if scoped is None else []
+    skipped_note = ""
+    if skipped_dirs:
+        skipped_note = " (not checked: %s%s)" % (
+            ", ".join(skipped_dirs[:6]),
+            " and %d more" % (len(skipped_dirs) - 6) if len(skipped_dirs) > 6 else "")
 
     if shutil.which("stylua"):
         if scoped is not None and not scoped:
             rung["checks"].append({"id": "stylua", "status": "skip",
                                    "detail": "no changed Luau files in the working tree"})
         else:
-            argv = ["stylua", "--check"] + (scoped if scoped is not None else ["."])
+            if scoped is not None:
+                argv = ["stylua", "--check"] + scoped
+            else:
+                # Passing any --glob replaces StyLua's defaults, so the two defaults come first.
+                argv = ["stylua", "--check", "-g", "**/*.lua", "-g", "**/*.luau"]
+                for d in skipped_dirs:
+                    argv += ["-g", "!%s/**" % d]
+                argv.append(".")
             code, out = _run(argv, root)
             rung["checks"].append({
                 "id": "stylua", "status": "pass" if code == 0 else ("fail" if code else "skip"),
-                "detail": "formatted" if code == 0 else (out[:800] or "unknown")})
+                "detail": ("formatted" + skipped_note) if code == 0 else (out[:800] or "unknown")})
     else:
         rung["checks"].append({"id": "stylua", "status": "skip",
                                "detail": STATIC_TOOLS["stylua"]})
@@ -264,6 +311,12 @@ def rung_static(root, changed=None):
         # only TypeError/SyntaxError blocks the gate, and lint-only output is a warning.
         found = re.findall(
             r"^\s*(\S.*?(?:\(\d+,\d+\)|:\d+:\d+)): (\w+): (.*)$", out, re.M)
+        # luau-lsp analyzes every file under the root, including vendored packages, git-ignored
+        # folders and nested worktrees. Their diagnostics are not this project's defects (rung 3
+        # already skips those files), so they are dropped here and counted in the detail.
+        found, not_counted = _drop_excluded(found, root)
+        note = (" (%d diagnostic(s) under vendored, snapshot, git-ignored or nested-worktree paths "
+                "not counted)" % not_counted) if not_counted else ""
         blocking = [(loc, kind, msg) for loc, kind, msg in found if kind in ("TypeError", "SyntaxError")]
         lint = [(loc, kind, msg) for loc, kind, msg in found if kind not in ("TypeError", "SyntaxError")]
         if code is None:
@@ -278,13 +331,13 @@ def rung_static(root, changed=None):
                                              bool(os.path.isfile(sourcemap)), root)
             status, detail = "fail", "%d type error(s): " % len(blocking) + "; ".join(
                 "%s %s: %s" % (loc[-40:], kind, msg[:110]) for loc, kind, msg in blocking[:3]
-            ) + "\n" + summary
+            ) + note + "\n" + summary
         elif lint:
             status, detail = "warn", "%d lint finding(s), no type errors: %s" % (
                 len(lint), "; ".join("%s %s: %s" % (loc[-30:], kind, msg[:90])
-                                     for loc, kind, msg in lint[:3]))
-        elif code == 0:
-            status, detail = "pass", "no type errors"
+                                     for loc, kind, msg in lint[:3])) + note
+        elif code == 0 or (code == 1 and not_counted):
+            status, detail = "pass", "no type errors" + note
         else:
             # Non-zero with no readable diagnostics is a tool failure (crash, bad flag, killed process).
             status, detail = "fail", "luau-lsp exited %s without diagnostics: %s" % (code, out[:600])
@@ -295,6 +348,21 @@ def rung_static(root, changed=None):
             except OSError:
                 pass
     return rung
+
+
+def _drop_excluded(found, root):
+    """(kept, dropped_count): analyzer diagnostics minus those in files that are not the project."""
+    root_abs = os.path.abspath(root)
+    rels = {}
+    for loc, _kind, _msg in found:
+        path = re.split(r"\(\d+,|:\d+:", loc)[0]
+        rel = _project_relative(path, root_abs)
+        # Outside the root (definitions, a path elsewhere) stays counted: not ours to hide.
+        outside = os.path.isabs(rel) or re.match(r"^[A-Za-z]:", rel) or rel.startswith("../")
+        rels[loc] = None if outside else rel
+    drop = project_mod.excluded(root_abs, {r for r in rels.values() if r})
+    kept = [f for f in found if rels[f[0]] is None or rels[f[0]] not in drop]
+    return kept, len(found) - len(kept)
 
 
 def _lint_status(code, out):
@@ -370,13 +438,14 @@ def rung_structure(root):
     # merely contains "Packages" used to have every file dropped, and an empty audit read as a skip.
     files = [f for f in _luau_files(root)
              if not any(seg.endswith("Packages") for seg in _rel(root, f).split("/")[:-1])]
-    # Recovery snapshots and git-ignored files are copies, not the project: the static rung already
-    # ignores them, and warnings about a three-month-old backup hide the ones about live code.
+    # Recovery snapshots, vendored packages, git-ignored files and nested worktrees are copies, not
+    # the project: the static rung leaves them out by the same rule (`project.excluded`), and warnings
+    # about a three-month-old backup hide the ones about live code.
     files, snapshots = project_mod.shipped_sources(root, files)
     if snapshots:
         rung["checks"].append({"id": "snapshots", "status": "pass",
-                               "detail": "%d files under snapshot or git-ignored paths not audited"
-                                         % len(snapshots)})
+                               "detail": "%d files under snapshot, vendored, git-ignored or "
+                                         "nested-worktree paths not audited" % len(snapshots)})
     if not files:
         # Not a reason to stop: a project can be all project.json + models, and
         # the $path audit below is exactly what catches that state.

@@ -71,14 +71,48 @@ def git_ignored(root, rels):
     return {p for p in done.stdout.decode("utf-8", "replace").split("\0") if p}
 
 
+def nested_tree_dirs(root, rels):
+    """Project-relative directories among the parents of `rels` that hold their own `.git`.
+
+    A git worktree (`.claude/worktrees/<name>`) or a nested repository is a second checkout of the
+    code, not this project: its files duplicate every module and its requires do not resolve against
+    this project's sourcemap. The project root itself never counts.
+    """
+    found, seen = set(), set()
+    for rel in rels:
+        parts = rel.replace("\\", "/").split("/")[:-1]
+        for i in range(1, len(parts) + 1):
+            prefix = "/".join(parts[:i])
+            if prefix in seen:
+                continue
+            seen.add(prefix)
+            if os.path.exists(os.path.join(root, prefix, ".git")):
+                found.add(prefix)
+    return found
+
+
+def excluded(root, rels):
+    """The subset of project-relative `rels` that is not the project: snapshot or vendored
+    directories, git-ignored paths and files inside a nested work tree. One rule for every rung."""
+    rels = [r.replace("\\", "/") for r in rels]
+    nested = nested_tree_dirs(root, rels)
+
+    def in_nested(rel):
+        return any(rel.startswith(d + "/") for d in nested)
+
+    out = {r for r in rels if is_snapshot(r) or in_nested(r)}
+    out |= git_ignored(root, [r for r in rels if r not in out])
+    return out
+
+
 def shipped_sources(root, files=None):
     """(kept, skipped) absolute paths: Luau sources that are part of the project being shipped."""
     files = list(files) if files is not None else list(_walk_sources(root))
     rel = {f: os.path.relpath(f, root).replace("\\", "/") for f in files}
-    ignored = git_ignored(root, [r for r in rel.values() if not is_snapshot(r)])
+    skip = excluded(root, rel.values())
     kept, skipped = [], []
     for f in files:
-        (skipped if is_snapshot(rel[f]) or rel[f] in ignored else kept).append(f)
+        (skipped if rel[f] in skip else kept).append(f)
     return kept, skipped
 
 

@@ -46,9 +46,10 @@ jobs:
           name="RobloxForge-${GITHUB_REF_NAME}"
           # Runtime/product files only. Tests, CI config and STATE.md stay in the
           # repository; a downloader wants a working tool, not our paperwork.
+          # docs/presentation holds the README images, so the zip's README renders.
           git archive --format=zip --prefix="$name/" -o "$name.zip" \
             "$GITHUB_REF_NAME" \
-            src mcp_server skills scripts templates knowledge assets \
+            src mcp_server skills scripts templates knowledge assets docs/presentation \
             tools rokit.toml \
             Install.ps1 Update.ps1 Uninstall.ps1 START-HERE.bat rbforge.cmd \
             README.md CHANGELOG.md LICENSE SECURITY.md THIRD-PARTY-NOTICES.md \

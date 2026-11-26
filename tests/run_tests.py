@@ -6023,6 +6023,103 @@ def _():
             assert p in text, "%s lacks %r" % (name, p)
 
 
+def _worktree_fixture(root):
+    """A project with a vendored package and a nested worktree (its `.git` is a file, as git writes it)."""
+    for rel, text in {
+        "src/server/Main.server.luau": "return 1\n",
+        "src/server/ServerPackages/Vendor.luau": "return   2\n",
+        ".claude/worktrees/wt/.git": "gitdir: ../../../.git/worktrees/wt\n",
+        ".claude/worktrees/wt/src/server/Main.server.luau": "return   3\n",
+    }.items():
+        path = os.path.join(root, *rel.split("/"))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "w").write(text)
+
+
+@check("project: vendored packages and nested worktrees are excluded by one rule, live code is kept")
+def _():
+    from rbforge import project
+    with tempdir() as root:
+        _worktree_fixture(root)
+        rels = ["src/server/Main.server.luau", "src/server/ServerPackages/Vendor.luau",
+                ".claude/worktrees/wt/src/server/Main.server.luau"]
+        out = project.excluded(root, rels)
+        assert out == set(rels[1:]), out
+        kept, skipped = project.shipped_sources(root)
+        assert [os.path.relpath(k, root).replace("\\", "/") for k in kept] == rels[:1], kept
+        assert len(skipped) == 2, skipped
+
+
+@check("check: static rung skips vendored and worktree copies (stylua globs, luau-lsp diagnostics)")
+def _():
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        _worktree_fixture(root)
+        defs = os.path.join(root, "globalTypes.d.luau")
+        open(defs, "w").write("--" + "x" * 2048)
+        vendor_abs = os.path.join(root, "src", "server", "ServerPackages", "Vendor.luau")
+        # The shapes luau-lsp 1.70.1 printed for a real project: relative paths for files outside
+        # the sourcemap, and an absolute path with a lowercase drive plus a DataModel suffix inside it.
+        vendor_line = vendor_abs[0].lower() + vendor_abs[1:] if vendor_abs[1:2] == ":" else vendor_abs
+        analyzer = "\n".join([
+            ".claude/worktrees/wt/src/server/Main.server.luau(1,1): TypeError: Unknown require: x",
+            "%s [game/ServerScriptService/Server/ServerPackages/Vendor](1,1): TypeError: bad" % vendor_line,
+        ])
+        calls = []
+
+        def fake_run(argv, cwd, timeout=180):
+            calls.append(argv)
+            if argv[0] == "luau-lsp":
+                return 1, analyzer
+            return 0, ""
+
+        old_run, old_which = check_mod._run, check_mod.shutil.which
+        check_mod._run = fake_run
+        check_mod.shutil.which = lambda name: "C:/fake/" + name if name != "rojo" else None
+        os.environ["RBFORGE_LUAU_DEFINITIONS"] = defs
+        try:
+            clean = check_mod.rung_static(root)
+            analyzer += "\nsrc/server/Main.server.luau(1,1): TypeError: real defect"
+            dirty = check_mod.rung_static(root)
+        finally:
+            check_mod._run, check_mod.shutil.which = old_run, old_which
+            os.environ.pop("RBFORGE_LUAU_DEFINITIONS", None)
+    stylua = [a for a in calls if a[0] == "stylua"][0]
+    assert "!src/server/ServerPackages/**" in stylua and "!.claude/worktrees/wt/**" in stylua, stylua
+    assert "**/*.luau" in stylua and stylua[-1] == ".", stylua
+    lsp = [c for c in clean["checks"] if c["id"] == "luau-lsp"][0]
+    # Exit 1 with every diagnostic in an excluded file is a pass, and says what it did not count.
+    assert lsp["status"] == "pass", lsp
+    assert "2 diagnostic(s)" in lsp["detail"], lsp
+    lsp = [c for c in dirty["checks"] if c["id"] == "luau-lsp"][0]
+    assert lsp["status"] == "fail" and "1 type error(s)" in lsp["detail"], lsp
+    assert "worst files: src/server/Main.server.luau 1" in lsp["detail"], lsp
+
+
+@check("check: --changed-only never hands a vendored file to stylua")
+def _():
+    from rbforge import check as check_mod
+    with tempdir() as root:
+        _worktree_fixture(root)
+        changed = [os.path.join(root, "src", "server", "ServerPackages", "Vendor.luau"),
+                   os.path.join(root, "src", "server", "Main.server.luau")]
+        calls = []
+
+        def fake_run(argv, cwd, timeout=180):
+            calls.append(argv)
+            return 0, ""
+
+        old_run, old_which = check_mod._run, check_mod.shutil.which
+        check_mod._run = fake_run
+        check_mod.shutil.which = lambda name: "C:/fake/" + name if name == "stylua" else None
+        try:
+            check_mod.rung_static(root, changed=changed)
+        finally:
+            check_mod._run, check_mod.shutil.which = old_run, old_which
+    stylua = [a for a in calls if a[0] == "stylua"][0]
+    assert stylua == ["stylua", "--check", changed[1]], stylua
+
+
 if __name__ == "__main__":
     print("\n%d passed, %d failed, %d skipped" % (len(PASS), len(FAIL), len(SKIPPED)))
     for name, why in SKIPPED:

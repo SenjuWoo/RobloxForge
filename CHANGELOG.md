@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.22.1 - 2026-11-25
+
+The gate judged copies of the project as the project. Two field reports from a production project: a
+git worktree under `.claude/worktrees/` added 208 "Unknown require" type errors, and a vendored
+`ServerPackages/ProfileStore.luau` added 89 luau-lsp errors and a StyLua diff. Rung 3 already skipped
+vendored and git-ignored files; rung 1 did not.
+
+### Fixed
+- `rbforge check` rung 1 leaves out what is not the project, by the same rule rung 3 uses
+  (`project.excluded`): snapshot and vendored directories (`Packages`, `ServerPackages`, `DevPackages`,
+  `_Index`, backups, recovery, artifacts), git-ignored paths and nested work trees (any directory with
+  its own `.git`, such as a git worktree). StyLua gets `!<dir>/**` globs for them; `--changed-only`
+  drops them from the file list; luau-lsp diagnostics in them are not counted, and the detail says how
+  many were dropped. An analyzer exit 1 whose every diagnostic sits in an excluded file is a pass.
+- Rung 3, `audit`, `review` and the trap lint also skip nested work trees.
+- Type-error summaries named a file the analyzer printed as `c:\...\X.luau [game/...]` by its absolute
+  path: the DataModel suffix is stripped and the drive letter compared case-insensitively, so the
+  "worst files" list is project-relative again.
+
+### Changed
+- README rebuilt around real terminal captures (`docs/presentation/`): doctor, plan + docs search,
+  new + check. Corrected: 19 MCP tools (one place said 18), 261 tests, `doctor`/`check` print text (not
+  JSON), `Install.ps1 -Toolchain` and `-Agent` documented. The release zip carries `docs/presentation`
+  so its README renders.
+
+### Not changed
+- selene still lints vendored code under `src/` (it has no negating `--pattern`); exclude it in the
+  project's `selene.toml` if it warns.
+
 ## 0.22.0 - 2026-11-24
 
 Closing a live gate on a streak, with the evidence of every failure kept. A production project spent
