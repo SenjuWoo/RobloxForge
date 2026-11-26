@@ -337,6 +337,10 @@ rbforge.cmd <command>              # same CLI, from the checkout
 
 - 2026-11-26 — 0.23.0: long-run QA (detach, snapshots, two sessions), save-check, UV check,
   device-layout, docs from a production project's field notes; 271 tests; detached two-session suite proven live.
+  Released v0.23.0 from 17fff50 (CI green on a5a9686, 1758d46 and 17fff50; 0 open Dependabot,
+  code-scanning and secret-scanning alerts). Published zip sha256-verified (8d339b7e...e9c21c), smoke OK
+  (25 skills, 19 MCP tools), jobs.py and the new probes in the archive; skills `current` in every agent
+  root (375); `rbforge doctor --no-probe` reports v0.23.0.
 
 - 2026-11-25 — 0.22.1: gate exclusions (two field reports cleared), README presentation pass; 261 tests.
   Released v0.22.1 from 0f6f3d1 (CI 4 test legs + luau-semantics and CodeQL green on that SHA; 0 open

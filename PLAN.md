@@ -37,7 +37,7 @@ Evidence format: `cmd:<command> @ <sha> exit=<n>`. `T=python tests/run_tests.py`
 | K1 | Docs: field notes B, C, D, A6-A10 in assets, testing-debugging, studio-mcp, sharp-edges, ui-mobile, performance, npc guidance; receipt template in docs and scaffold | complete | - | `cmd:RBFORGE_TEST_ONLY="docs: long-run" T` | cmd:python tests/run_tests.py @ 1758d46 exit=0 (271 passed, 0 failed, 0 skipped) |
 | R1 | Full suite, version 0.23.0, CHANGELOG, README, STATE | complete | all above | `cmd:T` | cmd:python tests/run_tests.py @ 1758d46 exit=0 (271 passed, 0 failed, 0 skipped) |
 | R2 | Live: detached suite on a disposable place, job status/wait, lock refusal, `save-check`, snapshot fields | complete | J1, S1, P3 | `cmd:rbforge servertest --detach` | live 2026-11-26, disposable place (no other Studio running, closed by its PID): `cmd:rbforge servertest --suite tests/suites.json --sessions 2 --detach` exit=0, then `runs --job --wait` exit=0 (PASS 2/2, tested commit and source sha256 in the report); exec during the run RBF-STUDIO-004; installed rbforge, no Studio: job running from a separate call, done RBF-STUDIO-001 at 46 s; save-check no -> yes; device-layout found the planted faults per preset; code at 1758d46 |
-| R3 | Push, CI green, alerts, tag + release, skills, doctor | complete | R1 | `cmd:gh run list` | CI + Push on main green on 1758d46; 0 open Dependabot, code-scanning, secret-scanning alerts; tag/release recorded in STATE.md log |
+| R3 | Push, CI green, alerts, tag + release, skills, doctor | complete | R1 | `cmd:gh run list` | CI + Push on main green on 1758d46; 0 open Dependabot, code-scanning, secret-scanning alerts; tag v0.23.0 from 17fff50, asset sha256 verified, smoke OK, 375 skill installs current, doctor v0.23.0 |
 
 ## Decisions
 
