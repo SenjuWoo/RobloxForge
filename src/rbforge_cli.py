@@ -179,7 +179,7 @@ def main(argv=None):
     p_runs = sub.add_parser("runs", help="live test history for a project: pass rate and streaks per test")
     p_runs.add_argument("--job", help="a detached run: running / done / died, its progress and its report")
     p_runs.add_argument("--wait", action="store_true",
-                        help="with --job: block until it ends or --wait-timeout passes (exit 5 = still running)")
+                        help="with --job: block until it ends or --wait-timeout passes (exit 124 = still running)")
     p_runs.add_argument("--wait-timeout", type=float, default=540.0,
                         help="seconds --wait blocks at most (default 540, under a 10-minute tool call)")
     p_runs.add_argument("--jobs", action="store_true", help="list recent detached runs")
@@ -443,10 +443,13 @@ def _dispatch(args):
         if args.repeat is None and (args.restart or args.keep_going):
             raise ForgeError("RBF-ARG-001", "--restart and --keep-going belong to --repeat N",
                              hint="for one fresh run: --repeat 1 --restart")
-        if args.detach:
-            from rbforge import jobs
+        from rbforge import jobs
+        if args.detach and not os.environ.get(jobs.ENV_JOB):
+            # Inside a job the flag is ignored: a child must never detach again. The flag is removed in
+            # any spelling argparse accepts (`--det`, `--deta`, ...), not only the exact one.
             jobs.refuse_if_held()
-            job = jobs.start([a for a in args.raw_argv if a != "--detach"])
+            child_argv = [a for a in args.raw_argv if not (len(a) >= 4 and "--detach".startswith(a))]
+            job = jobs.start(child_argv)
             _emit({"job": job["job"], "pid": job["pid"], "log": job["log"], "out": job["out"],
                    "status": "rbforge runs --job %s" % job["job"],
                    "wait": "rbforge runs --job %s --wait" % job["job"],
@@ -505,7 +508,9 @@ def _dispatch(args):
             st = jobs.wait(args.job, args.wait_timeout) if args.wait else jobs.status(args.job)
             _emit(st)
             if st["state"] == "running":
-                return ExitCode.REFUSED if args.wait else ExitCode.OK  # 5: still running, wait again
+                # 124 (the timeout convention) is outside every code a finished run can return: a suite
+                # exits with its failed-suite count, 0-100.
+                return jobs.STILL_RUNNING if args.wait else ExitCode.OK
             if st["state"] == "died":
                 return ExitCode.GENERIC
             return st["exit"] if isinstance(st.get("exit"), int) else ExitCode.GENERIC

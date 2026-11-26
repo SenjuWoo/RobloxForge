@@ -29,6 +29,7 @@ _ID = re.compile(r"^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$")
 LOCK_NAME = "studio.lock"
 ENV_JOB = "RBFORGE_JOB_ID"            # set in the child: its own lock does not refuse it
 ENV_IGNORE = "RBFORGE_IGNORE_JOB_LOCK"  # set to 1 to talk to Studio anyway (you take the risk)
+STILL_RUNNING = 124                     # `runs --job --wait` timed out with the job still running
 
 
 def jobs_dir():
@@ -112,6 +113,9 @@ def start(argv, cwd=None):
                                 stdin=subprocess.DEVNULL, stdout=out, stderr=log, close_fds=True, **kwargs)
     job["pid"] = proc.pid
     _write_json(_path(job_id, ".json"), job)
+    # Taken here, not by the child once Python has started: otherwise a live command or a second
+    # --detach in that gap would pass the check. The child rewrites it with the same job id.
+    _write_json(lock_path(), {"job": job_id, "pid": proc.pid, "since": time.time()})
     return job
 
 

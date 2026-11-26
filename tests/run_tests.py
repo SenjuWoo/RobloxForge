@@ -6198,14 +6198,14 @@ def _():
                     os.environ[k] = v
 
 
-@check("jobs: runs --job --wait exits 5 while still running, the job's code when done; --sessions is a restart streak")
+@check("jobs: runs --job --wait exits 124 while still running, the job's code when done; --sessions is a restart streak")
 def _():
     from rbforge import jobs, live
     import rbforge_cli
     with _isolated_home():
         running = _job_record(jobs, os.getpid())
         with contextlib.redirect_stdout(io.StringIO()):
-            assert rbforge_cli.main(["runs", "--job", running, "--wait", "--wait-timeout", "0.2"]) == 5
+            assert rbforge_cli.main(["runs", "--job", running, "--wait", "--wait-timeout", "0.2"]) == 124
             assert rbforge_cli.main(["runs", "--job", running]) == 0
             done = _job_record(jobs, 1, {"exit": 1, "finished": time.time()})
             assert rbforge_cli.main(["runs", "--job", done, "--wait"]) == 1
@@ -6358,6 +6358,65 @@ def _():
         assert "docs/evidence/TEMPLATE.md" in files
         text = open(os.path.join(target, "docs", "evidence", "TEMPLATE.md"), encoding="utf-8").read()
         assert "Result: PASS" in text and "Tested SHA:" in text and "Not checked:" in text
+
+
+@check("jobs: an abbreviated --detach never re-detaches, the lock is taken at start, doctor skips its probe")
+def _():
+    from rbforge import jobs, studio
+    import rbforge_cli
+    seen = []
+    old_start = jobs.start
+    jobs.start = lambda argv, cwd=None: seen.append(list(argv)) or {"job": "j", "pid": 1, "log": "l", "out": "o"}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            for flag in ("--detach", "--deta", "--det"):
+                assert rbforge_cli.main(["servertest", "t.server.luau", flag]) == 0
+        assert all(not any("--detach".startswith(a) and len(a) >= 4 for a in argv) for argv in seen), seen
+        # Inside a job the flag is ignored: the child runs the test instead of starting another job.
+        os.environ[jobs.ENV_JOB] = "20261126-000000-abcdef"
+        try:
+            n = len(seen)
+            with contextlib.redirect_stdout(io.StringIO()):
+                rbforge_cli.main(["servertest", os.path.join("nope", "x.server.luau"), "--det", "--no-record"])
+            assert len(seen) == n, "a job started another job"
+        finally:
+            os.environ.pop(jobs.ENV_JOB, None)
+    finally:
+        jobs.start = old_start
+    with _isolated_home(), tempdir() as d:
+        job = jobs.start(["servertest", os.path.join(d, "missing.server.luau")], cwd=d)
+        lock = jobs._read_json(jobs.lock_path())
+        assert lock and lock["job"] == job["job"] and lock["pid"] == job["pid"], lock
+        jobs.wait(job["job"], 60, poll=0.2)
+        # A live lock makes doctor skip the MCP probe instead of taking the connection.
+        jobs._write_json(jobs.lock_path(), {"job": "20261126-000000-abcdef", "pid": os.getpid()})
+        old_probe = studio.probe_mcp
+        studio.probe_mcp = lambda **k: (_ for _ in ()).throw(AssertionError("doctor probed while a job held Studio"))
+        try:
+            snap = studio.snapshot(probe=True)
+        finally:
+            studio.probe_mcp = old_probe
+        assert snap.get("detached_job") == "20261126-000000-abcdef" and "detached run" in snap["mcp_probe"]["note"]
+
+
+@check("probes: device-layout drives the device simulator service and parses")
+def _():
+    from rbforge import probes
+    cat = {p["name"]: p for p in probes.catalog()}
+    assert cat["device-layout"]["datamodel"] == "Edit"
+    code = probes.render("device-layout", probes.parse_sets(['devices={"iPhone 7"}', "keep=true"]))["code"]
+    for need in ("StudioDeviceSimulatorService", "SetDeviceAsync", "StopSimulationAsync", "OFF-SCREEN",
+                 "SMALL TARGET", '{"iPhone 7"}'):
+        assert need in code, need
+    with tempdir() as d:
+        cfg = os.path.join(d, "selene.toml")
+        open(cfg, "w").write('std = "lua51"\n')
+        path = os.path.join(d, "device-layout.luau")
+        open(path, "w", encoding="utf-8").write(probes.render("device-layout")["code"])
+        ok, detail = _parse_luau(path, cfg)
+        assert ok, detail
+    text = _ref("ui-mobile.md")
+    assert "StudioDeviceSimulatorService" in text and "device-layout" in text
 
 
 if __name__ == "__main__":

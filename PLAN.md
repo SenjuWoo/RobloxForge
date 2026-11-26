@@ -16,7 +16,7 @@ Evidence format: `cmd:<command> @ <sha> exit=<n>`. `T=python tests/run_tests.py`
 | A4 worktrees | shipped in 0.22.1 (`project.excluded` skips any dir holding `.git`, a worktree's `.git` file included) |
 | A5 exec silence | build: "(no return value)" on stderr, help text |
 | A6 slot / save_place | build: probe `save-check` with the attribute names as parameters; the forge cannot block the MCP `save_place`, the docs say so |
-| A7 device emulation | docs: Studio serves Roblox's `rbx-device-simulator-lua` through `get_roblox_skill` (already routed); offline thumb-zone spec as the fallback |
+| A7 device emulation | build: `StudioDeviceSimulatorService` is scriptable from `execute_luau` (read in the skill, proven live); probe `device-layout`; offline thumb-zone spec as the fallback |
 | A8 unfocused perf | build: perf probe labels a flat ~66 ms frame "consistent with an unfocused-Studio throttle" (no focus signal assumed) |
 | A9 toolbox args | `is_start`, `capture_id`, `NotNeeded` already in studio-mcp.md; session ids change already there |
 | A10 sed quoting | docs (sharp-edges agent traps) |
@@ -32,7 +32,7 @@ Evidence format: `cmd:<command> @ <sha> exit=<n>`. `T=python tests/run_tests.py`
 | J1 | Detached runs: `servertest --detach` starts the same command in a background process, writes a job record and log under `RBFORGE_HOME/runs/jobs/`, returns the job id; the child writes its result atomically; `rbforge runs --job ID` reports running / done / died (pid gone, no result); `--wait --wait-timeout S` exits 0/1 with the run, 5 while still running; live commands refuse while a detached job holds the Studio connection | pending | - | `cmd:RBFORGE_TEST_ONLY="jobs:" T` | - |
 | S1 | Snapshots: suite and single entries carry their source read at load; every run uses it; commit, dirty flag and manifest digest captured before the first run and written to the report and the ledger; `--sessions N` = `--repeat N --restart` | pending | - | `cmd:RBFORGE_TEST_ONLY="snapshot:" T` | - |
 | X1 | `exec` prints "(no return value)" on stderr when the script returns nothing | pending | - | `cmd:RBFORGE_TEST_ONLY="cli: exec" T` | - |
-| P3 | Probes: `save-check` (QA attributes, Play state, verdict); `perf` labels a throttled frame | pending | - | `cmd:RBFORGE_TEST_ONLY="probes:" T` | - |
+| P3 | Probes: `save-check` (QA attributes, Play state, verdict); `perf` labels a throttled frame; `device-layout` (per-preset viewport, off-screen, small targets) | pending | - | `cmd:RBFORGE_TEST_ONLY="probes:" T` | - |
 | U1 | `assets check` reports GLB/glTF meshes without UVs; `--require-uv` fails them | pending | - | `cmd:RBFORGE_TEST_ONLY="assets: uv" T` | - |
 | K1 | Docs: field notes B, C, D, A6-A10 in assets, testing-debugging, studio-mcp, sharp-edges, ui-mobile, performance, npc guidance; receipt template in docs and scaffold | pending | - | `cmd:RBFORGE_TEST_ONLY="docs: long-run" T` | - |
 | R1 | Full suite, version 0.23.0, CHANGELOG, README, STATE | pending | all above | `cmd:T` | - |

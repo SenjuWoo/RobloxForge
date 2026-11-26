@@ -10,8 +10,10 @@ restarts, nested worktrees left out of the gate) are cited, not rebuilt.
 ### Added
 - `rbforge servertest --detach`: the same command in a background process; returns a job id at once.
   `rbforge runs --job ID` reports running, done (with the run's JSON report and exit code) or died (the
-  process is gone without a result); `--wait [--wait-timeout S]` blocks, exit 5 while still running;
-  `rbforge runs --jobs` lists recent jobs. While a job runs it holds the Studio connection: other live
+  process is gone without a result); `--wait [--wait-timeout S]` blocks, exit 124 while still running;
+  `rbforge runs --jobs` lists recent jobs. Exit 124 = still running (a suite's own exit is its failed
+  count, 0-100). The lock is taken by the launcher as soon as the child starts; a child never detaches
+  again, whatever spelling of `--detach` reached it. While a job runs it holds the Studio connection: other live
   `rbforge` commands refuse with `RBF-STUDIO-004` and `doctor` skips its probe
   (`RBFORGE_IGNORE_JOB_LOCK=1` overrides).
 - `servertest --sessions N`: the release proof, N runs each in a fresh Play session
@@ -21,6 +23,10 @@ restarts, nested worktrees left out of the gate) are cited, not rebuilt.
   flag and the manifest digest read before the first run, and the ledger records that commit.
 - `rbforge assets check` lists GLB meshes without UVs (`meshes_without_uv`, a warning); `--require-uv`
   fails on them (exit 2).
+- Probe `device-layout`: sets real device presets through `StudioDeviceSimulatorService` (scriptable from
+  `execute_luau`, which runs in plugin context), reports the viewport, off-screen `StarterGui` elements and
+  buttons under 44 px per device, then stops the simulation. The device emulator is scriptable after
+  all: the note that said otherwise had not read Roblox's `rbx-device-simulator-lua` skill.
 - Probe `save-check`: test attributes left in the Edit place (names and prefixes are parameters) and a
   "safe to save_place: yes/no" verdict. The forge cannot block the MCP's own `save_place`.
 - The scaffold ships `docs/evidence/TEMPLATE.md`, a per-task receipt.

@@ -249,11 +249,13 @@ rbforge runs --text                             # every recorded run: rate, curr
   --detach` returns a job id at once and runs the same command in the background (stdout, the JSON
   report, to `<job>.out.json`; progress lines to `<job>.log`). Follow it with
   `rbforge runs --job <id>` (running / done / died) or `rbforge runs --job <id> --wait` (blocks up to
-  `--wait-timeout`, default 540 s; exit 5 means still running, call it again; otherwise the run's own
+  `--wait-timeout`, default 540 s; exit 124 means still running, call it again; otherwise the run's own
   exit code). `rbforge runs --jobs` lists recent jobs.
 - **While a detached run holds Studio, everything else waits.** One StudioMCP process owns the
   connection; other `rbforge` live commands refuse with `RBF-STUDIO-004`, and `doctor` skips its probe.
   The forge cannot stop a direct MCP call from an agent: do not make one during the run either.
+  A job killed hard can leave a lock whose pid Windows later reuses; `RBFORGE_IGNORE_JOB_LOCK=1`
+  gets past it once, and `rbforge runs --jobs` shows whether any job is really running.
 - **The run tests what was on disk when it started.** Test sources are read once when the manifest or
   file is loaded, each result carries the `source_sha256` it ran, and the report's `tested` block holds
   the commit, the dirty flag and the manifest digest read before the first run - so merging a branch

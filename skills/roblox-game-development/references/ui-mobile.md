@@ -71,11 +71,19 @@ shared state. It is a dependency with its own failure modes; do not add one for 
 ## Device verification
 
 If the Studio MCP exposes `get_roblox_skill`, use `rbx-device-simulator-lua` for form-factor checks: phone
-portrait and landscape, tablet, desktop, console focus. Load it with `get_roblox_skill` before
-concluding the emulator cannot be scripted: it is Roblox's own route for driving device presets from
-Luau, and the creator-docs engine reference has no device-emulator class to call instead. If the skill
-is not available, say so and use the Studio device emulator by hand. Do not claim a device test that did
-not happen.
+portrait and landscape, tablet, desktop, console focus. **The device simulator is scriptable:**
+`game:GetService("StudioDeviceSimulatorService")` runs in plugin context, which `execute_luau` has
+(`GetDeviceListAsync`, `GetDeviceInfoAsync`, `SetDeviceAsync`, `SetOrientationAsync`,
+`StopSimulationAsync`; wait about 0.2 s after a setter). Checked live 2026-11-26: 43 presets, an iPhone 7
+set from a script turned the viewport into 666x374 and `StopSimulationAsync` restored it. The class is
+not in the creator-docs engine reference; the skill
+(`get_roblox_skill(skill_name="rbx-device-simulator-lua")`) is its documentation. Setters error in the Play server: set the device in Edit, then start Play.
+
+The `device-layout` probe does the loop for UI in `StarterGui`: for each chosen preset (default the
+smallest phone, tablet and console) it sets the device, reads the viewport, reports off-screen elements
+and buttons under 44 px, and stops the simulation (`--set keep=true` leaves the last device on for a
+`screen_capture`). UI built at runtime lives in `PlayerGui`: set the device in Edit, start Play, capture.
+Do not claim a device test that did not happen.
 
 **Offline layout spec (works with no emulator).** Keep layout math pure (a function from viewport size
 to each control's position and size) and spec it under Lune at a list of real sizes: a second production
