@@ -98,13 +98,15 @@ def _entry(root, sha, dirty, batch, run, restarted, r):
     }
 
 
-def record(root, results, batch=None, run=1, restarted=False):
+def record(root, results, batch=None, run=1, restarted=False, tested=None):
     """Append one line per test result; returns the entries written. Never raises for a bad home:
     losing the ledger must not turn a test result into a crash, so the error is returned instead."""
     from .verification import _FileLock
     if not results:
         return {"ledger": None, "entries": []}
-    sha, dirty = git_state(root)
+    # `tested` is (sha, dirty) read before the run started: a commit made during a long run is not
+    # what was tested.
+    sha, dirty = tested if tested else git_state(root)
     batch = batch or time.strftime("%Y%m%d-%H%M%S")
     try:
         entries = [_entry(root, sha, dirty, batch, run, restarted, r) for r in results]
@@ -118,11 +120,11 @@ def record(root, results, batch=None, run=1, restarted=False):
         return {"ledger": None, "entries": [], "error": str(exc)}
 
 
-def record_streak(root, streak):
+def record_streak(root, streak, tested=None):
     out = {"ledger": None, "written": 0}
     for run in streak.get("runs", []):
         res = record(root, run.get("tests") or [], batch=streak.get("batch"), run=run.get("run", 1),
-                     restarted=bool(run.get("restarted")))
+                     restarted=bool(run.get("restarted")), tested=tested)
         out["ledger"] = res.get("ledger") or out["ledger"]
         out["written"] += len(res.get("entries", []))
         if res.get("error"):

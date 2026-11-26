@@ -165,6 +165,33 @@ def _starter_files():
     return sorted(out)
 
 
+# One receipt per task, copied to docs/evidence/<ID>.md. A production project closed its plan rows with
+# these: the commit that was proven, what was seen, what was not checked.
+_RECEIPT = """# <ID> - <what was proven>
+
+Result: PASS
+Tested SHA: <40-hex commit the proof ran on>
+Slot: <test save slot, or "owner">
+Place: <place id> v<PlaceVersion>, Edit|Play
+
+## Steps
+
+1. <command or action, exactly as run>
+
+## Observed
+
+- <numbers, console lines, bot trace excerpts>
+- Not checked: <what this receipt does not prove>
+
+## Captures
+
+- <docs/evidence/<ID>/name.jpg> - looked at: <what it shows>
+
+<!-- Commit the code first, prove that commit, then commit this file. The plan row's Evidence cell reads
+`cmd:<the Verify command> @ <sha> exit=<n>`. -->
+"""
+
+
 def scaffold(path, genre="generic"):
     genre = planning.resolve(genre)
     if os.path.isdir(path) and os.listdir(path):
@@ -173,6 +200,7 @@ def scaffold(path, genre="generic"):
     files = {rel: text for rel, text in _starter_files()}
     files.update({
         "VERIFY.md": _CHECKLIST,
+        "docs/evidence/TEMPLATE.md": _RECEIPT,
         "rokit.toml": _ROKIT,
         ".luaurc": _LUAURC,
         "selene.toml": _SELENE,

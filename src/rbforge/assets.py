@@ -29,6 +29,7 @@ STATUS_WITHIN = "within_limit"
 STATUS_OVER = "over_limit"
 STATUS_INVALID = "invalid"
 STATUS_UNVERIFIED = "unverified"
+STATUS_NO_UV = "missing_uv"   # only with require_uv: a mesh would import flat and untextured
 
 
 def _version_tuple(text):
@@ -276,19 +277,22 @@ def glb_summary(path):
             problems.append("mesh %d has no primitives array" % index)
             kinds.add(STATUS_INVALID)
             continue
-        count = 0
+        count, has_uv = 0, bool(primitives)
         for prim in primitives:
             if not isinstance(prim, dict):
                 problems.append("mesh %d has a primitive that is not an object" % index)
                 kinds.add(STATUS_INVALID)
                 continue
+            attrs = prim.get("attributes")
+            if not (isinstance(attrs, dict) and "TEXCOORD_0" in attrs):
+                has_uv = False
             tris, problem, kind = _triangles_for_primitive(prim, accessors)
             if problem:
                 problems.append("mesh %d: %s" % (index, problem))
                 kinds.add(kind or STATUS_INVALID)
             count += tris
         total += count
-        per_mesh.append({"name": mesh.get("name") or "mesh%d" % index, "triangles": count})
+        per_mesh.append({"name": mesh.get("name") or "mesh%d" % index, "triangles": count, "uv": has_uv})
 
     over = [m for m in per_mesh if m["triangles"] > ROBLOX_TRI_LIMIT]
     out = {
@@ -301,6 +305,9 @@ def glb_summary(path):
         "triangles": total,
         "per_mesh": per_mesh,
         "over_limit": over,
+        # No TEXCOORD_0: Roblox imports the mesh flat, so textures and MaterialVariants show nothing on it.
+        # Fine for a vertex-colour pipeline; `--require-uv` makes it a failure for a textured one.
+        "meshes_without_uv": [m["name"] for m in per_mesh if not m["uv"]],
         "counts_geometry": False,
         "note": "counts come from accessor counts by primitive mode; vertex data is not inspected",
     }
@@ -335,8 +342,9 @@ def fbx_summary(path):
     return {"status": STATUS_INVALID, "error": "not an FBX (no Kaydara header)"}
 
 
-def inspect_export(path):
-    """Summarise a mesh export. `status` is within_limit / over_limit / invalid / unverified."""
+def inspect_export(path, require_uv=False):
+    """Summarise a mesh export. `status` is within_limit / over_limit / invalid / unverified, or
+    missing_uv when `require_uv` and a GLB mesh has no TEXCOORD_0."""
     if not os.path.isfile(path):
         return {"status": STATUS_INVALID, "error": "no such file", "path": path}
     ext = os.path.splitext(path)[1].lower()
@@ -352,6 +360,11 @@ def inspect_export(path):
         return {"status": STATUS_INVALID, "error": "unsupported export type", "path": path,
                 "supported": [".glb", ".fbx", ".gltf", ".obj"]}
     out["path"] = path
+    missing = out.get("meshes_without_uv")
+    if missing:
+        out["warning"] = "%d mesh(es) without UVs import flat: textures and material variants show nothing" % len(missing)
+        if require_uv and out.get("status") in (STATUS_WITHIN, STATUS_OVER):
+            out["status"] = STATUS_NO_UV
     return out
 
 

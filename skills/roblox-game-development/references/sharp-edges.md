@@ -226,8 +226,21 @@ Case notes from one procedural-dome project (panel faces, shell openings, skirts
 - Wheel input through the MCP needs a `moveTo` onto the viewport first; verify the state the input
   writes rather than calling the feature dead. (live 2026-11)
 
+## NPCs and scripted motion
+
+- **A stuck detector measures progress toward the goal, not movement.** A timer reset whenever the
+  body moves never fires for an NPC pacing in place. Count progress only when the distance to the goal
+  improved by a threshold, or the body moved more than a few studs from where the timer started; pass
+  the goal position into the detector. (field)
+- **A scripted lift that breaks halfway can wedge the body.** When a physics boost (a mantle, a jump
+  pad) is cancelled mid-lift, put the body back over its start X/Z at its current height and zero its
+  velocity. (field)
+
 ## Agent traps (the meta-failures)
 
+- **Insert lines into code with a small script, not `sed`.** A `sed` with a literal `\t` in Git Bash
+  on Windows appended text to every line of a client file (restored from git). Write a short Python
+  script that asserts its anchor occurs once, then edits; run the gate after. (field)
 - Declaring done when scripts exist but nothing was playtested.
 - "Visually verified" without having inspected a screenshot.
 - Building 15 systems before proving one loop.

@@ -71,6 +71,8 @@ def main(argv=None):
     p_assets = sub.add_parser("assets", help="Blender/add-on detection and mesh export validation")
     p_assets.add_argument("action", nargs="?", default="status", choices=["status", "check"])
     p_assets.add_argument("path", nargs="?", help="export to check (.glb/.gltf/.fbx/.obj)")
+    p_assets.add_argument("--require-uv", action="store_true",
+                          help="fail (exit 2) when a GLB mesh has no UVs; without it they are only reported")
     p_map = sub.add_parser("map", help="optional external map prover (SyphoDev roblox-map)")
     p_map.add_argument("action", nargs="?", default="status", choices=["status", "prove"])
     p_map.add_argument("spec", nargs="?", help="spec name in its specs/ folder, or a path to a .json")
@@ -135,7 +137,9 @@ def main(argv=None):
     p_push.add_argument("--force", action="store_true",
                         help="overwrite scripts edited in Studio since the last push (backed up first)")
 
-    p_exec = sub.add_parser("exec", help="run a Luau file in Studio (official MCP) and print what it returns")
+    p_exec = sub.add_parser("exec", help="run a Luau file in Studio (official MCP) and print what it returns; "
+                                         "print() output goes to Studio's console, not here - end the file "
+                                         "with `return <value>`")
     p_exec.add_argument("file")
     p_exec.add_argument("--dm", default="Edit", choices=["Edit", "Client", "Server"])
     p_exec.add_argument("--studio")
@@ -165,8 +169,20 @@ def main(argv=None):
                       help="seconds to wait for Play to stop or start with --restart (default 90)")
     p_st.add_argument("--no-record", action="store_true",
                       help="do not append this run to the project's run ledger (`rbforge runs`)")
+    p_st.add_argument("--sessions", type=int, default=None,
+                      help="release proof: N runs, each in a fresh Play session (= --repeat N --restart); "
+                           "a save written in run 1 must load in run 2")
+    p_st.add_argument("--detach", action="store_true",
+                      help="run in the background and return a job id at once; follow it with "
+                           "`rbforge runs --job ID [--wait]`. Other live rbforge commands refuse until it ends")
 
     p_runs = sub.add_parser("runs", help="live test history for a project: pass rate and streaks per test")
+    p_runs.add_argument("--job", help="a detached run: running / done / died, its progress and its report")
+    p_runs.add_argument("--wait", action="store_true",
+                        help="with --job: block until it ends or --wait-timeout passes (exit 5 = still running)")
+    p_runs.add_argument("--wait-timeout", type=float, default=540.0,
+                        help="seconds --wait blocks at most (default 540, under a 10-minute tool call)")
+    p_runs.add_argument("--jobs", action="store_true", help="list recent detached runs")
     p_runs.add_argument("--root", default=".", help="project directory (default: the current one)")
     p_runs.add_argument("--test", help="only tests whose name contains this")
     p_runs.add_argument("--last", type=int, help="only each test's N newest runs")
@@ -181,7 +197,9 @@ def main(argv=None):
     p_skills.add_argument("action", choices=["status", "install", "update", "remove"])
     p_skills.add_argument("name", nargs="?", help="hermes|claude|codex|grok|kimi or all")
 
-    args = parser.parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    args = parser.parse_args(raw)
+    args.raw_argv = raw  # `servertest --detach` re-runs exactly this command in the background
     if not args.cmd:
         parser.print_help()
         return ExitCode.OK
@@ -245,11 +263,13 @@ def _dispatch(args):
                 _emit({"error": "check needs an export path",
                        "detail": "rbforge assets check <file.glb|file.fbx>"})
                 return ExitCode.VALIDATION
-            report = assets.inspect_export(args.path)
+            report = assets.inspect_export(args.path, require_uv=args.require_uv)
             _emit(report)
             status = report.get("status")
             if status == assets.STATUS_INVALID:
                 return ExitCode.VALIDATION   # malformed or wrong type: the file is the problem
+            if status == assets.STATUS_NO_UV:
+                return ExitCode.VALIDATION   # asked for UVs, and a mesh has none
             if status == assets.STATUS_OVER:
                 return ExitCode.VALIDATION   # measured, and over Roblox's per-mesh cap
             if status == assets.STATUS_UNVERIFIED:
@@ -399,7 +419,14 @@ def _dispatch(args):
 
     if args.cmd == "exec":
         from rbforge import live
-        print(live.run_file(args.file, args.dm, args.studio))
+        out = live.run_file(args.file, args.dm, args.studio)
+        if out is not None and str(out) != "":
+            print(out)
+        # A script with no `return` comes back as "nil" (Studio, 2026-11-26) or as nothing: stdout keeps what
+        # Studio sent, and the note goes to stderr so scripts that read stdout are unaffected.
+        if out is None or str(out).strip() in ("", "nil"):
+            print("(no return value: execute_luau shows only what the script returns; print() goes to "
+                  "Studio's console)", file=sys.stderr)
         return ExitCode.OK
 
     if args.cmd == "servertest":
@@ -409,17 +436,38 @@ def _dispatch(args):
             raise ForgeError("RBF-ARG-001", "pass either --suite or FILE ATTR, not both")
         if not args.suite and not args.file:
             raise ForgeError("RBF-ARG-001", "servertest needs FILE [ATTR], or --suite MANIFEST")
+        if args.sessions is not None:
+            if args.repeat is not None and args.repeat != args.sessions:
+                raise ForgeError("RBF-ARG-001", "--sessions N already means --repeat N --restart")
+            args.repeat, args.restart = args.sessions, True
         if args.repeat is None and (args.restart or args.keep_going):
             raise ForgeError("RBF-ARG-001", "--restart and --keep-going belong to --repeat N",
                              hint="for one fresh run: --repeat 1 --restart")
+        if args.detach:
+            from rbforge import jobs
+            jobs.refuse_if_held()
+            job = jobs.start([a for a in args.raw_argv if a != "--detach"])
+            _emit({"job": job["job"], "pid": job["pid"], "log": job["log"], "out": job["out"],
+                   "status": "rbforge runs --job %s" % job["job"],
+                   "wait": "rbforge runs --job %s --wait" % job["job"],
+                   "note": "other live rbforge commands refuse until this job ends; do not call the Studio "
+                           "MCP directly meanwhile either (it would take the connection)"})
+            return ExitCode.OK
         root = runs.project_root(args.suite or args.file)
 
+        # What is being tested, read before anything runs: a commit or merge during a long run is not it.
+        tested_sha, tested_dirty = runs.git_state(root)
+        tested = {"sha": tested_sha, "dirty": tested_dirty}
+        if args.suite:
+            tested["manifest_sha256"] = live.manifest_digest(args.suite)
+
         def keep(res, streak):
+            res["tested"] = tested
             # Ledger + logs, then the full console text leaves the JSON either way (logs hold it).
             if args.no_record:
                 runs.compact(streak)
             else:
-                res["record"] = runs.record_streak(root, streak)
+                res["record"] = runs.record_streak(root, streak, tested=(tested_sha, tested_dirty))
 
         if args.repeat is not None:
             entries = live.load_suite(args.suite) if args.suite else [live.single_entry(
@@ -447,7 +495,20 @@ def _dispatch(args):
         return ExitCode.OK if res["passed"] else 1
 
     if args.cmd == "runs":
-        from rbforge import runs
+        from rbforge import runs, jobs
+        if args.jobs:
+            _emit({"jobs": jobs.listing()})
+            return ExitCode.OK
+        if args.wait and not args.job:
+            raise ForgeError("RBF-ARG-001", "--wait needs --job ID")
+        if args.job:
+            st = jobs.wait(args.job, args.wait_timeout) if args.wait else jobs.status(args.job)
+            _emit(st)
+            if st["state"] == "running":
+                return ExitCode.REFUSED if args.wait else ExitCode.OK  # 5: still running, wait again
+            if st["state"] == "died":
+                return ExitCode.GENERIC
+            return st["exit"] if isinstance(st.get("exit"), int) else ExitCode.GENERIC
         if args.last is not None and args.last < 1:
             raise ForgeError("RBF-ARG-002", "--last must be 1 or more")
         summary = runs.summarize(runs.project_root(args.root), test=args.test, last=args.last)

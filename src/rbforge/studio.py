@@ -428,6 +428,12 @@ def snapshot(probe=True, timeout=25.0):
         "studio_process": studio_running(),
         "mcp_processes": mcp_processes(),
     }
+    from . import jobs
+    held = jobs.holder() if probe and os.environ.get(jobs.ENV_IGNORE) != "1" else None
+    if held:
+        # The probe would start a second StudioMCP and take the connection from the detached run.
+        probe = False
+        out["detached_job"] = held.get("job")
     if probe:
         out["mcp_probe"] = probe_mcp(timeout=timeout)
         studios = out["mcp_probe"].get("studios")
@@ -440,7 +446,8 @@ def snapshot(probe=True, timeout=25.0):
         out["multiple_studio_sessions"] = bool(studios and len(studios) > 1)
         out["studio_sessions"] = [session_info(s) for s in studios or [] if isinstance(s, dict)]
     else:
-        out["mcp_probe"] = {"responding": None, "note": "probe skipped"}
+        out["mcp_probe"] = {"responding": None, "note": "probe skipped" if not held else
+                            "probe skipped: detached run %s holds the Studio connection" % held.get("job")}
         out["active_places"] = []
         out["studio_sessions"] = []
         out["multiple_studio_sessions"] = None

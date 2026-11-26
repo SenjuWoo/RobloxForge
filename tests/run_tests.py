@@ -5,6 +5,7 @@ Fixture-based; exercises every core module against synthetic state.
 """
 import base64
 import io
+import time
 import json
 import os
 import shutil
@@ -6118,6 +6119,245 @@ def _():
             check_mod._run, check_mod.shutil.which = old_run, old_which
     stylua = [a for a in calls if a[0] == "stylua"][0]
     assert stylua == ["stylua", "--check", changed[1]], stylua
+
+
+# ---------------------------------------------------------------- 0.23.0 long-run QA
+
+def _job_record(jobs_mod, pid, result=None):
+    job_id = jobs_mod.new_id()
+    jobs_mod._write_json(jobs_mod._path(job_id, ".json"),
+                         {"job": job_id, "argv": ["servertest", "x"], "cwd": ".", "pid": pid,
+                          "started": time.time(), "log": jobs_mod._path(job_id, ".log"),
+                          "out": jobs_mod._path(job_id, ".out.json")})
+    if result is not None:
+        jobs_mod._write_json(jobs_mod._path(job_id, ".result.json"), result)
+    return job_id
+
+
+@check("jobs: a detached servertest runs in the background, reports done, and keeps the command's report")
+def _():
+    import subprocess as _sp
+    from rbforge import jobs
+    with _isolated_home(), tempdir() as d:
+        job = jobs.start(["servertest", os.path.join(d, "missing.server.luau")], cwd=d)
+        st = jobs.wait(job["job"], 60, poll=0.2)
+        assert st["state"] == "done", st
+        assert st["exit"] == 2, st                     # the same refusal the foreground command gives
+        assert st["report"]["error"]["code"] == "RBF-ARG-001", st["report"]
+        assert jobs.holder() is None, "a finished job left the Studio lock behind"
+        # The job list shows it.
+        assert any(j["job"] == job["job"] and j["state"] == "done" for j in jobs.listing())
+        # A process that is gone without a result is a death, not "running" forever.
+        p = _sp.Popen([sys.executable, "-c", "pass"])
+        p.wait()
+        dead = _job_record(jobs, p.pid)
+        assert jobs.status(dead)["state"] == "died"
+        # A bad id is an argument error, not a path walk.
+        for bad in ("../x", "nope", ""):
+            try:
+                jobs.status(bad)
+                raise AssertionError("accepted job id %r" % bad)
+            except err_mod.ForgeError as exc:
+                assert exc.code == "RBF-ARG-002"
+
+
+@check("jobs: the Studio lock refuses other live commands while a detached run holds it")
+def _():
+    import subprocess as _sp
+    from rbforge import jobs, live
+    with _isolated_home():
+        jobs._write_json(jobs.lock_path(), {"job": "20261126-000000-abcdef", "pid": os.getpid()})
+        saved = {k: os.environ.get(k) for k in (jobs.ENV_JOB, jobs.ENV_IGNORE)}
+        try:
+            for k in saved:
+                os.environ.pop(k, None)
+            for fn in (jobs.refuse_if_held, lambda: live.Session()):
+                try:
+                    fn()
+                    raise AssertionError("a live command ran while a detached job held Studio")
+                except err_mod.ForgeError as exc:
+                    assert exc.code == "RBF-STUDIO-004", exc.code
+                    assert "--wait" in (exc.hint or "")
+            os.environ[jobs.ENV_JOB] = "20261126-000000-abcdef"   # the job itself is not refused
+            jobs.refuse_if_held()
+            os.environ.pop(jobs.ENV_JOB)
+            os.environ[jobs.ENV_IGNORE] = "1"                      # explicit override
+            jobs.refuse_if_held()
+            os.environ.pop(jobs.ENV_IGNORE)
+            # A lock left by a process that is gone is stale.
+            p = _sp.Popen([sys.executable, "-c", "pass"])
+            p.wait()
+            jobs._write_json(jobs.lock_path(), {"job": "20261126-000000-abcdef", "pid": p.pid})
+            assert jobs.holder() is None
+            jobs.refuse_if_held()
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+
+@check("jobs: runs --job --wait exits 5 while still running, the job's code when done; --sessions is a restart streak")
+def _():
+    from rbforge import jobs, live
+    import rbforge_cli
+    with _isolated_home():
+        running = _job_record(jobs, os.getpid())
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert rbforge_cli.main(["runs", "--job", running, "--wait", "--wait-timeout", "0.2"]) == 5
+            assert rbforge_cli.main(["runs", "--job", running]) == 0
+            done = _job_record(jobs, 1, {"exit": 1, "finished": time.time()})
+            assert rbforge_cli.main(["runs", "--job", done, "--wait"]) == 1
+            assert rbforge_cli.main(["runs", "--wait"]) == err_mod.ExitCode.VALIDATION   # --wait needs --job
+    seen = {}
+
+    def fake_streak(entries, repeat, restart=False, **k):
+        seen.update(repeat=repeat, restart=restart)
+        return {"batch": "b", "runs": [], "passed": True}
+    old_streak, old_entry = live.run_streak, live.single_entry
+    live.run_streak = fake_streak
+    live.single_entry = lambda *a, **k: {"name": "t", "file": "t", "datamodel": "Server", "timeout": 5,
+                                         "grace": 0.0, "attr": "RbforgeTest"}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = rbforge_cli.main(["servertest", "t.server.luau", "--sessions", "2", "--no-record"])
+    finally:
+        live.run_streak, live.single_entry = old_streak, old_entry
+    assert code == 0 and seen == {"repeat": 2, "restart": True}, (code, seen)
+
+
+@check("snapshot: a suite runs the test text read at load, and the ledger keeps the commit read at start")
+def _():
+    from rbforge import live, runs
+    with tempdir() as d:
+        test = os.path.join(d, "A.server.luau")
+        open(test, "w", encoding="utf-8").write('workspace:SetAttribute("RbforgeTest", "PASS original")\n')
+        manifest = os.path.join(d, "suites.json")
+        json.dump({"suites": [{"file": "A.server.luau", "attr": "RbforgeTest"}]}, open(manifest, "w"))
+        entries = live.load_suite(manifest)
+        assert entries[0]["sha256"] and "PASS original" in entries[0]["source"]
+        # A merge lands mid-run: the file changes after the run started.
+        open(test, "w", encoding="utf-8").write('workspace:SetAttribute("RbforgeTest", "PASS changed")\n')
+        sent = []
+
+        class Sess:
+            studio_id = "s"
+
+            def luau(self, code, dm="Server"):
+                sent.append(code)
+                return "PASS ok"
+
+            def call(self, *a):
+                return ""
+        results = live._run_entries(Sess(), entries)
+        assert "PASS original" in sent[0] and "PASS changed" not in sent[0], "the run read the file again"
+        assert results[0]["source_sha256"] == entries[0]["sha256"]
+        assert live.manifest_digest(manifest) and live.manifest_digest(os.path.join(d, "none.json")) is None
+        # A file that cannot be read at load still fails as its own suite at run time.
+        json.dump({"suites": [{"file": "Gone.server.luau", "attr": "RbforgeTest"}]}, open(manifest, "w"))
+        gone = live.load_suite(manifest)
+        assert gone[0]["source"] is None
+        assert live._run_entries(Sess(), gone)[0]["outcome"] == "error"
+    with _isolated_home(), tempdir() as d:
+        res = runs.record(d, [{"name": "t", "outcome": "pass", "result": "PASS"}], tested=("abc1234", False))
+        assert res["entries"][0]["sha"] == "abc1234" and res["entries"][0]["dirty"] is False, res
+
+
+@check("cli: exec says on stderr when the script returned nothing, and keeps stdout empty")
+def _():
+    from rbforge import live
+    import rbforge_cli
+    old = live.run_file
+    try:
+        # Studio returns "nil" for a script with no return (live 2026-11-26); older builds sent nothing.
+        for value, want_out in (("", ""), (None, ""), ("nil", "nil"), ("42", "42")):
+            live.run_file = lambda *a, **k: value
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                assert rbforge_cli.main(["exec", "x.luau"]) == 0
+            assert out.getvalue().strip() == want_out, (value, out.getvalue())
+            assert ("no return value" in err.getvalue()) == (want_out in ("", "nil")), err.getvalue()
+    finally:
+        live.run_file = old
+
+
+@check("probes: save-check gives a save verdict from parameters, perf labels a throttled frame")
+def _():
+    from rbforge import probes
+    cat = {p["name"]: p for p in probes.catalog()}
+    assert cat["save-check"]["datamodel"] == "Edit"
+    for k in ("attrs", "prefixes", "roots"):
+        assert k in cat["save-check"]["params"], k
+    code = probes.render("save-check", probes.parse_sets(['attrs={"TestSlot"}']))["code"]
+    assert '{"TestSlot"}' in code and "safe to save_place: " in code and "IsRunning" in code
+    perf = probes.render("perf")["code"]
+    assert "UNFOCUSED-STUDIO THROTTLE" in perf and "best" in perf
+    with tempdir() as d:
+        cfg = os.path.join(d, "selene.toml")
+        open(cfg, "w").write('std = "lua51"\n')
+        for name in ("save-check", "perf"):
+            path = os.path.join(d, name + ".luau")
+            open(path, "w", encoding="utf-8").write(probes.render(name)["code"])
+            ok, detail = _parse_luau(path, cfg)
+            assert ok, "%s does not parse:\n%s" % (name, detail)
+
+
+@check("assets: uv - meshes without TEXCOORD_0 are reported, and fail only with --require-uv")
+def _():
+    import struct as _struct
+    from rbforge import assets
+    import rbforge_cli
+    doc = {"asset": {"version": "2.0"}, "accessors": [{"count": 3}, {"count": 3}, {"count": 3}],
+           "meshes": [{"name": "Textured", "primitives": [{"attributes": {"POSITION": 0, "TEXCOORD_0": 1}, "mode": 4}]},
+                      {"name": "Flat", "primitives": [{"attributes": {"POSITION": 2}, "mode": 4}]}],
+           "materials": [{}]}
+    blob = json.dumps(doc).encode("utf-8")
+    blob += b" " * ((4 - len(blob) % 4) % 4)
+    data = _struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(blob)) + _struct.pack("<II", len(blob), 0x4E4F534A) + blob
+    with tempdir() as d:
+        path = os.path.join(d, "pack.glb")
+        open(path, "wb").write(data)
+        r = assets.inspect_export(path)
+        assert r["meshes_without_uv"] == ["Flat"] and r["status"] == assets.STATUS_WITHIN and "warning" in r, r
+        assert assets.inspect_export(path, require_uv=True)["status"] == assets.STATUS_NO_UV
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert rbforge_cli.main(["assets", "check", path]) == 0
+            assert rbforge_cli.main(["assets", "check", path, "--require-uv"]) == err_mod.ExitCode.VALIDATION
+        # Every mesh with UVs: no warning, and --require-uv passes.
+        doc["meshes"] = doc["meshes"][:1]
+        blob = json.dumps(doc).encode("utf-8")
+        blob += b" " * ((4 - len(blob) % 4) % 4)
+        open(path, "wb").write(_struct.pack("<4sII", b"glTF", 2, 12 + 8 + len(blob))
+                               + _struct.pack("<II", len(blob), 0x4E4F534A) + blob)
+        ok = assets.inspect_export(path, require_uv=True)
+        assert ok["status"] == assets.STATUS_WITHIN and not ok["meshes_without_uv"] and "warning" not in ok, ok
+
+
+@check("docs: long-run field notes are in the references and the scaffold ships a receipt template")
+def _():
+    need = {
+        "testing-debugging.md": ["--detach", "rbforge runs --job", "RBF-STUDIO-004", "source_sha256",
+                                 "--sessions 2", "neutral state", "Retry the intent", "Tested SHA",
+                                 "save-check", "Release discipline"],
+        "performance.md": ["66 ms", "WindowFocused", "SLIM"],
+        "ui-mobile.md": ["get_roblox_skill", "Offline layout spec", "DisplayOrder", "Binding1"],
+        "assets.md": ["export_texcoords", "--require-uv", "Weld before you decimate", "byte-identical",
+                      "5 and 20 studs"],
+        "sharp-edges.md": ["stuck detector", "scripted lift", "not `sed`"],
+        "development-loop.md": ["One integrator makes those edits", "git worktree remove"],
+    }
+    for name, phrases in need.items():
+        text = _ref(name)
+        for p in phrases:
+            assert p in text, "%s lacks %r" % (name, p)
+    from rbforge import scaffold
+    with tempdir() as d:
+        target = os.path.join(d, "g")
+        files = scaffold.scaffold(target, "obby")["files"]
+        assert "docs/evidence/TEMPLATE.md" in files
+        text = open(os.path.join(target, "docs", "evidence", "TEMPLATE.md"), encoding="utf-8").read()
+        assert "Result: PASS" in text and "Tested SHA:" in text and "Not checked:" in text
 
 
 if __name__ == "__main__":

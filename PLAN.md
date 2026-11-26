@@ -1,54 +1,57 @@
-# PLAN — 0.22.0 streaks, failure forensics, run ledger, current Studio MCP surface
+# PLAN — 0.23.0 long-run QA: detached runs, tested-commit snapshots, field notes triage
 
-Goal: remove the live-QA steps a production project burned whole sessions on. Closing one of its
-milestones needed "three passes in a row with Play restarted between runs": the agent restarted Play by
-hand, counted passes in its head ("8 of 12 runs"), and a failure ("the sack was still there 5 s later")
-left nothing behind to diagnose because the evidence went away when Play stopped. The forge now runs the
-streak itself, keeps the console of every failed run before anything is stopped, and keeps a per-project
-ledger of every live run. The Studio MCP surface moved again (41 tools; two renamed) and the knowledge is
-brought up to it, with the generic lessons from that milestone. The previous plan is in
-`docs/archive/PLAN-0.21.0.md`.
+Goal: triage a production project's field notes (one Studio instance, 35 live suites) into fixes, docs and
+skill updates. What 0.22.x already ships is cited, not rebuilt. The previous plan is in
+`docs/archive/PLAN-0.22.0.md`.
 
 Evidence format: `cmd:<command> @ <sha> exit=<n>`. `T=python tests/run_tests.py`.
 
+## Triage
+
+| Note | Verdict |
+|---|---|
+| A1 detach | build: `servertest --detach`, `rbforge runs --job ID [--wait]`, a live-connection lock |
+| A2 two sessions | shipped in 0.22.0 as `--repeat 2 --restart` (reports "run N/M"); add `--sessions N` as its name for the release proof |
+| A3 snapshot | build: sources read once at load, commit and dirty flag captured at start, manifest digest |
+| A4 worktrees | shipped in 0.22.1 (`project.excluded` skips any dir holding `.git`, a worktree's `.git` file included) |
+| A5 exec silence | build: "(no return value)" on stderr, help text |
+| A6 slot / save_place | build: probe `save-check` with the attribute names as parameters; the forge cannot block the MCP `save_place`, the docs say so |
+| A7 device emulation | docs: Studio serves Roblox's `rbx-device-simulator-lua` through `get_roblox_skill` (already routed); offline thumb-zone spec as the fallback |
+| A8 unfocused perf | build: perf probe labels a flat ~66 ms frame "consistent with an unfocused-Studio throttle" (no focus signal assumed) |
+| A9 toolbox args | `is_start`, `capture_id`, `NotNeeded` already in studio-mcp.md; session ids change already there |
+| A10 sed quoting | docs (sharp-edges agent traps) |
+| B1 UV-less GLB | build: `assets check` reports meshes without `TEXCOORD_0`; `--require-uv` fails on them (vertex-colour pipelines stay valid) |
+| B2 decimate without weld | Asset-Forge's (field report already filed there); weld-then-decimate in docs |
+| B3-B6 | docs (assets.md) |
+| C1-C7 | docs (testing, npc, ui, performance) |
+| D1 receipts | template in docs and the scaffold; checker cut (the forge's "receipts" already name another thing) |
+| D2, D3 | docs (release discipline; integrator edits exist in development-loop) |
+
 | ID | Task | Status | Depends on | Verify | Evidence |
 |---|---|---|---|---|---|
-| S1 | `servertest --repeat N [--restart] [--keep-going]`: N runs of one test or a whole `--suite`; `--restart` gives every run a fresh Play session (stop, wait for Edit, start, wait for the datamodels) and starts Play from Edit; stops at the first failure and leaves that Play session running for inspection unless `--keep-going`; exit 0 only for N passes in a row | complete | - | `cmd:RBFORGE_TEST_ONLY="streak" T` | cmd:python tests/run_tests.py @ d22a96e exit=0 (258 passed, 0 failed, 0 skipped) |
-| S2 | Failure forensics: each run prints a unique marker; a failed, timed-out or errored run reads `get_console_output` before anything else happens, keeps what follows the marker in `RBFORGE_HOME/runs/logs/` and puts the last lines in the result | complete | - | `cmd:RBFORGE_TEST_ONLY="forensics" T` | cmd:python tests/run_tests.py @ d22a96e exit=0 (258 passed, 0 failed, 0 skipped) |
-| S3 | Run ledger: every CLI servertest run (single, suite, streak) appends one JSON line per test to `RBFORGE_HOME/runs/<project>.jsonl` (time, project SHA and dirty flag, test, datamodel, outcome, first result line, seconds, restarted, batch id, log path); `rbforge runs [--root] [--test] [--last] [--text]` reports per test runs, passes, pass rate, current and best streak, last result | complete | S1, S2 | `cmd:RBFORGE_TEST_ONLY="runs" T` | cmd:python tests/run_tests.py @ d22a96e exit=0 (258 passed, 0 failed, 0 skipped) |
-| V1 | `rbforge --version` | complete | - | `cmd:RBFORGE_TEST_ONLY="cli: --version" T` | cmd:python tests/run_tests.py @ d22a96e exit=0 (258 passed, 0 failed, 0 skipped) |
-| M1 | `studio-mcp.md` brought to the live 41-tool surface (2026-11-24 handshake): `skill`/`list_skills` renamed `get_roblox_skill`/`list_roblox_skills`; new `video_capture`, `list_plugin_actions`, `open_plugin`; 17 `rbx-*` skills; every stale name in the router, `assistant-skills.md` and other references replaced; a test that fails on the old names | complete | - | `cmd:RBFORGE_TEST_ONLY="docs: studio mcp surface" T` | cmd:python tests/run_tests.py @ d22a96e exit=0 (258 passed, 0 failed, 0 skipped) |
-| K1 | Field lessons, generic only: streaks and flake numbers from the ledger, failure context captured before Stop, a refusal reason for every guarded server handler (and a Studio-only way for a suite to read it), test oracles that match the design (a sack that keeps what does not fit), one owner per input action, fixtures that rebuild the world a player would have (not a refilled one), bot navigation hygiene (ground probe before backing off, an unreachable timeout, heal only when safe, release a lock and face a prompt), a tuning-attempt budget that turns a stuck fight into a measurement and an owner question | complete | S1, S3 | `cmd:RBFORGE_TEST_ONLY="docs: streak lessons" T` | cmd:python tests/run_tests.py @ d22a96e exit=0 (258 passed, 0 failed, 0 skipped) |
-| R1 | Full suite, version 0.22.0, CHANGELOG, README, STATE | complete | all above | `cmd:T` | cmd:python tests/run_tests.py @ d22a96e exit=0 (258 passed, 0 failed, 0 skipped); CI (4 test legs + luau-semantics) and CodeQL green on d22a96e; scaffold gate pass 9/0/0, audit fix_order [] |
-| R3 | Push, CI green on the SHA, alerts queried, tag + release, skills installed, doctor | complete | R1 | `cmd:gh run list` / `rbforge doctor` | CI + CodeQL green on d22a96e, CI green on 59f9be2; 0 open Dependabot, code-scanning, secret-scanning alerts; tag v0.22.0 from 59f9be2, release run green, asset RobloxForge-v0.22.0.zip sha256 1e8e28de...e197 matches its .sha256, `smoke_artifact.py` SMOKE OK (25 skills, 19 MCP tools); `rbforge skills update all` -> 355 installs current, 0 outdated; `rbforge doctor` v0.22.0, MCP handshake 41 tools |
+| J1 | Detached runs: `servertest --detach` starts the same command in a background process, writes a job record and log under `RBFORGE_HOME/runs/jobs/`, returns the job id; the child writes its result atomically; `rbforge runs --job ID` reports running / done / died (pid gone, no result); `--wait --wait-timeout S` exits 0/1 with the run, 5 while still running; live commands refuse while a detached job holds the Studio connection | pending | - | `cmd:RBFORGE_TEST_ONLY="jobs:" T` | - |
+| S1 | Snapshots: suite and single entries carry their source read at load; every run uses it; commit, dirty flag and manifest digest captured before the first run and written to the report and the ledger; `--sessions N` = `--repeat N --restart` | pending | - | `cmd:RBFORGE_TEST_ONLY="snapshot:" T` | - |
+| X1 | `exec` prints "(no return value)" on stderr when the script returns nothing | pending | - | `cmd:RBFORGE_TEST_ONLY="cli: exec" T` | - |
+| P3 | Probes: `save-check` (QA attributes, Play state, verdict); `perf` labels a throttled frame | pending | - | `cmd:RBFORGE_TEST_ONLY="probes:" T` | - |
+| U1 | `assets check` reports GLB/glTF meshes without UVs; `--require-uv` fails them | pending | - | `cmd:RBFORGE_TEST_ONLY="assets: uv" T` | - |
+| K1 | Docs: field notes B, C, D, A6-A10 in assets, testing-debugging, studio-mcp, sharp-edges, ui-mobile, performance, npc guidance; receipt template in docs and scaffold | pending | - | `cmd:RBFORGE_TEST_ONLY="docs: long-run" T` | - |
+| R1 | Full suite, version 0.23.0, CHANGELOG, README, STATE | pending | all above | `cmd:T` | - |
+| R2 | Live: detached suite on a disposable place, job status/wait, lock refusal, `save-check`, snapshot fields | pending | J1, S1, P3 | `cmd:rbforge servertest --detach` | - |
+| R3 | Push, CI green, alerts, tag + release, skills, doctor | pending | R1 | `cmd:gh run list` | - |
 
 ## Decisions
 
-- **No new MCP tool.** The catalog is at 10,677 of its 10,800-character budget; `rb_runs` would break it
-  for a read an agent gets from `rbforge runs`. The ledger stays a CLI feature.
-- **`--restart` restarts before every run, including the first.** Earlier manual pokes in a running session
-  contaminate run one otherwise; the requirement it serves is "a fresh Play session per run".
-- **A failed streak leaves Play running.** The state that failed is the evidence; stopping it is the agent's
-  next decision, not the runner's. A completed streak also leaves Play as the last run left it.
-- **Forensics read the console, never more.** No screenshot or extra Luau on failure: the console is
-  read-only and costs one call; a capture needs a framed camera the runner cannot choose.
-- **The ledger is written only from the CLI layer.** `server_test`/`run_suite` stay side-effect free for
-  callers and tests; the CLI records what it ran.
-- **No live Studio run this release.** The only Studio instance holds the owner's production place and its
-  data; this session only read its tool list, studio state and console (read-only calls). The new live
-  paths are covered by session doubles that answer `get_studio_state`, `start_stop_play` and
-  `get_console_output` the way the live handshake showed.
-- Generic lessons only: the production project's names, tuning and milestones stay in that project.
+- A detached job is the same CLI command in a child process, not a second implementation: the run, the
+  ledger and the forensics stay one code path.
+- The lock protects the one Studio connection from other `rbforge` live commands; direct MCP calls from an
+  agent cannot be stopped by the forge, so the docs say not to make them during a detached run.
+- `--sessions N` is an alias, not a new mode: `--repeat N --restart` already restarts Play between runs.
 
 ## Assumptions
 
-- `get_console_output` returns the Output log as plain text with no timestamps, oldest first, and holds both
-  server and client lines in a solo playtest (read live 2026-11-24; the client half rests on Studio's Output
-  window merging both, observed in earlier sessions).
-- `start_stop_play` may return before the datamodels exist; the runner polls `get_studio_state`.
+- No Studio is running at start (checked); a disposable place opened for R2 is closed by its own PID only.
 
 ## Risks
 
-- A console truncated by Studio may no longer contain the marker; the runner then keeps the last 200 lines
-  and says the marker was not found.
-- Stopping Play discards unsaved Play-time state by design; `--restart` is opt-in and documented as such.
+- Windows background processes: `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, stdio to the log file,
+  no inherited console; POSIX uses `start_new_session`.

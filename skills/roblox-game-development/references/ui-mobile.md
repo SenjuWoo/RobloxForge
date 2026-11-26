@@ -71,8 +71,25 @@ shared state. It is a dependency with its own failure modes; do not add one for 
 ## Device verification
 
 If the Studio MCP exposes `get_roblox_skill`, use `rbx-device-simulator-lua` for form-factor checks: phone
-portrait and landscape, tablet, desktop, console focus. If it is not available, say so and use the
-Studio device emulator by hand. Do not claim a device test that did not happen.
+portrait and landscape, tablet, desktop, console focus. Load it with `get_roblox_skill` before
+concluding the emulator cannot be scripted: it is Roblox's own route for driving device presets from
+Luau, and the creator-docs engine reference has no device-emulator class to call instead. If the skill
+is not available, say so and use the Studio device emulator by hand. Do not claim a device test that did
+not happen.
+
+**Offline layout spec (works with no emulator).** Keep layout math pure (a function from viewport size
+to each control's position and size) and spec it under Lune at a list of real sizes: a second production
+project checked every touch button against the thumb zones at 11 viewport sizes and caught real
+overlaps before any device run. Live, the `ui-audit` probe reports off-screen and clipped elements at the
+current viewport.
+
+**ScreenGui order is a table, not a guess.** Two screens with the same `DisplayOrder` draw in an order
+you do not control: a hero picker covered a heritage panel. Keep every `DisplayOrder` in one module
+(`Opening = 41, Heritage = 44, Creator = 45`) and read it from there.
+
+**Prompt glyphs follow the authored binding order.** `GetChildren()` order is not guaranteed: a cancel
+prompt read `I` instead of `ESC` because the bindings came back shuffled. Name bindings with a trailing
+number (`Binding1`, `Binding2`) and sort by it before choosing the glyph to show.
 
 For a UI change:
 1. open the UI in its real state,

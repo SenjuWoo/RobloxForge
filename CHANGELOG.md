@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.23.0 - 2026-11-26
+
+Long live runs, from a production project's field notes (one Studio instance, 35 live suites): a full
+manifest outlives an agent's tool call, a merge during a run changed what it tested, and a script that
+returns nothing looked like a broken `exec`. Notes already covered by 0.22.x (streaks with Play
+restarts, nested worktrees left out of the gate) are cited, not rebuilt.
+
+### Added
+- `rbforge servertest --detach`: the same command in a background process; returns a job id at once.
+  `rbforge runs --job ID` reports running, done (with the run's JSON report and exit code) or died (the
+  process is gone without a result); `--wait [--wait-timeout S]` blocks, exit 5 while still running;
+  `rbforge runs --jobs` lists recent jobs. While a job runs it holds the Studio connection: other live
+  `rbforge` commands refuse with `RBF-STUDIO-004` and `doctor` skips its probe
+  (`RBFORGE_IGNORE_JOB_LOCK=1` overrides).
+- `servertest --sessions N`: the release proof, N runs each in a fresh Play session
+  (`--repeat N --restart`).
+- Snapshots: test sources are read once when a suite or test is loaded and every run executes that
+  text; each result carries `source_sha256`; the report's `tested` block holds the commit, the dirty
+  flag and the manifest digest read before the first run, and the ledger records that commit.
+- `rbforge assets check` lists GLB meshes without UVs (`meshes_without_uv`, a warning); `--require-uv`
+  fails on them (exit 2).
+- Probe `save-check`: test attributes left in the Edit place (names and prefixes are parameters) and a
+  "safe to save_place: yes/no" verdict. The forge cannot block the MCP's own `save_place`.
+- The scaffold ships `docs/evidence/TEMPLATE.md`, a per-task receipt.
+- Docs: detach, snapshots, two-session release proof, neutral-state cleanup, retry-the-intent and
+  receipts (`testing-debugging.md`); unfocused-Studio frame cap and SLIM for big static worlds
+  (`performance.md`); the device simulator skill, an offline layout spec, `DisplayOrder` table and
+  binding order (`ui-mobile.md`); UVs, weld-then-decimate, repeatable generated meshes, tiling checks,
+  import proof (`assets.md`); stuck detectors, broken lifts, `sed` on Windows (`sharp-edges.md`);
+  `execute_luau` returns only the return value (`studio-mcp.md`); integrator edits after a merge
+  (`development-loop.md`).
+
+### Changed
+- `rbforge exec` says on stderr when the script returned nothing (Studio sends the text `nil`);
+  stdout is unchanged.
+- The `perf` probe labels a flat ~66 ms frame as a likely unfocused-Studio throttle, not game cost.
+
 ## 0.22.1 - 2026-11-25
 
 The gate judged copies of the project as the project. Two field reports from a production project: a

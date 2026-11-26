@@ -10,7 +10,14 @@ MicroProfiler scope names for each area).
 
 1. Reproduce the slow moment in a **foreground** Studio window or on a device. Background Studio is
    throttled to about 15 fps and collapses draw distance: numbers from it are the throttle
-   (`capture-quality` probe reports the frame rate).
+   (`capture-quality` probe reports the frame rate). A flat frame near 66 ms is that cap, not the
+   game's cost; the `perf` probe labels it and the measurement is taken again in front. Studio exposes
+   focus only as events (`UserInputService.WindowFocused` / `WindowFocusReleased`), so the label is a
+   heuristic, not a reading.
+6. A large static world: SLIM level of detail (`current-engine.md`) is the engine's route for distant
+   static models. A second production project slimmed 316 models before its lighting and frame-time
+   suite passed; check its preconditions (streaming, saved place, Team Create, no `Humanoid`, nothing
+   that moves).
 2. Capture evidence: the `perf` probe for counts and frame time, `scene-audit` for the scene,
    Studio skill `rbx-perf-profiling` for a MicroProfiler read, `rbx-scene-analysis` for composition.
 3. Name the dominant subsystem: script, physics, humanoids, rendering, network, memory, load time.

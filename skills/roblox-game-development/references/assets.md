@@ -259,6 +259,31 @@ a probe asset in a second production project (live 2026-11):
   Edit, so the importer can be an `rbforge exec --dm Edit` script generated
   from the pack's JSON.
 
+From a later, longer run of the same project (9 model packs, 53 material
+images; field 2026-11):
+
+- **A mesh with no UVs imports flat**: textures and `MaterialVariant`s show
+  nothing on it. Box-project UVs in the Blender kit before export (one UV unit
+  = 8 studs is a workable scale) and export with `export_texcoords=True`
+  (option checked on Blender 5.3). `rbforge assets check <file.glb>` lists
+  `meshes_without_uv`; add `--require-uv` to fail a textured pack on them. A
+  vertex-colour pack can stay UV-less on purpose.
+- **Weld before you decimate.** Decimating a mesh whose vertices are not merged
+  tears it at every seam; merge by distance first, then decimate.
+- **AI-generated meshes are not repeatable run to run.** Keep the raw generated
+  mesh as the source of truth in the repo, and prove a rebuild from it is
+  byte-identical. One generated creature came to 5,704 triangles, one closed
+  shell, no triangle off the UV scale, and `assetforge probe` said it fits.
+- **Check every tiling material at 5 and 20 studs on a real mesh.** A procedural
+  cloth at 64 threads read as basket weave on a model; 128 threads, normal
+  strength 1.2 and a lower weave weight in value and height (0.12, 0.35) read
+  as cloth. A flat swatch hides this.
+- **One manifest for every id**: model and image ids in one file
+  (`art/export/assets.json`), written by the upload step, read by the importer.
+- **Prove the import**: after the import script, report pieces, parts, missing
+  count and the position and size error (target 0 for all), then compare the
+  silhouette beside an existing character at 20 and at 5 studs.
+
 Limits: at most 5 files of 20 MB per call, and only from a directory the
 creator approved in Assistant Settings -> MCP Permissions. A rejected file means
 "ask for approval", never "copy it into an approved folder". An upload is a real

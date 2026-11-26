@@ -10,7 +10,7 @@ claim checkable.
 
 ## Version
 
-0.22.1 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
+0.23.0 (pre-1.0; 1.0.0 is gated on the E2E weak-model benchmark).
 
 NEXT ACTION: first live use of `servertest --repeat N --restart` (a place the owner says may be restarted;
 a production project's streak milestone is the intended first run), then record what `get_console_output` held
@@ -24,6 +24,7 @@ for a failed Client run in the proven table. PLAN.md (0.22.0) rows S1-R3.
 | Streaks / forensics / run ledger (0.22.0) | offline only: a session double whose `get_studio_state`, `start_stop_play` and `get_console_output` answer in the formats read live on 2026-11-24 (Edit `Available DataModels: Edit`, console plain text, oldest first, no timestamps). Tests: restart order from Edit and from Play, the failed run's console sliced at its marker (earlier runs and older noise excluded), Play untouched after a failure, keep-going counts, a Play that never comes up (`RBF-PLAY-003`), unreadable state refused before any Stop, execute_luau errors become `error` outcomes with console, ledger rates/streaks/torn lines, git sha + dirty flag, CLI round trip under an isolated home. **No live run**: the only Studio holds the owner's production place |
 | Studio MCP surface (0.22.0) | live `tools/list` 2026-11-24 (read-only, Edit mode): 41 tools; `get_roblox_skill`/`list_roblox_skills` replace `skill`/`list_skills`; new `video_capture`, `list_plugin_actions`, `open_plugin`; `list_roblox_skills` returned 17 `rbx-*` skills. A docs test fails on any old name taught as current |
 | Starter refusal reasons (0.22.0) | scaffold gate (StyLua, selene, luau-lsp strict) passes with `(boolean, string?)` returns; the extended live starter test has not run in Studio |
+| Long-run QA (0.23.0) | live 2026-11-26 on a disposable place built from the scaffold (no other Studio was running; closed by its own PID): detached `servertest --suite --sessions 2` PASS 2/2 (17.2 s), report `tested` = commit, dirty false, manifest sha256, each result `source_sha256`; `rbforge exec` during the run -> `RBF-STUDIO-004`; a wrong manifest path -> that suite's own error; `save-check` no -> yes after clearing; `exec` of a script with no return -> stdout `nil` plus the stderr note (first build only handled an empty reply: fixed after this run); `print()` output not returned; `perf` probe 16.8 ms, no throttle label in front. Offline: 269 tests incl. detach refused-before-Studio, died, lock and stale lock, wait exit 5, snapshot after an on-disk change, ledger commit from the start |
 | Field lessons (0.21.0) | from the second production project's specs, builder guide, platform research, receipts and source headers (2026-11-19..24, read-only; another session was working in it). Every API member named re-read from the creator-docs cache at `a23352b` (presence and Deprecated/ReadOnly tags); doc-page claims (SLIM requirements and avatar scope, analytics limits, EditableMesh publish switch, messaging best effort, data store per-key budget, 45-day MemoryStore expiry, teleport data) checked in the cached pages; one claim corrected against them (SLIM avatars include StarterCharacter, exclude NPCs). No live Studio run: the owner's only Studio instance was in use |
 | T046 (0.21.0) | fixtures incl. a BindableEvent control; run read-only over the production project: 12 hits, all real `InputAction:Fire` calls |
 | Agent connect interpreter (0.21.0) | fixtures: UABS_PYTHON wins, a missing one is ignored, inside a venv the base interpreter is written even when `_base_executable` reports the venv, outside a venv `sys.executable` stays; TOML keeps forward slashes |
@@ -41,7 +42,7 @@ for a failed Client run in the proven table. PLAN.md (0.22.0) rows S1-R3.
 | CLI surface | `check <path>`, `check --root <path>` and `check <path> --scope static` are run from a cwd that is **not** the project, and each report's `root` and `rungs_run` are asserted; a positional/`--root` conflict exits 2 (tests `cli: ...`) |
 | Luau semantic examples | extracted from `typing-luau.md` and re-analysed by pinned luau-lsp 1.70.1; CI job `luau-semantics` runs them with `RBFORGE_REQUIRE_LUAU_LSP=1` |
 | Diagnostic map | keyed by the whole project-relative path, so `src/Server/init.luau` and `tests/Server/init.luau` are two files; containment is `commonpath`, so a sibling `proj2` is not inside `proj` (tests `check: same-named files at different depths...`, `check: a sibling directory...`) |
-| Offline gate (`check`, traps, probes, review) | 245 automated tests + fixture projects |
+| Offline gate (`check`, traps, probes, review) | 269 automated tests + fixture projects |
 | Generated Luau | parsed by stylua/selene in tests **and** in CI, with a negative control that must fail |
 | Push guard (0.17.0) | the exact push code is executed under Lune against `tests/lune/mock_datamodel.luau`: new script, first push (backup), unchanged ledger (no backup), Studio edit (`CONFLICT`, source untouched), `force` (backup + write), other place (first-push rules); Luau stamp equals Python `adler` |
 | MCP wire | negotiation (2025-06-18/2025-03-26/2024-11-05), parse error -32700, non-object arguments -32602, annotations on every tool, catalog <= 10,800 chars (19 tools) |
@@ -88,6 +89,11 @@ for a failed Client run in the proven table. PLAN.md (0.22.0) rows S1-R3.
    through the documented API.
 
 ## Done (verified)
+
+- 0.23.0 (2026-11-26): field-notes triage - `servertest --detach` + `runs --job/--wait/--jobs` with a
+  Studio lock, `--sessions N`, source and commit snapshots, `exec` no-return note, `save-check` probe,
+  perf throttle label, `assets check --require-uv`, receipt template, docs. 269 tests; live on a
+  disposable place.
 
 - 0.22.1 (2026-11-25): rung 1 of `rbforge check` skips vendored, snapshot, git-ignored and nested-worktree
   paths (two field reports); nested worktrees skipped by rung 3, audit, review and traps; type-error
@@ -328,6 +334,9 @@ rbforge.cmd <command>              # same CLI, from the checkout
 ```
 
 ## Log
+
+- 2026-11-26 — 0.23.0: long-run QA (detach, snapshots, two sessions), save-check, UV check,
+  docs from a production project's field notes; 269 tests; detached two-session suite proven live.
 
 - 2026-11-25 — 0.22.1: gate exclusions (two field reports cleared), README presentation pass; 261 tests.
   Released v0.22.1 from 0f6f3d1 (CI 4 test legs + luau-semantics and CodeQL green on that SHA; 0 open

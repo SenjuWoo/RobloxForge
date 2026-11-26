@@ -9,6 +9,7 @@ Studio MCP session and closes it; `push` reuses one session for all of its files
 Every call names a studio; when exactly one Studio is open it is picked
 automatically, otherwise the error lists the ids.
 """
+import hashlib
 import json
 import os
 import re
@@ -40,6 +41,9 @@ def adler(text):
 
 class Session:
     def __init__(self, studio_id=None, timeout=120.0):
+        # A detached run owns the one Studio connection: a second StudioMCP would take it over mid-run.
+        from . import jobs
+        jobs.refuse_if_held()
         self.timeout = timeout
         self.proc = subprocess.Popen(studio_mod.mcp_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
@@ -851,7 +855,7 @@ def _run_id():
 
 
 def server_test(path, attr, timeout=120, studio_id=None, datamodel="Server", ready=None, grace=0.0,
-                keep=False, session=None, forensics=False):
+                keep=False, session=None, forensics=False, source=None):
     """Run a test file as a temporary Script in a running Play session, so it shares the game's module
     cache (execute_luau has its own). The test sets `attr` to "PASS ..." or "FAIL ..." on workspace or on
     its own Script.
@@ -867,7 +871,9 @@ def server_test(path, attr, timeout=120, studio_id=None, datamodel="Server", rea
     """
     _check_test_args(attr, datamodel, grace)
     ready_spec = parse_ready(ready) if ready else None
-    src = _read_source(path, "test file").replace("\r\n", "\n")
+    # `source` is the text snapshotted when the suite was loaded: a branch merged mid-run must not change
+    # what a long run tests.
+    src = (source if source is not None else _read_source(path, "test file")).replace("\r\n", "\n")
     # A test that never writes the attribute cannot report: the runner would sit for the full timeout
     # and call it TIMEOUT, which hides the real mistake. Only executable text counts - a mention in a
     # comment or a string is not a report - and a dynamically built attribute name is fine, because
@@ -940,10 +946,33 @@ def load_suite(manifest):
         if e.get("ready"):
             parse_ready(e["ready"])
         path = e["file"] if os.path.isabs(e["file"]) else os.path.join(base, e["file"])
-        out.append({"name": e.get("name") or e["file"], "file": path, "attr": e["attr"], "datamodel": dm,
-                    "timeout": timeout, "ready": e.get("ready"), "grace": float(grace),
-                    "keep": bool(e.get("keep"))})
+        out.append(_snapshot({"name": e.get("name") or e["file"], "file": path, "attr": e["attr"], "datamodel": dm,
+                              "timeout": timeout, "ready": e.get("ready"), "grace": float(grace),
+                              "keep": bool(e.get("keep"))}))
     return out
+
+
+def _snapshot(entry):
+    """Read the test once, now, and keep its text and digest on the entry. Every run of a long suite or
+    streak then executes what was on disk when it started, and the report says which bytes those were.
+    An unreadable file stays an entry so that suite fails alone (`source` None, read again at run time)."""
+    try:
+        text = _read_source(entry["file"], "test file").replace("\r\n", "\n")
+    except ForgeError:
+        entry["source"], entry["sha256"] = None, None
+        return entry
+    entry["source"] = text
+    entry["sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return entry
+
+
+def manifest_digest(path):
+    """sha256 of a suite manifest's bytes, or None when it cannot be read."""
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return None
 
 
 def _run_entries(sess, suites, forensics=False, report=None):
@@ -954,13 +983,15 @@ def _run_entries(sess, suites, forensics=False, report=None):
         try:
             r = server_test(suite["file"], suite["attr"], suite["timeout"], datamodel=suite["datamodel"],
                             ready=suite["ready"], grace=suite["grace"], keep=suite["keep"], session=sess,
-                            forensics=forensics)
+                            forensics=forensics, source=suite.get("source"))
         except ForgeError as exc:
             # One broken suite (a script error, a missing file) is that suite's failure, not the run's.
             r = {"test": suite["file"], "result": "ERROR %s: %s" % (exc.code, exc.message),
                  "outcome": "error", "passed": False}
         r["name"] = suite["name"]
         r["datamodel"] = suite["datamodel"]
+        if suite.get("sha256"):
+            r["source_sha256"] = suite["sha256"]
         r["seconds"] = round(time.time() - t0, 2)
         results.append(r)
         if report:
@@ -1035,8 +1066,8 @@ def single_entry(path, attr="RbforgeTest", timeout=120, datamodel="Server", read
     if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
         raise ForgeError("RBF-ARG-002", "timeout %r is not a positive integer" % (timeout,))
     _read_source(path, "test file")
-    return {"name": path, "file": path, "attr": attr, "datamodel": datamodel, "timeout": timeout,
-            "ready": ready, "grace": float(grace), "keep": bool(keep)}
+    return _snapshot({"name": path, "file": path, "attr": attr, "datamodel": datamodel, "timeout": timeout,
+                      "ready": ready, "grace": float(grace), "keep": bool(keep)})
 
 
 def run_streak(entries, repeat, restart=False, keep_going=False, studio_id=None, report=None,

@@ -74,8 +74,13 @@ and slower when they collide. What held up:
 | anything that calls Studio: push, Play, suites, captures, builders, `save_place` | the main session, one call at a time | - |
 | a service, its remote handler and its live suite; tuning; a red suite | the main session | - |
 
-- Workers get disjoint paths and never the integrator's files (the loader's service list, the remote
-  registry, the profile schema, the suite manifest, the asset id table).
+- Workers get disjoint paths and never the integrator's files (the server and client entry scripts and
+  the loader's service list, the remote registry, the profile schema, the suite manifest, the asset id
+  table). One integrator makes those edits after the merge.
+- Remove a merged agent worktree (`git worktree remove`, then delete the branch): `rbforge check` skips
+  nested work trees since 0.22.1, but stale copies still confuse editors and searches.
+- Do not merge a branch that changes `tests/` while a long suite runs from that checkout; since 0.23.0 a
+  run snapshots its test sources at start, but the next run would test the merged files.
 - A worker returns a diff plus the command that proves it; the main session runs that command itself
   before accepting.
 - There is one Studio and one operator: nothing that touches Studio is delegated or run in parallel.

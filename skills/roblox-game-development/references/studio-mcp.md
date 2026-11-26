@@ -126,6 +126,9 @@ without it the selected rig is used, or a default rig is inserted.
   `start_stop_play(is_start: false)` first.
 - **Compound assignment (`+=`) is ordinary Luau and runs.** An earlier note here said the tool
   rejected it; the shipped probes use it and have been run live.
+- **`execute_luau` returns only the script's return value.** A script with no `return` comes back as
+  the text `nil`, and `print()` output goes to Studio's console, not to the caller (live 2026-11-26).
+  End a diagnostic with `return <value>`; `rbforge exec` notes a missing return on stderr.
 - **`PivotTo` takes a CFrame**, not a Vector3:
   `part:PivotTo(CFrame.new(Vector3.new(x, y, z)))`.
 - **`multi_edit` with a nonexistent path CREATES the script**; pass `className`

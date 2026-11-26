@@ -81,6 +81,8 @@ rbforge docs search "ProcessReceipt"
 rbforge push src/Server/Main.server.luau   # or ALL; checksum readback, conflict guard
 rbforge servertest tests/Combat.server.luau CombatTest --ready "workspace.BootStage=players-wired"
 rbforge servertest tests/Boss.client.luau --dm Client --repeat 3 --restart   # 3 passes in a row, fresh Play each
+rbforge servertest --suite tests/suites.json --sessions 2 --detach  # release proof in the background
+rbforge runs --job <id> --wait      # done / running (exit 5) / died, with the run's report
 rbforge runs --text                 # every recorded live run: pass rate, streaks, last failure
 rbforge audit .                     # existing project: what to fix first, ranked
 ```
@@ -203,7 +205,7 @@ docs > verified community practice > model memory.
 | `templates/starter/` | the working starter kit `rbforge new` writes: loader, remotes, rate limiter, safe load/save, HUD, specs |
 | `mcp_server/server.py` | 19-tool MCP server (doctor, capabilities, docs, check, audit, plugins, assets, planning, reviews, receipts, probes, traps, evidence) |
 | `skills/` | 25 agent skills (2 first-party + 23 adopted MIT topic skills), installed into Hermes/Claude/Codex/Grok/Kimi |
-| `tests/run_tests.py` | 261 checks, no Roblox required |
+| `tests/run_tests.py` | 269 checks, no Roblox required |
 
 - **Runs from the checkout.** No daemon; machine state lives in one folder you can delete.
 - **Absence is a skip, never a pass.** A missing formatter lowers coverage and the report says so.
@@ -218,13 +220,15 @@ python src\rbforge_cli.py agent connect all
 
 ## Status
 
-0.22.1. Only what was observed is listed as verified.
+0.23.0. Only what was observed is listed as verified.
 
 | Area | Status |
 |---|---|
 | Studio + official MCP detection & live handshake probe | verified on Windows 11 (41 tools, 2026-11-24) |
 | `rbforge servertest`: Play preflight, `--ready`, Client tests, `--grace`/`--keep`, `--suite` | verified against a live Studio place (0.18.0) |
-| `servertest --repeat/--restart`, failure console capture, run ledger (`rbforge runs`) | verified offline against a session double that answers `get_studio_state`, `start_stop_play` and `get_console_output` in the formats a live handshake returned (0.22.0); **not yet run against a live place** |
+| `servertest --repeat/--restart`, failure console capture, run ledger (`rbforge runs`) | verified offline against a session double (0.22.0). Live 2026-11-26 on a disposable place: `--sessions 2` (= `--repeat 2 --restart`) started Play from Edit, restarted it and passed both runs. Failure console capture **not yet run live** |
+| `servertest --detach`, `runs --job --wait`, Studio lock, source snapshots (0.23.0) | verified live on a disposable place: detached `--suite --sessions 2` PASS 2/2 in 17 s with `source_sha256` and the tested commit in the report; a second `rbforge exec` during the run refused (`RBF-STUDIO-004`); a manifest entry that could not be read failed as its own suite |
+| `save-check` probe, `exec` no-return note, `assets check --require-uv` (0.23.0) | `save-check` live: two test attributes -> "no", cleared -> "yes"; `exec` live: Studio returns `nil` for no return and `print()` is not returned; UV check on fixtures |
 | creator-docs sparse cache + ranked search | verified (2,288 docs indexed, 2026-11-25) |
 | `rbforge check` offline gate (static / unit / structure) | verified; skips reported as `incomplete`, never `pass`. Vendored, snapshot, git-ignored and nested-worktree paths left out of every rung (0.22.1, reproduced on a fixture with a vendored package and a git worktree) |
 | `rbforge new` one-command project + plan | verified; the starter kit passes its own gate, and its live server test, client remote path and HUD were run and inspected in Studio Play (0.19.0). The 0.22.0 refusal reasons (`LastRefusal`) pass the static gate; the extended live test has not been run in Studio yet |

@@ -243,6 +243,45 @@ rbforge runs --text                             # every recorded run: rate, curr
   The ledger is memory, not proof; a receipt (`rb_collect_evidence`) is the proof. `--no-record` keeps
   a throwaway run out of it.
 
+### Long runs: detach, snapshot, two sessions (field 2026-11, 35 live suites)
+
+- **A full manifest outlives a tool call.** `rbforge servertest --suite tests/suites.json --sessions 2
+  --detach` returns a job id at once and runs the same command in the background (stdout, the JSON
+  report, to `<job>.out.json`; progress lines to `<job>.log`). Follow it with
+  `rbforge runs --job <id>` (running / done / died) or `rbforge runs --job <id> --wait` (blocks up to
+  `--wait-timeout`, default 540 s; exit 5 means still running, call it again; otherwise the run's own
+  exit code). `rbforge runs --jobs` lists recent jobs.
+- **While a detached run holds Studio, everything else waits.** One StudioMCP process owns the
+  connection; other `rbforge` live commands refuse with `RBF-STUDIO-004`, and `doctor` skips its probe.
+  The forge cannot stop a direct MCP call from an agent: do not make one during the run either.
+- **The run tests what was on disk when it started.** Test sources are read once when the manifest or
+  file is loaded, each result carries the `source_sha256` it ran, and the report's `tested` block holds
+  the commit, the dirty flag and the manifest digest read before the first run - so merging a branch
+  mid-run changes neither what runs nor what the ledger says was tested.
+- **Release proof = two sessions on one save.** `--sessions 2` (the same as `--repeat 2 --restart`):
+  the manifest runs, Play restarts on the same save slot, and the manifest runs again; persistence
+  tests only prove anything on the second run (a suite that wrote in run 1 reads it back in run 2).
+- **End every suite in a neutral state.** A suite that left the hero climbing failed the next one.
+  Release grips, guards and held keys in cleanup and assert an idle, standing hero at the end;
+  a bot exposes one `rest()`/release call the cleanup always makes.
+- **Retry the intent, then assert.** A swing helper asserted "the cut starts" while the attacker was
+  still recovering from the last one. Re-issue the action for up to about 2 s before asserting it
+  began; record a bot kill that runs past its budget (about 200 s for a boss) as partial, not as a
+  failure of the feature.
+- **Receipt per task.** `docs/evidence/<ID>.md` begins with `Result: PASS` and `Tested SHA: <40 hex>`,
+  then the steps, what was observed (numbers, console lines, what was not checked) and the captures,
+  each looked at. The plan row carries `cmd:<command> @ <sha> exit=<n>`. Commit code, prove that
+  commit, then commit the receipt. The scaffold ships `docs/evidence/TEMPLATE.md`.
+
+### Release discipline (field 2026-11)
+
+- The full manifest passes in two consecutive Play sessions on one test slot (`--sessions 2`).
+- Never `save_place` while a test slot or a stage's changes are in the place: run the `save-check`
+  probe first (`rbforge probe save-check --run --set attrs='{"QaSlot"}'`). RobloxForge cannot block the
+  MCP's own `save_place`; the probe is the check, the habit is the guard.
+- Never write the live data store from Studio tests; slot or rename the store (`persistence.md`).
+- One Studio instance (`studio-mcp.md`).
+
 ## Live-suite patterns from a second production project (live 2026-11)
 
 - **Suites change the world; order the manifest.** A suite that clears enemies, resets a profile
