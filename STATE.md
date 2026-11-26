@@ -330,6 +330,11 @@ rbforge.cmd <command>              # same CLI, from the checkout
 ## Log
 
 - 2026-11-25 — 0.22.1: gate exclusions (two field reports cleared), README presentation pass; 261 tests.
+  Released v0.22.1 from 0f6f3d1 (CI 4 test legs + luau-semantics and CodeQL green on that SHA; 0 open
+  Dependabot, code-scanning and secret-scanning alerts). Published zip sha256-verified (06842235...705d),
+  `smoke_artifact.py` OK from the extracted asset (25 skills, 19 MCP tools, docs/presentation included);
+  `Install.ps1` exit 0, `rbforge skills status` 355 installs current; `rbforge doctor` v0.22.1, MCP
+  handshake 41 tools.
 - 2026-11-24 — 0.22.0: streaks, failure forensics, run ledger, 41-tool MCP surface, starter refusal
   reasons, field lessons from a production milestone (read-only). Offline only; 258 tests.
   Released v0.22.0 from 59f9be2 (CI green on d22a96e and 59f9be2, CodeQL green; 0 open Dependabot,
